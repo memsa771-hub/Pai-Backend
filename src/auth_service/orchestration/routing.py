@@ -11,23 +11,34 @@ _EXPLAIN_ONLY = re.compile(
     re.I,
 )
 
+# Broad student/admissions profile signals (PK + international counseling).
 _PROFILE_SIGNALS = re.compile(
+    r"("
     r"\b("
-    r"gpa|cgpa|grade|ielts|toefl|gre|sat|degree|bachelor|master|phd|bsc|bs\b|msc|"
-    r"university|college|graduat|major|program|"
+    r"gpa|cgpa|grade|marks?|percentage|score|"
+    r"ielts|toefl|gre|sat|net|ecat|mdcat|"
+    r"degree|bachelor|master|phd|bscs|bsc|bs\b|msc|mbbs|fsc|fa\b|ics|"
+    r"pre[\s-]?medical|pre[\s-]?engineering|additional\s+maths?|"
+    r"university|college|school|board|graduat|major|program|stream|"
+    r"pakistan|islamabad|lahore|karachi|peshawar|rawalpindi|"
+    r"fast|nust|giki|uet|lums|iba|comsats|bahria|pieas|"
     r"germany|canada|usa|uk|australia|study abroad|visa|passport|"
     r"budget|euro|usd|\$|scholarship|"
     r"internship|experience|project|skill|python|java|"
-    r"apply|application|deadline|intake|"
+    r"apply|application|deadline|intake|admission|semester|"
+    r"want to|i want|i completed|i finished|i got|i scored|"
     r"actually|correct|instead|not taken|completed|finished"
-    r")\b",
+    r")\b"
+    r"|"
+    r"\d{2,4}\s*/\s*\d{2,4}"  # e.g. 877/1100
+    r")",
     re.I,
 )
 
 
 def should_extract_facts(message: str) -> bool:
     text = (message or "").strip()
-    if len(text) < 3:
+    if len(text) < 2:
         return False
     if _GREETING.match(text):
         return False
@@ -35,8 +46,9 @@ def should_extract_facts(message: str) -> bool:
         return False
     if _PROFILE_SIGNALS.search(text):
         return True
-    if re.search(r"\d+(\.\d+)?", text) and len(text.split()) >= 4:
+    # Short mark/score statements: "PRE MEDICAL 877/1100" or "3.4"
+    if re.search(r"\d+(\.\d+)?", text) and len(text.split()) >= 2:
         return True
-    if len(text.split()) >= 12:
+    if len(text.split()) >= 8:
         return True
     return False

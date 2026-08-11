@@ -74,8 +74,12 @@ class Settings(BaseSettings):
     conversation_memory_max_messages: int = Field(
         default=40, alias="CONVERSATION_MEMORY_MAX_MESSAGES"
     )
-    enable_counselor_tools: bool = Field(default=True, alias="ENABLE_COUNSELOR_TOOLS")
-    counselor_max_tool_rounds: int = Field(default=3, alias="COUNSELOR_MAX_TOOL_ROUNDS")
+    enable_counselor_tools: bool = Field(default=False, alias="ENABLE_COUNSELOR_TOOLS")
+    counselor_max_tool_rounds: int = Field(default=2, alias="COUNSELOR_MAX_TOOL_ROUNDS")
+    # Cap rows scanned for lexical semantic ranking until pgvector is wired
+    semantic_memory_scan_limit: int = Field(default=200, alias="SEMANTIC_MEMORY_SCAN_LIMIT")
+    # Postgres LangGraph checkpoints add remote writes per node — off by default for chat latency
+    enable_graph_checkpoint: bool = Field(default=False, alias="ENABLE_GRAPH_CHECKPOINT")
 
     @field_validator(
         "supabase_anon_key",

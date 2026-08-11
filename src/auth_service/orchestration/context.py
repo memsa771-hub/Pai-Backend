@@ -12,6 +12,7 @@ from auth_service.config import Settings, get_settings
 from auth_service.conversations.models import Conversation, Message
 from auth_service.documents.models import Document
 from auth_service.person.models import Person, VaultValue
+from auth_service.person.profile_snapshot import load_typed_profile_records
 from auth_service.vault.service import VaultService
 
 
@@ -100,6 +101,7 @@ async def build_person_context_pack(
     proposed_tasks = [
         {"id": str(t.id), "title": t.title, "status": t.status} for t in tasks if t.status == "proposed"
     ]
+    typed_records = await load_typed_profile_records(session, person.id)
     return PersonContextPack(
         person_id=str(person.id),
         identity={
@@ -108,7 +110,8 @@ async def build_person_context_pack(
             "preferredName": person.preferred_name,
         },
         applicable_vault_fields=unified.get("sparseFields") or {},
-        typed_profile_summary=unified.get("typedResources") or {},
+        # Full typed rows (educations/goals/…) so counselor can avoid re-asking known facts.
+        typed_profile_summary=typed_records,
         vault_completion=completion,
         missing_critical_fields=list(completion.get("missingCriticalFields") or []),
         recent_messages=recent,

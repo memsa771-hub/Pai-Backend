@@ -141,6 +141,7 @@ async def run_counselor_with_tools(
     person_id: str,
     conversation_id: str,
     registry: ToolRegistry | None = None,
+    enable_tools: bool | None = None,
 ) -> tuple[ConversationResult, list[dict[str, Any]]]:
     registry = registry or build_default_registry()
     tool_ctx = ToolContext(
@@ -155,7 +156,12 @@ async def run_counselor_with_tools(
         {"role": "system", "content": system},
         {"role": "user", "content": user_prompt},
     ]
-    if not settings.enable_counselor_tools:
+    tools_on = (
+        enable_tools
+        if enable_tools is not None
+        else settings.enable_counselor_tools
+    )
+    if not tools_on or not registry.openai_tools():
         result = await _finalize_structured(
             gateway, [_dict_to_llm_message(m) for m in seed_messages]
         )
@@ -171,7 +177,7 @@ async def run_counselor_with_tools(
         {
             "messages": seed_messages,
             "round": 0,
-            "max_rounds": settings.counselor_max_tool_rounds,
+            "max_rounds": min(settings.counselor_max_tool_rounds, 2),
             "final": None,
             "tool_trace": [],
             "pending_tool_calls": [],

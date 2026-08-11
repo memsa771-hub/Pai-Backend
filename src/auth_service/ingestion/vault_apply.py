@@ -34,6 +34,7 @@ async def apply_vault_candidate(
     *,
     vault_status: str,
     verification_level: str,
+    recompute_completion: bool = True,
 ) -> VaultApplyResult:
     from auth_service.core.errors import UnknownFieldError
 
@@ -101,7 +102,8 @@ async def apply_vault_candidate(
             reason=candidate.rationale_summary,
         )
     )
-    await apply_completion_to_vault(session, person, vault)
+    if recompute_completion and person.vault is not None:
+        await apply_completion_to_vault(session, person, person.vault)
     out_status = "pending" if status == "pending_confirmation" else "accepted"
     return VaultApplyResult(
         field_key=candidate.field_key, status=out_status, confidence=candidate.confidence
@@ -117,6 +119,7 @@ async def process_candidates(
 ) -> tuple[list[VaultApplyResult], list[VaultCandidate]]:
     accepted: list[VaultApplyResult] = []
     pending: list[VaultCandidate] = []
+    mutated = False
     for raw in candidates:
         candidate = validate_candidate(raw)
         if candidate is None:
@@ -137,7 +140,12 @@ async def process_candidates(
         if field.storage == "vault_value":
             if vault_status == "pending":
                 await apply_vault_candidate(
-                    session, person, candidate, vault_status="pending", verification_level=vlevel
+                    session,
+                    person,
+                    candidate,
+                    vault_status="pending",
+                    verification_level=vlevel,
+                    recompute_completion=False,
                 )
                 accepted.append(
                     VaultApplyResult(
@@ -149,13 +157,24 @@ async def process_candidates(
             else:
                 accepted.append(
                     await apply_vault_candidate(
-                        session, person, candidate, vault_status="active", verification_level=vlevel
+                        session,
+                        person,
+                        candidate,
+                        vault_status="active",
+                        verification_level=vlevel,
+                        recompute_completion=False,
                     )
                 )
+            mutated = True
             continue
 
         typed = await apply_typed_candidate(
-            session, person, candidate, field, vault_status=vault_status
+            session,
+            person,
+            candidate,
+            field,
+            vault_status=vault_status,
+            recompute_completion=False,
         )
         if typed.status != "rejected":
             accepted.append(
@@ -165,4 +184,7 @@ async def process_candidates(
                     confidence=typed.confidence,
                 )
             )
+            mutated = True
+    if mutated and person.vault is not None:
+        await apply_completion_to_vault(session, person, person.vault)
     return accepted, pending

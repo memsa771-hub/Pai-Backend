@@ -91,7 +91,7 @@ def test_chat_llm_failure_leaves_user_message(vault_client, verified_user, test_
     orch = PAIOrchestrator(test_settings, gateway=gateway)
     monkeypatch.setattr(
         "auth_service.ingestion.chat.PAIOrchestrator",
-        lambda settings: orch,
+        lambda settings, gateway=None: orch,
     )
     resp = client.post(
         f"/api/v1/conversations/{conv_id}/messages",

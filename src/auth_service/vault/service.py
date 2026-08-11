@@ -41,10 +41,16 @@ class VaultService:
         vault = person.vault
         if vault is None:
             return {"fields": {}, "typed": {}, "completion": {}}
+        from auth_service.vault.completion import load_presence_snapshot
+
         consents = await self._consent_map(session, person.id)
         sparse = await self._load_sparse_fields(session, vault, consents, include_sensitive)
-        typed = await self._load_typed_summary(session, person.id)
-        completion = await compute_completion(session, person, vault)
+        # One presence snapshot feeds typed counts + completion (no duplicate N+1).
+        snapshot = await load_presence_snapshot(session, person, vault)
+        typed = snapshot.get("typed_resources") or await self._load_typed_summary(
+            session, person.id
+        )
+        completion = await compute_completion(session, person, vault, snapshot=snapshot)
         return {
             "vaultId": str(vault.id),
             "catalogVersion": vault.catalog_version,
@@ -280,15 +286,18 @@ class VaultService:
             WorkExperience,
         )
 
-        summary: dict[str, str] = {}
-        for name, model in [
+        # Single round-trip style: sequential counts but shared with completion snapshot
+        # when callers use load_presence_snapshot — keep API shape stable.
+        models = [
             ("educations", Education),
             ("workExperiences", WorkExperience),
             ("projects", Project),
             ("skills", Skill),
             ("certifications", Certification),
             ("goals", Goal),
-        ]:
+        ]
+        summary: dict[str, str] = {}
+        for name, model in models:
             count = await session.scalar(
                 select(func.count()).select_from(model).where(model.person_id == person_id)
             )

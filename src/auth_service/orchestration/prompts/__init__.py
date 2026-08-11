@@ -16,12 +16,8 @@ REQUIRED_VARS: dict[str, set[str]] = {
     "student_conversation.v1.jinja2": {
         "current_message",
         "student_context",
-        "recent_messages",
-        "known_facts",
         "semantic_memory_context",
-        "missing_critical_fields",
         "pending_confirmations",
-        "active_tasks",
         "applied_vault_changes",
         "task_results",
     },

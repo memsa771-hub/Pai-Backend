@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -15,7 +16,7 @@ from auth_service.ingestion.vault_apply import process_candidates
 from auth_service.llm.gateway import LLMGateway
 from auth_service.memory.service import PersonMemoryService
 from auth_service.orchestration.agents import FactExtractionAgent, StudentConversationAgent
-from auth_service.orchestration.candidate_eval import evaluate_candidate_with_context
+from auth_service.orchestration.candidate_eval import evaluate_candidates_batch
 from auth_service.orchestration.checkpoint import get_graph_checkpointer
 from auth_service.orchestration.context import (
     build_student_context_pack,
@@ -31,10 +32,17 @@ from auth_service.orchestration.schemas import (
 from auth_service.orchestration.state import PAIState
 from auth_service.person.models import Person
 from auth_service.tasks.service import process_task_proposals
+from auth_service.tools.registry import build_turn_registry
 
 logger = logging.getLogger(__name__)
 
 MAX_LLM_CALLS_PER_TURN = 2
+
+_WEB_SEARCH_HINT = re.compile(
+    r"\b(deadline|scholarship|university|admission|visa|ielts|toefl|gre|ranking|"
+    r"tuition|application fee|current|latest|202[4-9]|2030)\b",
+    re.IGNORECASE,
+)
 
 
 class PAIOrchestrator:
@@ -56,7 +64,12 @@ class PAIOrchestrator:
             self._gateway, settings=settings
         )
         self._checkpointer = checkpointer if checkpointer is not None else get_graph_checkpointer()
-        self._graph = build_pai_graph(self).compile(checkpointer=self._checkpointer)
+        # Optional Postgres checkpointing adds remote round-trips on every node;
+        # disable via ENABLE_GRAPH_CHECKPOINT=false for lower chat latency.
+        if settings.enable_graph_checkpoint:
+            self._graph = build_pai_graph(self).compile(checkpointer=self._checkpointer)
+        else:
+            self._graph = build_pai_graph(self).compile()
         self._session: AsyncSession | None = None
         self._person: Person | None = None
         self._run: OrchestrationRun | None = None
@@ -79,18 +92,16 @@ class PAIOrchestrator:
             person.id,
             session_factory=get_session_factory(self._settings),
         )
-        pack = await build_student_context_pack(
-            session, person, conversation_id=conversation_id, settings=self._settings
-        )
-        self._memory.hydrate_conversation(pack.recent_messages)
+        # Context is loaded once inside the graph (node_load_student_context).
+        # Prefetch semantic memory here only — conversation agent must not re-recall via tools.
         semantic_ctx = await self._memory.recall(user_message.content)
         state: PAIState = {
             "person_id": str(person.id),
             "conversation_id": str(conversation_id),
             "user_message_id": str(user_message.id),
             "user_message": user_message.content,
-            "student_context": pack,
-            "student_context_json": context_pack_to_json(pack),
+            "student_context": None,
+            "student_context_json": "{}",
             "extraction_required": should_extract_facts(user_message.content),
             "fact_candidates": [],
             "candidate_results": [],
@@ -148,6 +159,8 @@ class PAIOrchestrator:
             conversation_id=uuid.UUID(state["conversation_id"]),
             settings=self._settings,
         )
+        if self._memory:
+            self._memory.hydrate_conversation(pack.recent_messages)
         state["student_context"] = pack
         state["student_context_json"] = context_pack_to_json(pack)
         if self._run:
@@ -176,12 +189,9 @@ class PAIOrchestrator:
 
     async def node_validate_candidates(self, state: PAIState) -> PAIState:
         assert self._session and self._person
-        results = []
-        for c in state.get("fact_candidates") or []:
-            results.append(
-                await evaluate_candidate_with_context(self._session, self._person, c)
-            )
-        state["candidate_results"] = results
+        state["candidate_results"] = await evaluate_candidates_batch(
+            self._session, self._person, list(state.get("fact_candidates") or [])
+        )
         if self._run:
             self._run.current_step = "apply_vault_changes"
         return state
@@ -232,6 +242,24 @@ class PAIOrchestrator:
                     )
                 )
             await self._session.commit()
+            # Deterministic semantic memory from accepted facts (not LLM tool choice).
+            if self._memory and applied:
+                for change in applied:
+                    if change.status in ("rejected",):
+                        continue
+                    try:
+                        await self._memory.remember(
+                            f"Vault {change.status}: {change.field_key} "
+                            f"(confidence={change.confidence})",
+                            metadata={
+                                "type": "vault_fact",
+                                "source": "deterministic_apply",
+                                "field_key": change.field_key,
+                                "conversation_id": state["conversation_id"],
+                            },
+                        )
+                    except Exception:
+                        logger.exception("Deterministic memory write failed")
         state["applied_vault_changes"] = applied
         state["pending_confirmations"] = pending
         if self._run:
@@ -240,7 +268,11 @@ class PAIOrchestrator:
 
     async def node_refresh_student_context(self, state: PAIState) -> PAIState:
         assert self._session and self._person
-        applied_json = [c.model_dump() for c in state.get("applied_vault_changes") or []]
+        applied = state.get("applied_vault_changes") or []
+        if not applied:
+            # No vault mutations — keep context from load_student_context.
+            return state
+        applied_json = [c.model_dump() for c in applied]
         pack = await build_student_context_pack(
             self._session,
             self._person,
@@ -260,28 +292,27 @@ class PAIOrchestrator:
             state["run_status"] = "degraded"
             return state
         pack = state.get("student_context")
-        known_facts = {}
-        if pack:
-            known_facts = {
-                "vault_fields": pack.applicable_vault_fields,
-                "typed_profile": pack.typed_profile_summary,
-            }
         semantic_ctx = state.get("semantic_memory_context") or ""
-        if self._memory and not semantic_ctx:
-            semantic_ctx = await self._memory.recall(state["user_message"])
-            state["semantic_memory_context"] = semantic_ctx
+        allow_web = bool(
+            self._settings.enable_counselor_tools
+            and self._settings.tavily_api_key
+            and _WEB_SEARCH_HINT.search(state["user_message"] or "")
+        )
+        registry = build_turn_registry(
+            enable_web_search=allow_web,
+            enable_semantic_recall=False,  # already prefetched into semantic_ctx
+            enable_remember=False,  # avoid extra tool round-trips on normal turns
+        )
         result = await self._conversation_agent.respond(
             current_message=state["user_message"],
             student_context_json=state.get("student_context_json") or "{}",
-            recent_messages_json=json.dumps(pack.recent_messages if pack else []),
-            known_facts_json=json.dumps(known_facts),
-            missing_critical_fields_json=json.dumps(
-                pack.missing_critical_fields if pack else []
-            ),
+            recent_messages_json="[]",
+            known_facts_json="{}",
+            missing_critical_fields_json="[]",
             pending_confirmations_json=json.dumps(
                 [p.model_dump() for p in state.get("pending_confirmations") or []]
             ),
-            active_tasks_json=json.dumps(pack.active_tasks if pack else []),
+            active_tasks_json="[]",
             applied_vault_changes_json=json.dumps(
                 [c.model_dump() for c in state.get("applied_vault_changes") or []]
             ),
@@ -290,10 +321,13 @@ class PAIOrchestrator:
             memory=self._memory,
             person_id=state["person_id"],
             conversation_id=state["conversation_id"],
+            tool_registry=registry,
+            enable_tools=allow_web,
         )
         state["assistant_result"] = result
         state["assistant_reply"] = result.reply
         state["task_proposals"] = result.task_proposals
+        state["tool_trace"] = list(self._conversation_agent.last_tool_trace or [])
         state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
         if self._memory:
             self._memory.record_turn(user=state["user_message"], assistant=result.reply)

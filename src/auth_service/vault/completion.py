@@ -18,20 +18,66 @@ from auth_service.person.models import (
 )
 from auth_service.vault.catalog import VAULT_CATALOG, CatalogField, Priority
 
+# (storage_key used by catalog, ORM model, API camelCase for typedResources)
+_TYPED_MODELS: list[tuple[str, type, str]] = [
+    ("educations", Education, "educations"),
+    ("work_experiences", WorkExperience, "workExperiences"),
+    ("projects", Project, "projects"),
+    ("skills", Skill, "skills"),
+    ("certifications", Certification, "certifications"),
+    ("goals", Goal, "goals"),
+]
+
 
 def _scope_fields(scopes: list[str]) -> list[CatalogField]:
     applicable = set(scopes)
     return [f for f in VAULT_CATALOG.values() if f.applicable_scope in applicable]
 
 
-def _typed_count(session_query) -> bool:
-    return session_query  # placeholder - async checks in compute
+def priority_name(p: Priority) -> str:
+    return {"C": "critical", "I": "important", "E": "enrichment"}[p]
 
 
-async def field_is_present(
+async def load_presence_snapshot(
     session: AsyncSession,
     person: Person,
+    vault: PersonVault | None,
+) -> dict[str, Any]:
+    """One-shot DB snapshot for completion / status (no per-field N+1)."""
+    active_keys: set[str] = set()
+    if vault is not None:
+        result = await session.execute(
+            select(VaultValue.field_key).where(
+                VaultValue.vault_id == vault.id,
+                VaultValue.status == "active",
+            )
+        )
+        active_keys = set(result.scalars().all())
+
+    typed_counts: dict[str, int] = {}
+    typed_present: dict[str, bool] = {}
+    typed_resources: dict[str, str] = {}
+    for storage_key, model, api_name in _TYPED_MODELS:
+        count = await session.scalar(
+            select(func.count()).select_from(model).where(model.person_id == person.id)
+        )
+        n = int(count or 0)
+        typed_counts[storage_key] = n
+        typed_present[storage_key] = n > 0
+        typed_resources[api_name] = str(n)
+
+    return {
+        "active_keys": active_keys,
+        "typed_present": typed_present,
+        "typed_counts": typed_counts,
+        "typed_resources": typed_resources,
+    }
+
+
+def field_is_present_in_snapshot(
+    person: Person,
     field: CatalogField,
+    snapshot: dict[str, Any],
 ) -> bool:
     if field.storage == "person":
         col = field.person_column
@@ -39,37 +85,24 @@ async def field_is_present(
             return False
         return getattr(person, col) not in (None, "")
     if field.storage == "vault_value":
-        if not person.vault:
-            return False
-        result = await session.execute(
-            select(VaultValue.id).where(
-                VaultValue.vault_id == person.vault.id,
-                VaultValue.field_key == field.key,
-                VaultValue.status == "active",
-            )
-        )
-        return result.scalar_one_or_none() is not None
-    table_map = {
-        "educations": Education,
-        "work_experiences": WorkExperience,
-        "projects": Project,
-        "skills": Skill,
-        "certifications": Certification,
-        "goals": Goal,
-    }
-    model = table_map.get(field.storage)
-    if model is None:
-        return False
-    result = await session.execute(
-        select(func.count()).select_from(model).where(model.person_id == person.id)
-    )
-    return (result.scalar() or 0) > 0
+        return field.key in snapshot["active_keys"]
+    return bool(snapshot["typed_present"].get(field.storage, False))
 
 
-async def compute_completion(
+async def field_is_present(
     session: AsyncSession,
     person: Person,
+    field: CatalogField,
+) -> bool:
+    """Compatibility helper — prefer batch snapshot for hot paths."""
+    snapshot = await load_presence_snapshot(session, person, person.vault)
+    return field_is_present_in_snapshot(person, field, snapshot)
+
+
+def compute_completion_from_snapshot(
+    person: Person,
     vault: PersonVault,
+    snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     scopes: list[str] = list(vault.applicable_scopes or ["universal"])
     fields = _scope_fields(scopes)
@@ -79,34 +112,28 @@ async def compute_completion(
 
     missing_critical: list[str] = []
     scores: dict[str, int] = {}
+    present_map: dict[str, bool] = {}
+
+    for field in fields:
+        present_map[field.key] = field_is_present_in_snapshot(person, field, snapshot)
 
     for priority in ("C", "I", "E"):
         group = by_priority[priority]
         if not group:
             scores[priority_name(priority)] = 0
             continue
-        filled = 0
-        for field in group:
-            present = await field_is_present(session, person, field)
-            if present:
-                filled += 1
-            elif priority == "C":
-                missing_critical.append(field.key)
+        filled = sum(1 for f in group if present_map[f.key])
         scores[priority_name(priority)] = round(100 * filled / len(group))
+        if priority == "C":
+            missing_critical = [f.key for f in group if not present_map[f.key]]
 
-    overall_fields = fields
-    if overall_fields:
-        total = 0
-        for field in overall_fields:
-            if await field_is_present(session, person, field):
-                total += 1
-        overall = round(100 * total / len(overall_fields))
-    else:
-        overall = 0
+    overall = (
+        round(100 * sum(1 for f in fields if present_map[f.key]) / len(fields)) if fields else 0
+    )
 
     next_field: dict[str, Any] = {}
     for field in sorted(fields, key=lambda f: (f.priority, f.key)):
-        if not await field_is_present(session, person, field):
+        if not present_map[field.key]:
             next_field = {"key": field.key, "priority": field.priority, "section": field.section}
             break
 
@@ -118,7 +145,21 @@ async def compute_completion(
         "applicableScopes": scopes,
         "missingCriticalFields": missing_critical,
         "nextRecommendedField": next_field,
+        "_present_map": present_map,
     }
+
+
+async def compute_completion(
+    session: AsyncSession,
+    person: Person,
+    vault: PersonVault,
+    *,
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    snap = snapshot or await load_presence_snapshot(session, person, vault)
+    result = compute_completion_from_snapshot(person, vault, snap)
+    result.pop("_present_map", None)
+    return result
 
 
 async def build_vault_status(
@@ -135,6 +176,8 @@ async def build_vault_status(
             "filled": [],
             "missing": [],
             "nextRecommendedField": {},
+            "filledCount": 0,
+            "missingCount": 0,
         }
 
     from auth_service.vault.service import VaultService
@@ -143,14 +186,24 @@ async def build_vault_status(
         session, person, include_sensitive=include_sensitive
     )
     sparse = unified.get("sparseFields") or {}
-    completion = unified.get("completion") or await compute_completion(session, person, vault)
+    completion = unified.get("completion") or {}
+    typed = unified.get("typedResources") or {}
+    typed_present = {
+        "educations": int(typed.get("educations") or 0) > 0,
+        "work_experiences": int(typed.get("workExperiences") or 0) > 0,
+        "projects": int(typed.get("projects") or 0) > 0,
+        "skills": int(typed.get("skills") or 0) > 0,
+        "certifications": int(typed.get("certifications") or 0) > 0,
+        "goals": int(typed.get("goals") or 0) > 0,
+    }
+    snapshot = {"active_keys": set(sparse.keys()), "typed_present": typed_present}
     scopes: list[str] = list(vault.applicable_scopes or ["universal"])
     fields = _scope_fields(scopes)
 
     filled: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
     for field in sorted(fields, key=lambda f: (f.priority, f.key)):
-        present = await field_is_present(session, person, field)
+        present = field_is_present_in_snapshot(person, field, snapshot)
         item = {
             "key": field.key,
             "section": field.section,
@@ -161,18 +214,12 @@ async def build_vault_status(
         if present:
             if field.storage == "vault_value" and field.key in sparse:
                 entry = sparse[field.key]
-                if isinstance(entry, dict) and "value" in entry:
-                    item["value"] = entry["value"]
-                else:
-                    item["value"] = entry
+                item["value"] = entry["value"] if isinstance(entry, dict) and "value" in entry else entry
             elif field.storage == "person" and field.person_column:
                 raw = getattr(person, field.person_column, None)
-                if field.sensitive and not include_sensitive:
-                    item["value"] = "[sensitive]"
-                else:
-                    item["value"] = raw
+                item["value"] = "[sensitive]" if field.sensitive and not include_sensitive else raw
             else:
-                item["value"] = True  # typed resource present
+                item["value"] = True
             filled.append(item)
         else:
             missing.append(item)
@@ -190,10 +237,6 @@ async def build_vault_status(
         "missing": missing,
         "nextRecommendedField": completion.get("nextRecommendedField") or {},
     }
-
-
-def priority_name(p: Priority) -> str:
-    return {"C": "critical", "I": "important", "E": "enrichment"}[p]
 
 
 async def apply_completion_to_vault(

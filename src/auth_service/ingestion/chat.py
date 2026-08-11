@@ -8,9 +8,9 @@ from auth_service.config import Settings
 from auth_service.core.errors import AuthError
 from auth_service.conversations.models import Message
 from auth_service.conversations.service import save_assistant_message, start_orchestration_run
+from auth_service.llm.gateway import LLMGateway
 from auth_service.orchestration.orchestrator import PAIOrchestrator
 from auth_service.person.models import Person
-from auth_service.vault.completion import compute_completion
 
 
 async def handle_user_message(
@@ -21,6 +21,7 @@ async def handle_user_message(
     user_message: Message,
     *,
     orchestrator: PAIOrchestrator | None = None,
+    gateway: LLMGateway | None = None,
 ) -> dict:
     if person.vault is None:
         raise AuthError(
@@ -28,7 +29,7 @@ async def handle_user_message(
             message="Person vault not initialized. Call bootstrap first.",
             status_code=400,
         )
-    orch = orchestrator or PAIOrchestrator(settings)
+    orch = orchestrator or PAIOrchestrator(settings, gateway=gateway)
     run = await start_orchestration_run(
         session, person, conversation_id=conversation_id, run_type="chat_message"
     )
@@ -64,32 +65,29 @@ async def handle_user_message(
         provider=settings.llm_default_provider,
         model=settings.llm_counseling_model,
     )
-    completion = await compute_completion(session, person, person.vault)
-    conv_result = graph_state.get("assistant_result")
-    next_q = None
-    if conv_result and hasattr(conv_result, "next_question"):
-        next_q = conv_result.next_question
-    elif isinstance(conv_result, dict):
-        next_q = conv_result.get("next_question")
+    vault_updates = [
+        c.model_dump() if hasattr(c, "model_dump") else c
+        for c in (graph_state.get("applied_vault_changes") or [])
+    ]
+    pending = [
+        p.model_dump() if hasattr(p, "model_dump") else p
+        for p in (graph_state.get("pending_confirmations") or [])
+    ]
+    task_results = [
+        t.model_dump() if hasattr(t, "model_dump") else t
+        for t in (graph_state.get("task_results") or [])
+        if (getattr(t, "status", None) if not isinstance(t, dict) else t.get("status"))
+        not in ("rejected", "duplicate")
+    ]
+    tool_trace = list(graph_state.get("tool_trace") or [])
+    # Lean public chat payload: conversation + learning deltas only.
+    # Clients must reuse conversationId on every follow-up message.
     return {
+        "conversationId": str(conversation_id),
         "messageId": str(assistant.id),
         "reply": reply,
-        "vaultUpdates": [
-            c.model_dump() if hasattr(c, "model_dump") else c
-            for c in (graph_state.get("applied_vault_changes") or [])
-        ],
-        "pendingConfirmations": [
-            p.model_dump() if hasattr(p, "model_dump") else p
-            for p in (graph_state.get("pending_confirmations") or [])
-        ],
-        "taskResults": [
-            t.model_dump() if hasattr(t, "model_dump") else t
-            for t in (graph_state.get("task_results") or [])
-        ],
-        "vaultCompletion": {
-            "critical": completion.get("critical", 0),
-            "important": completion.get("important", 0),
-            "enrichment": completion.get("enrichment", 0),
-        },
-        "nextQuestion": next_q,
+        "vaultUpdates": vault_updates,
+        "pendingConfirmations": pending,
+        "taskResults": task_results,
+        "toolTrace": tool_trace,
     }

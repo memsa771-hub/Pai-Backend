@@ -43,11 +43,16 @@ class AsyncPostgresMemoryStore:
         return entry_id
 
     async def search(self, query: str, top_k: int = 5) -> list[MemoryEntry]:
+        # Cap rows before Python ranking — full-table load does not scale.
+        from auth_service.config import get_settings
+
+        scan_limit = max(top_k, get_settings().semantic_memory_scan_limit)
         async with self._session_factory() as session:
             result = await session.execute(
-                select(SemanticMemoryRow).where(
-                    SemanticMemoryRow.person_id == self._person_id
-                )
+                select(SemanticMemoryRow)
+                .where(SemanticMemoryRow.person_id == self._person_id)
+                .order_by(SemanticMemoryRow.created_at.desc())
+                .limit(scan_limit)
             )
             rows = list(result.scalars().all())
         return _rank_entries(query, rows, top_k)

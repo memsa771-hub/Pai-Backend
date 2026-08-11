@@ -54,3 +54,20 @@ def build_default_registry() -> ToolRegistry:
             RememberInsightTool(),
         ]
     )
+
+
+def build_turn_registry(
+    *,
+    enable_web_search: bool = False,
+    enable_semantic_recall: bool = False,
+    enable_remember: bool = False,
+) -> ToolRegistry:
+    """Deterministic per-turn tool set — avoid handing every tool to every request."""
+    tools: list[ToolSpec] = []
+    if enable_web_search:
+        tools.append(WebSearchTool())
+    if enable_semantic_recall:
+        tools.append(RecallSemanticMemoryTool())
+    if enable_remember:
+        tools.append(RememberInsightTool())
+    return ToolRegistry(tools)

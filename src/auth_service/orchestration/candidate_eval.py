@@ -18,11 +18,29 @@ def _normalize(value: Any) -> str:
     return str(value).strip().lower()
 
 
-async def evaluate_candidate_with_context(
+async def load_candidate_validation_context(
     session: AsyncSession,
     person: Person,
+) -> dict[str, Any]:
+    """Load vault state once for evaluating many candidates in a turn."""
+    active_values: dict[str, Any] = {}
+    if person.vault is not None:
+        result = await session.execute(
+            select(VaultValue.field_key, VaultValue.value).where(
+                VaultValue.vault_id == person.vault.id,
+                VaultValue.status == "active",
+            )
+        )
+        for field_key, value in result.all():
+            active_values[field_key] = value
+    return {"active_values": active_values}
+
+
+def evaluate_candidate(
     candidate: VaultCandidate,
+    existing_state: dict[str, Any],
 ) -> CandidateResult:
+    """Pure evaluation against a preloaded vault snapshot."""
     validated = validate_candidate(candidate)
     if validated is None:
         return CandidateResult(
@@ -32,29 +50,8 @@ async def evaluate_candidate_with_context(
         )
     field = get_catalog_field(candidate.field_key)
     assert field is not None
-    existing_val: Any = None
-    if field.storage == "vault_value" and person.vault is not None:
-        row = await session.execute(
-            select(VaultValue.value, VaultValue.value_encrypted, VaultValue.status).where(
-                VaultValue.vault_id == person.vault.id,
-                VaultValue.field_key == candidate.field_key,
-                VaultValue.status == "active",
-            )
-        )
-        hit = row.first()
-        if hit is not None:
-            existing_val = hit.value
-    elif field.storage == "vault_value":
-        existing_val = None
-    else:
-        from auth_service.config import get_settings
-        from auth_service.vault.service import VaultService
-
-        svc = VaultService(get_settings())
-        unified = await svc.get_unified_vault(session, person, include_sensitive=False)
-        sparse = unified.get("sparseFields") or {}
-        if candidate.field_key in sparse:
-            existing_val = sparse[candidate.field_key]
+    active_values = existing_state.get("active_values") or {}
+    existing_val = active_values.get(candidate.field_key)
 
     if existing_val is not None and _normalize(existing_val) == _normalize(candidate.value):
         return CandidateResult(
@@ -101,3 +98,25 @@ async def evaluate_candidate_with_context(
         outcome="accept",
         rationale_summary="Explicit valid non-sensitive fact",
     )
+
+
+async def evaluate_candidate_with_context(
+    session: AsyncSession,
+    person: Person,
+    candidate: VaultCandidate,
+    *,
+    existing_state: dict[str, Any] | None = None,
+) -> CandidateResult:
+    state = existing_state or await load_candidate_validation_context(session, person)
+    return evaluate_candidate(candidate, state)
+
+
+async def evaluate_candidates_batch(
+    session: AsyncSession,
+    person: Person,
+    candidates: list[VaultCandidate],
+) -> list[CandidateResult]:
+    if not candidates:
+        return []
+    existing_state = await load_candidate_validation_context(session, person)
+    return [evaluate_candidate(c, existing_state) for c in candidates]

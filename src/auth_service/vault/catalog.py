@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-CATALOG_VERSION = "1.0.0"
+CATALOG_VERSION = "1.1.0"
 AUTH_PROVIDER_NAME = "supabase"
 
 Priority = Literal["C", "I", "E"]
@@ -286,6 +286,91 @@ def _fields() -> tuple[CatalogField, ...]:
             editable=True,
             repeatable=True,
         ),
+        # Admissions / PK counseling sparse fields (vault_value — no fabricated typed rows)
+        CatalogField(
+            key="education.stream",
+            section="education",
+            priority="C",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="education",
+            value_type="string",
+            editable=True,
+            repeatable=False,
+        ),
+        CatalogField(
+            key="education.marks",
+            section="education",
+            priority="C",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="education",
+            value_type="json",
+            editable=True,
+            repeatable=False,
+        ),
+        CatalogField(
+            key="education.additional_maths",
+            section="education",
+            priority="I",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="education",
+            value_type="boolean",
+            editable=True,
+            repeatable=False,
+        ),
+        CatalogField(
+            key="location.current_city",
+            section="location",
+            priority="I",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="universal",
+            value_type="string",
+            editable=True,
+            repeatable=False,
+        ),
+        CatalogField(
+            key="application.study_country",
+            section="application",
+            priority="C",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="application",
+            value_type="string",
+            editable=True,
+            repeatable=False,
+        ),
+        CatalogField(
+            key="application.target_universities",
+            section="application",
+            priority="I",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="application",
+            value_type="array",
+            editable=True,
+            repeatable=False,
+        ),
+        CatalogField(
+            key="application.admission_cycle",
+            section="application",
+            priority="I",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="application",
+            value_type="string",
+            editable=True,
+            repeatable=False,
+        ),
         # Mobility / finance / lifestyle sparse
         CatalogField(
             key="mobility.passport_number",
@@ -428,3 +513,33 @@ def catalog_for_api() -> list[dict]:
         }
         for f in _fields()
     ]
+
+
+def extraction_catalog_hint() -> str:
+    """Compact writable field list for the fact-extraction LLM (exact keys only)."""
+    lines = [
+        "Allowed field_key values (use exactly; reject anything else):",
+        "",
+        "Education typed JSON (prefer education.program):",
+        '  education.program → {"institution"?, "degree", "major"/"stream", "gpa"?, '
+        '"percentage"?, "marks_obtained"?, "marks_total"?, "graduation_year"?}',
+        "  education.gpa → same JSON shape when updating GPA/marks on an education row",
+        "  education.stream → string e.g. Pre-Medical | Pre-Engineering | ICS",
+        '  education.marks → {"obtained": 877, "total": 1100} or "877/1100"',
+        "  education.additional_maths → true|false",
+        "",
+        "Goals / admissions:",
+        "  application.career_interest → string program goal e.g. BSCS in Pakistan",
+        "  application.study_country → string",
+        "  application.target_universities → [\"FAST\",\"NUST\",...]",
+        "  application.admission_cycle → string",
+        "",
+        "Identity / location / other writable keys:",
+    ]
+    for f in sorted(VAULT_CATALOG.values(), key=lambda x: x.key):
+        if f.derived or not f.editable:
+            continue
+        if f.key.startswith("education.") or f.key.startswith("application."):
+            continue
+        lines.append(f"  {f.key} ({f.value_type})")
+    return "\n".join(lines)

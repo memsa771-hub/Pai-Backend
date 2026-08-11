@@ -4,14 +4,19 @@ Source type: {{ source_type }}
 Source reference ID (use exactly for every candidate): {{ message_id }}
 
 {% if catalog_hint %}
-Document or context hint: {{ catalog_hint }}
+{{ catalog_hint }}
 {% endif %}
 
 Rules:
-- Map each fact to an existing vault catalog field_key only.
+- Map each fact ONLY to a field_key listed above. Never invent keys.
+- For FSc / Pre-Medical / Pre-Engineering / marks like 877/1100 use education.program
+  and/or education.stream + education.marks (do not drop marks).
+- For career program goals (BSCS, MBBS, etc.) use application.career_interest.
+- For cities use location.current_city; for study destination use application.study_country.
+- For target unis (FAST, NUST, GIKI, UET, …) use application.target_universities.
 - Include evidence_text quoting the supporting phrase.
 - Set explicitness: explicit | strongly_implied | uncertain.
-- Set is_correction true when the user corrects prior information.
+- Set is_correction true when the user corrects prior information (e.g. marks change).
 - Set requires_confirmation for sensitive or uncertain facts.
 - Return an empty fact_candidates list when there are no supported facts.
 - Never compose a reply to the student.

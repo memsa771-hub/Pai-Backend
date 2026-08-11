@@ -23,6 +23,7 @@ from auth_service.api.vault import router as vault_router
 from auth_service.config import Settings, get_settings
 from auth_service.core.errors import AuthError
 from auth_service.documents.worker import document_worker_loop
+from auth_service.llm.gateway import LLMGateway
 from auth_service.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
 from auth_service.orchestration.checkpoint import close_graph_checkpointer, init_graph_checkpointer
 from auth_service.orchestration.prompts import validate_prompt_templates
@@ -38,8 +39,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     validate_prompt_templates()
     await init_graph_checkpointer(
         settings.database_url,
-        enabled=settings.app_env not in ("test", "testing"),
+        enabled=(
+            settings.enable_graph_checkpoint
+            and settings.app_env not in ("test", "testing")
+        ),
     )
+    app.state.llm_gateway = LLMGateway(settings)
     if not getattr(app.state, "_provider_initialized", False):
         provider = SupabaseAuthProvider(settings)
         app.state.auth_provider = provider
@@ -59,6 +64,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await worker_task
             except asyncio.CancelledError:
                 pass
+        gateway = getattr(app.state, "llm_gateway", None)
+        if gateway is not None:
+            await gateway.aclose()
         if getattr(app.state, "_owns_provider", False):
             await app.state.auth_provider.aclose()
         await close_graph_checkpointer()

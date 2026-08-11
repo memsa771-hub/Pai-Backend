@@ -15,6 +15,7 @@ from auth_service.orchestration.schemas import (
     VaultCandidate,
 )
 from auth_service.tools.registry import ToolRegistry, build_default_registry
+from auth_service.vault.catalog import extraction_catalog_hint
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +35,13 @@ class FactExtractionAgent:
         user_message_id: str,
         catalog_hint: str | None = None,
     ) -> list[VaultCandidate]:
+        hint = catalog_hint or extraction_catalog_hint()
         prompt = render_template(
             "fact_extraction.v1.jinja2",
             message_id=user_message_id,
             user_message=user_message,
             source_type="chat",
-            catalog_hint=catalog_hint or "",
+            catalog_hint=hint,
         )
         result = await self._run_structured(prompt)
         for c in result.fact_candidates:
@@ -55,12 +57,17 @@ class FactExtractionAgent:
         document_text: str,
         document_type_hint: str = "generic",
     ) -> list[VaultCandidate]:
+        hint = (
+            f"{extraction_catalog_hint()}\n\nDocument type hint: {document_type_hint}"
+            if document_type_hint
+            else extraction_catalog_hint()
+        )
         prompt = render_template(
             "fact_extraction.v1.jinja2",
             message_id=document_id,
             user_message=document_text,
             source_type="document",
-            catalog_hint=document_type_hint,
+            catalog_hint=hint,
         )
         result = await self._run_structured(prompt)
         for c in result.fact_candidates:
@@ -109,23 +116,26 @@ class StudentConversationAgent:
         self._gateway = gateway
         self._settings = settings or get_settings()
         self._registry = registry or build_default_registry()
+        self.last_tool_trace: list[dict[str, Any]] = []
 
     async def respond(
         self,
         *,
         current_message: str,
         student_context_json: str,
-        recent_messages_json: str,
-        known_facts_json: str,
-        missing_critical_fields_json: str,
-        pending_confirmations_json: str,
-        active_tasks_json: str,
-        applied_vault_changes_json: str,
-        task_results_json: str,
+        recent_messages_json: str = "[]",
+        known_facts_json: str = "{}",
+        missing_critical_fields_json: str = "[]",
+        pending_confirmations_json: str = "[]",
+        active_tasks_json: str = "[]",
+        applied_vault_changes_json: str = "[]",
+        task_results_json: str = "[]",
         semantic_memory_context: str = "",
         memory: PersonMemoryService | None = None,
         person_id: str = "",
         conversation_id: str = "",
+        tool_registry: ToolRegistry | None = None,
+        enable_tools: bool | None = None,
     ) -> ConversationResult:
         prompt_vars: dict[str, Any] = {
             "current_message": current_message,
@@ -140,6 +150,14 @@ class StudentConversationAgent:
             "task_results": task_results_json,
         }
 
+        use_tools = (
+            enable_tools
+            if enable_tools is not None
+            else self._settings.enable_counselor_tools
+        )
+        registry = tool_registry or self._registry
+
+        self.last_tool_trace = []
         if memory is not None and person_id and conversation_id:
             result, trace = await run_counselor_with_tools(
                 gateway=self._gateway,
@@ -148,8 +166,10 @@ class StudentConversationAgent:
                 prompt_vars=prompt_vars,
                 person_id=person_id,
                 conversation_id=conversation_id,
-                registry=self._registry,
+                registry=registry,
+                enable_tools=use_tools and bool(registry.openai_tools()),
             )
+            self.last_tool_trace = list(trace or [])
             if trace:
                 logger.info("Counselor tool trace person=%s tools=%s", person_id, len(trace))
             return result

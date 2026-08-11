@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,13 +102,16 @@ _AUTH_ERRORS = {
     description=(
         "Primary PAI turn. Requires `Authorization: Bearer <accessToken>`.\n\n"
         "**Swagger:** Authorize with `data.accessToken` from login (token only, no `Bearer` word).\n\n"
-        "Omit `conversationId` to create a new conversation. Reuse `data.conversationId` "
-        "from the response for follow-ups."
+        "**Critical:** Omit `conversationId` only to start a **new** thread. For every "
+        "follow-up, send the same `conversationId` from the previous response "
+        "(`data.conversationId`). Creating a new id each message wipes dialogue history "
+        "for that thread (profile Vault still persists)."
     ),
     responses=_AUTH_ERRORS,
 )
 async def chat(
     body: ChatRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(resolve_person_from_token),
@@ -121,8 +124,10 @@ async def chat(
         conversation_id = body.conversation_id
 
     user_msg = await conv_svc.save_user_message(session, person, conversation_id, body.message)
-    data = await handle_user_message(session, settings, person, conversation_id, user_msg)
-    data["conversationId"] = str(conversation_id)
+    gateway = getattr(request.app.state, "llm_gateway", None)
+    data = await handle_user_message(
+        session, settings, person, conversation_id, user_msg, gateway=gateway
+    )
     return JSONResponse(content=success(data))
 
 
@@ -286,13 +291,14 @@ async def get_messages(
 async def post_message(
     conversation_id: uuid.UUID,
     body: MessageCreate,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(resolve_person_from_token),
 ) -> JSONResponse:
     user_msg = await conv_svc.save_user_message(session, person, conversation_id, body.content)
+    gateway = getattr(request.app.state, "llm_gateway", None)
     data = await handle_user_message(
-        session, settings, person, conversation_id, user_msg
+        session, settings, person, conversation_id, user_msg, gateway=gateway
     )
-    data["conversationId"] = str(conversation_id)
     return JSONResponse(content=success(data))

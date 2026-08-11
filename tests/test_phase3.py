@@ -208,7 +208,7 @@ def test_chat_message_with_mock_counselor(verified_user, test_settings, monkeypa
     orchestrator = PAIOrchestrator(test_settings, gateway=gateway)
     monkeypatch.setattr(
         "auth_service.ingestion.chat.PAIOrchestrator",
-        lambda settings: orchestrator,
+        lambda settings, gateway=None: orchestrator,
     )
     resp = client.post(
         f"/api/v1/conversations/{conv_id}/messages",
@@ -218,7 +218,9 @@ def test_chat_message_with_mock_counselor(verified_user, test_settings, monkeypa
     assert resp.status_code == 200, resp.text
     body = resp.json()["data"]
     assert body["reply"]
-    assert body.get("nextQuestion")
+    assert body.get("conversationId") == conv_id
+    assert "nextQuestion" not in body
+    assert "vaultCompletion" not in body
     field = client.get(
         "/api/v1/vault/fields/preferences.preferred_language",
         headers=headers,

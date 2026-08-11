@@ -42,6 +42,15 @@ async def document_worker_loop(settings: Settings, stop_event: asyncio.Event) ->
             processed = await run_document_worker_once(settings)
             if not processed:
                 await asyncio.sleep(2.0)
-        except Exception:
-            logger.exception("Document worker iteration error")
-            await asyncio.sleep(5.0)
+        except OSError as exc:
+            # Transient DNS / network blips to Supabase pooler (common on Windows).
+            logger.warning("Document worker DB unreachable (%s); retrying…", exc)
+            await asyncio.sleep(15.0)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "getaddrinfo" in msg or "connect" in msg or "timeout" in msg:
+                logger.warning("Document worker connection issue (%s); retrying…", exc)
+                await asyncio.sleep(15.0)
+            else:
+                logger.exception("Document worker iteration error")
+                await asyncio.sleep(5.0)

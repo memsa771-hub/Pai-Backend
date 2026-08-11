@@ -174,6 +174,27 @@ async def list_conversations(
 
 
 @router.get(
+    "/threads",
+    summary="All conversations with Q&A flow",
+    description=(
+        "Lists every conversation with a readable dialogue flow: "
+        "what the student asked and what PAI replied (turn by turn)."
+    ),
+    responses={401: {"model": ApiErrorResponse}},
+)
+async def list_conversation_threads(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    person=Depends(resolve_person_from_token),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> JSONResponse:
+    items = await conv_svc.list_conversation_threads(
+        session, person.id, limit=limit, offset=offset
+    )
+    return JSONResponse(content=success({"items": items}))
+
+
+@router.get(
     "/{conversation_id}",
     summary="Get conversation",
     responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
@@ -194,6 +215,21 @@ async def get_conversation(
             }
         )
     )
+
+
+@router.get(
+    "/{conversation_id}/flow",
+    summary="One conversation Q&A flow",
+    description="User ask → PAI reply turns for a single conversation.",
+    responses={401: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
+)
+async def get_conversation_flow(
+    conversation_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    person=Depends(resolve_person_from_token),
+) -> JSONResponse:
+    data = await conv_svc.get_conversation_flow(session, person.id, conversation_id)
+    return JSONResponse(content=success(data))
 
 
 @router.delete(

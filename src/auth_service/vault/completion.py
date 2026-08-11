@@ -121,6 +121,77 @@ async def compute_completion(
     }
 
 
+async def build_vault_status(
+    session: AsyncSession,
+    person: Person,
+    *,
+    include_sensitive: bool = False,
+) -> dict[str, Any]:
+    """Simple filled/missing overview for after-chat UX."""
+    vault = person.vault
+    if vault is None:
+        return {
+            "completion": {"critical": 0, "important": 0, "enrichment": 0, "overall": 0},
+            "filled": [],
+            "missing": [],
+            "nextRecommendedField": {},
+        }
+
+    from auth_service.vault.service import VaultService
+
+    unified = await VaultService().get_unified_vault(
+        session, person, include_sensitive=include_sensitive
+    )
+    sparse = unified.get("sparseFields") or {}
+    completion = unified.get("completion") or await compute_completion(session, person, vault)
+    scopes: list[str] = list(vault.applicable_scopes or ["universal"])
+    fields = _scope_fields(scopes)
+
+    filled: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for field in sorted(fields, key=lambda f: (f.priority, f.key)):
+        present = await field_is_present(session, person, field)
+        item = {
+            "key": field.key,
+            "section": field.section,
+            "priority": field.priority,
+            "priorityLabel": priority_name(field.priority),
+            "sensitive": field.sensitive,
+        }
+        if present:
+            if field.storage == "vault_value" and field.key in sparse:
+                entry = sparse[field.key]
+                if isinstance(entry, dict) and "value" in entry:
+                    item["value"] = entry["value"]
+                else:
+                    item["value"] = entry
+            elif field.storage == "person" and field.person_column:
+                raw = getattr(person, field.person_column, None)
+                if field.sensitive and not include_sensitive:
+                    item["value"] = "[sensitive]"
+                else:
+                    item["value"] = raw
+            else:
+                item["value"] = True  # typed resource present
+            filled.append(item)
+        else:
+            missing.append(item)
+
+    return {
+        "completion": {
+            "critical": completion.get("critical", 0),
+            "important": completion.get("important", 0),
+            "enrichment": completion.get("enrichment", 0),
+            "overall": completion.get("overall", 0),
+        },
+        "filledCount": len(filled),
+        "missingCount": len(missing),
+        "filled": filled,
+        "missing": missing,
+        "nextRecommendedField": completion.get("nextRecommendedField") or {},
+    }
+
+
 def priority_name(p: Priority) -> str:
     return {"C": "critical", "I": "important", "E": "enrichment"}[p]
 

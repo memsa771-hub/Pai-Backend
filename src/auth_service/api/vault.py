@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth_service.dependencies import get_db, resolve_person_from_token
 from auth_service.schemas import success
 from auth_service.vault.catalog import CATALOG_VERSION, VAULT_CATALOG
-from auth_service.vault.completion import compute_completion
+from auth_service.vault.completion import build_vault_status, compute_completion
 from auth_service.vault.service import VaultService
 
 router = APIRouter(prefix="/api/v1/vault", tags=["vault"])
@@ -28,6 +28,25 @@ async def get_vault(
     includeSensitive: bool = Query(False, alias="includeSensitive"),
 ) -> JSONResponse:
     data = await VaultService().get_unified_vault(
+        session, person, include_sensitive=includeSensitive
+    )
+    return JSONResponse(content=success(data))
+
+
+@router.get(
+    "/status",
+    summary="Vault filled vs missing (simple)",
+    description=(
+        "One endpoint for after-chat UX: completion %, every filled field (with values), "
+        "and every missing field. Existing vault endpoints are unchanged."
+    ),
+)
+async def vault_status(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    person=Depends(resolve_person_from_token),
+    includeSensitive: bool = Query(False, alias="includeSensitive"),
+) -> JSONResponse:
+    data = await build_vault_status(
         session, person, include_sensitive=includeSensitive
     )
     return JSONResponse(content=success(data))

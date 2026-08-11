@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from auth_service.conversations.models import Conversation, Message, OrchestrationRun
-from auth_service.core.errors import AuthError, PersonNotFoundError
+from auth_service.core.errors import AuthError
 from auth_service.person.models import Person
 
 
@@ -138,3 +136,102 @@ async def start_orchestration_run(
     await session.commit()
     await session.refresh(run)
     return run
+
+
+def messages_to_flow(messages: list[Message]) -> list[dict]:
+    """Pair consecutive user → assistant messages into readable turns."""
+    flow: list[dict] = []
+    pending_user: Message | None = None
+    turn = 0
+    for msg in messages:
+        if msg.role == "user":
+            if pending_user is not None:
+                turn += 1
+                flow.append(
+                    {
+                        "turn": turn,
+                        "user": pending_user.content,
+                        "assistant": None,
+                        "askedAt": pending_user.created_at.isoformat()
+                        if pending_user.created_at
+                        else None,
+                        "repliedAt": None,
+                    }
+                )
+            pending_user = msg
+        elif msg.role == "assistant":
+            turn += 1
+            if pending_user is not None:
+                flow.append(
+                    {
+                        "turn": turn,
+                        "user": pending_user.content,
+                        "assistant": msg.content,
+                        "askedAt": pending_user.created_at.isoformat()
+                        if pending_user.created_at
+                        else None,
+                        "repliedAt": msg.created_at.isoformat() if msg.created_at else None,
+                    }
+                )
+                pending_user = None
+            else:
+                flow.append(
+                    {
+                        "turn": turn,
+                        "user": None,
+                        "assistant": msg.content,
+                        "askedAt": None,
+                        "repliedAt": msg.created_at.isoformat() if msg.created_at else None,
+                    }
+                )
+    if pending_user is not None:
+        turn += 1
+        flow.append(
+            {
+                "turn": turn,
+                "user": pending_user.content,
+                "assistant": None,
+                "askedAt": pending_user.created_at.isoformat() if pending_user.created_at else None,
+                "repliedAt": None,
+            }
+        )
+    return flow
+
+
+async def get_conversation_flow(
+    session: AsyncSession, person_id: uuid.UUID, conversation_id: uuid.UUID
+) -> dict:
+    conv = await get_conversation_owned(session, person_id, conversation_id)
+    messages = await list_messages(session, person_id, conversation_id)
+    return {
+        "id": str(conv.id),
+        "title": conv.title,
+        "status": conv.status,
+        "topic": conv.topic,
+        "updatedAt": conv.updated_at.isoformat() if conv.updated_at else None,
+        "flow": messages_to_flow(messages),
+    }
+
+
+async def list_conversation_threads(
+    session: AsyncSession,
+    person_id: uuid.UUID,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    rows = await list_conversations(session, person_id, limit=limit, offset=offset)
+    threads: list[dict] = []
+    for conv in rows:
+        messages = await list_messages(session, person_id, conv.id)
+        threads.append(
+            {
+                "id": str(conv.id),
+                "title": conv.title,
+                "status": conv.status,
+                "topic": conv.topic,
+                "updatedAt": conv.updated_at.isoformat() if conv.updated_at else None,
+                "flow": messages_to_flow(messages),
+            }
+        )
+    return threads

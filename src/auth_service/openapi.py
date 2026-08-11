@@ -26,7 +26,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     },
     {
         "name": "vault",
-        "description": "Person Vault — verified structured facts, completion, and field history.",
+        "description": (
+            "Person Vault. Prefer **`GET /api/v1/vault/status`** for a simple filled/missing view "
+            "after chat. Other vault routes remain for advanced field CRUD."
+        ),
     },
     {
         "name": "chat",
@@ -37,7 +40,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     },
     {
         "name": "conversations",
-        "description": "Conversation CRUD and message history (compat message POST included).",
+        "description": (
+            "Prefer **`GET /api/v1/conversations/threads`** for full Q&A flows. "
+            "CRUD and raw messages endpoints remain available."
+        ),
     },
     {
         "name": "documents",

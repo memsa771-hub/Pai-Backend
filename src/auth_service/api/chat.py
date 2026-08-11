@@ -48,7 +48,12 @@ class MessageCreate(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Unified PAI chat turn — creates a conversation when conversationId is omitted."""
+    """Unified PAI chat turn.
+
+    PAI is one persistent counselor per Person. Conversations are topic threads only.
+    Omitting conversationId continues the latest active thread (client convenience).
+    Set newConversation=true to start a new topic — person Vault/memory are NOT reset.
+    """
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -57,10 +62,15 @@ class ChatRequest(BaseModel):
                 {
                     "message": "I want MS CS in Germany under 20000 EUR",
                     "conversationId": None,
-                    "title": "Germany MS plan",
+                    "newConversation": False,
                 },
                 {
                     "message": "What IELTS score should I target?",
+                    "newConversation": True,
+                    "title": "IELTS planning",
+                },
+                {
+                    "message": "Should I learn Docker?",
                     "conversationId": "00000000-0000-0000-0000-000000000000",
                 },
             ]
@@ -77,12 +87,23 @@ class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = Field(
         default=None,
         alias="conversationId",
-        description="Existing conversation UUID. Omit or null to start a new thread.",
+        description=(
+            "Topic-thread UUID. Send on follow-ups within the same discussion. "
+            "If omitted, continues the latest active thread unless newConversation=true."
+        ),
+    )
+    new_conversation: bool = Field(
+        default=False,
+        alias="newConversation",
+        description=(
+            "Start a new topic thread. Does NOT clear Person Vault, goals, tasks, "
+            "documents, or semantic memory — PAI still knows the student."
+        ),
     )
     title: str | None = Field(
         default=None,
         max_length=200,
-        description="Title used only when creating a new conversation.",
+        description="Title used only when creating a new conversation thread.",
         examples=["Germany MS plan"],
     )
 
@@ -101,11 +122,17 @@ _AUTH_ERRORS = {
     summary="Send a counselor message",
     description=(
         "Primary PAI turn. Requires `Authorization: Bearer <accessToken>`.\n\n"
-        "**Swagger:** Authorize with `data.accessToken` from login (token only, no `Bearer` word).\n\n"
-        "**Critical:** Omit `conversationId` only to start a **new** thread. For every "
-        "follow-up, send the same `conversationId` from the previous response "
-        "(`data.conversationId`). Creating a new id each message wipes dialogue history "
-        "for that thread (profile Vault still persists)."
+        "**Product model:** PAI is **one persistent counselor per Person**. "
+        "A conversation is only a topic thread. New chat = new topic, not amnesia.\n\n"
+        "Every turn reconstructs counselor knowledge from:\n"
+        "- Person Vault + typed profile (education, goals, skills)\n"
+        "- Long-term semantic memory (preferences, constraints, insights)\n"
+        "- Tasks, documents, current-thread messages, and recent other-thread snippets\n\n"
+        "**Thread routing:**\n"
+        "- Send `conversationId` to continue the same topic.\n"
+        "- Omit `conversationId` → continue latest active thread (Swagger-friendly).\n"
+        "- `newConversation: true` → new topic thread; person-level memory stays intact.\n\n"
+        "**Swagger:** Authorize with `data.accessToken` only (no `Bearer` prefix)."
     ),
     responses=_AUTH_ERRORS,
 )
@@ -116,12 +143,14 @@ async def chat(
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(resolve_person_from_token),
 ) -> JSONResponse:
-    if body.conversation_id is None:
-        conv = await conv_svc.create_conversation(session, person, title=body.title)
-        conversation_id = conv.id
-    else:
-        await conv_svc.get_conversation_owned(session, person.id, body.conversation_id)
-        conversation_id = body.conversation_id
+    conv = await conv_svc.resolve_chat_conversation(
+        session,
+        person,
+        conversation_id=body.conversation_id,
+        new_conversation=body.new_conversation,
+        title=body.title,
+    )
+    conversation_id = conv.id
 
     user_msg = await conv_svc.save_user_message(session, person, conversation_id, body.message)
     gateway = getattr(request.app.state, "llm_gateway", None)

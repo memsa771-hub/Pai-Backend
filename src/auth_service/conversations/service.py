@@ -25,6 +25,44 @@ async def create_conversation(
     return row
 
 
+async def get_latest_active_conversation(
+    session: AsyncSession, person_id: uuid.UUID
+) -> Conversation | None:
+    result = await session.execute(
+        select(Conversation)
+        .where(Conversation.person_id == person_id, Conversation.status == "active")
+        .order_by(Conversation.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def resolve_chat_conversation(
+    session: AsyncSession,
+    person: Person,
+    *,
+    conversation_id: uuid.UUID | None,
+    new_conversation: bool = False,
+    title: str | None = None,
+) -> Conversation:
+    """Resolve the topic thread for this turn.
+
+    Person-level knowledge (Vault, semantic memory, goals, tasks) is independent of
+    this choice. A new conversation is a new *topic*, not a memory wipe.
+
+    - Explicit conversation_id → continue that thread.
+    - new_conversation=True → create a new topic thread.
+    - Otherwise continue the latest active thread (client convenience / Swagger).
+    """
+    if conversation_id is not None:
+        return await get_conversation_owned(session, person.id, conversation_id)
+    if not new_conversation:
+        existing = await get_latest_active_conversation(session, person.id)
+        if existing is not None:
+            return existing
+    return await create_conversation(session, person, title=title)
+
+
 async def list_conversations(
     session: AsyncSession, person_id: uuid.UUID, *, limit: int = 50, offset: int = 0
 ) -> list[Conversation]:

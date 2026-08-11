@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -123,11 +124,8 @@ class StudentConversationAgent:
         *,
         current_message: str,
         student_context_json: str,
-        recent_messages_json: str = "[]",
-        known_facts_json: str = "{}",
-        missing_critical_fields_json: str = "[]",
+        known_facts_lines: list[str] | None = None,
         pending_confirmations_json: str = "[]",
-        active_tasks_json: str = "[]",
         applied_vault_changes_json: str = "[]",
         task_results_json: str = "[]",
         semantic_memory_context: str = "",
@@ -136,16 +134,28 @@ class StudentConversationAgent:
         conversation_id: str = "",
         tool_registry: ToolRegistry | None = None,
         enable_tools: bool | None = None,
+        # Backward-compatible unused kwargs from older callers/tests
+        recent_messages_json: str = "[]",
+        known_facts_json: str = "{}",
+        missing_critical_fields_json: str = "[]",
+        active_tasks_json: str = "[]",
     ) -> ConversationResult:
+        facts = known_facts_lines
+        if facts is None and known_facts_json and known_facts_json not in ("{}", "[]"):
+            try:
+                parsed = json.loads(known_facts_json)
+                if isinstance(parsed, list):
+                    facts = [str(x) for x in parsed]
+                elif isinstance(parsed, dict):
+                    facts = [f"{k}: {v}" for k, v in parsed.items()]
+            except Exception:
+                facts = []
         prompt_vars: dict[str, Any] = {
             "current_message": current_message,
             "student_context": student_context_json,
-            "recent_messages": recent_messages_json,
-            "known_facts": known_facts_json,
+            "known_facts": facts or [],
             "semantic_memory_context": semantic_memory_context or "(none)",
-            "missing_critical_fields": missing_critical_fields_json,
             "pending_confirmations": pending_confirmations_json,
-            "active_tasks": active_tasks_json,
             "applied_vault_changes": applied_vault_changes_json,
             "task_results": task_results_json,
         }

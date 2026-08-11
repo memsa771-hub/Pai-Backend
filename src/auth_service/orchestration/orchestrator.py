@@ -92,9 +92,20 @@ class PAIOrchestrator:
             person.id,
             session_factory=get_session_factory(self._settings),
         )
-        # Context is loaded once inside the graph (node_load_student_context).
-        # Prefetch semantic memory here only — conversation agent must not re-recall via tools.
-        semantic_ctx = await self._memory.recall(user_message.content)
+        # Person-level long-term memory (survives new conversation threads).
+        # Reconstruct counselor knowledge every turn from persistent Person state.
+        semantic_parts: list[str] = []
+        query_mem = await self._memory.recall(user_message.content)
+        if query_mem:
+            semantic_parts.append(query_mem)
+        profile_mem = await self._memory.recall(
+            "student profile goals preferences constraints budget learning career "
+            "destination country degree gpa",
+            top_k=min(5, self._settings.semantic_memory_max_results),
+        )
+        if profile_mem and profile_mem != query_mem:
+            semantic_parts.append(profile_mem)
+        semantic_ctx = "\n\n".join(semantic_parts)
         state: PAIState = {
             "person_id": str(person.id),
             "conversation_id": str(conversation_id),
@@ -293,6 +304,9 @@ class PAIOrchestrator:
             return state
         pack = state.get("student_context")
         semantic_ctx = state.get("semantic_memory_context") or ""
+        known_facts_lines: list[str] = []
+        if pack is not None and getattr(pack, "known_facts", None):
+            known_facts_lines = list(pack.known_facts)
         allow_web = bool(
             self._settings.enable_counselor_tools
             and self._settings.tavily_api_key
@@ -306,13 +320,10 @@ class PAIOrchestrator:
         result = await self._conversation_agent.respond(
             current_message=state["user_message"],
             student_context_json=state.get("student_context_json") or "{}",
-            recent_messages_json="[]",
-            known_facts_json="{}",
-            missing_critical_fields_json="[]",
+            known_facts_lines=known_facts_lines,
             pending_confirmations_json=json.dumps(
                 [p.model_dump() for p in state.get("pending_confirmations") or []]
             ),
-            active_tasks_json="[]",
             applied_vault_changes_json=json.dumps(
                 [c.model_dump() for c in state.get("applied_vault_changes") or []]
             ),

@@ -23,7 +23,11 @@ class PersonContextPack(BaseModel):
     typed_profile_summary: dict[str, Any] = Field(default_factory=dict)
     vault_completion: dict[str, Any] = Field(default_factory=dict)
     missing_critical_fields: list[str] = Field(default_factory=list)
+    # Explicit list the counselor must not re-ask
+    known_facts: list[str] = Field(default_factory=list)
     recent_messages: list[dict[str, str]] = Field(default_factory=list)
+    # Recent turns from OTHER threads (when clients fragment conversationIds)
+    cross_thread_recent: list[dict[str, str]] = Field(default_factory=list)
     conversation_topic: str | None = None
     pending_conflicts: list[str] = Field(default_factory=list)
     relevant_documents: list[dict[str, str]] = Field(default_factory=list)
@@ -36,6 +40,106 @@ StudentContextPack = PersonContextPack
 
 
 from auth_service.tasks.service import list_tasks_for_person
+
+
+def _sparse_value(entry: Any) -> Any:
+    if isinstance(entry, dict) and "value" in entry:
+        return entry["value"]
+    return entry
+
+
+def build_known_facts(
+    *,
+    identity: dict[str, Any],
+    sparse: dict[str, Any],
+    typed: dict[str, Any],
+) -> list[str]:
+    """Human-readable facts already known — counselor must not re-ask these."""
+    facts: list[str] = []
+    name = identity.get("preferredName") or identity.get("fullName")
+    if name:
+        facts.append(f"Student name: {name}")
+
+    for edu in typed.get("educations") or []:
+        parts = [
+            p
+            for p in (
+                edu.get("degree"),
+                edu.get("major"),
+                edu.get("institution"),
+            )
+            if p
+        ]
+        detail = " / ".join(str(p) for p in parts) if parts else "education record"
+        if edu.get("gpa") is not None:
+            scale = edu.get("gpaScale") or 4.0
+            detail += f", GPA/CGPA {edu['gpa']}/{scale}"
+        if edu.get("percentage") is not None:
+            detail += f", {edu['percentage']}%"
+        facts.append(f"Education: {detail}")
+
+    for goal in typed.get("goals") or []:
+        if goal.get("title"):
+            facts.append(f"Career/study goal: {goal['title']}")
+
+    for skill in (typed.get("skills") or [])[:12]:
+        if skill.get("name"):
+            facts.append(f"Skill: {skill['name']}")
+
+    for key, label in (
+        ("application.study_country", "Target study country/countries"),
+        ("application.career_interest", "Career interest"),
+        ("application.target_universities", "Target universities"),
+        ("application.admission_cycle", "Admission cycle"),
+        ("mobility.preferred_regions", "Preferred regions"),
+        ("education.stream", "Education stream"),
+        ("education.marks", "Marks"),
+        ("education.additional_maths", "Additional Maths"),
+        ("location.current_city", "Current city"),
+        ("preferences.preferred_language", "Preferred language"),
+        ("preferences.learning_style", "Learning style"),
+        ("preferences.communication_style", "Communication style"),
+        ("finance.funding_status", "Funding / budget status"),
+        ("finance.scholarship_interest", "Scholarship interest"),
+        ("mobility.relocation_willingness", "Relocation willingness"),
+    ):
+        if key in sparse:
+            facts.append(f"{label}: {_sparse_value(sparse[key])}")
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for f in facts:
+        if f not in seen:
+            seen.add(f)
+            out.append(f)
+    return out
+
+
+async def _load_cross_thread_messages(
+    session: AsyncSession,
+    person_id: uuid.UUID,
+    *,
+    exclude_conversation_id: uuid.UUID | None,
+    limit: int = 12,
+) -> list[dict[str, str]]:
+    """Last N messages across all active threads (helps when clients split chats)."""
+    q = (
+        select(Message)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(
+            Message.person_id == person_id,
+            Conversation.person_id == person_id,
+            Conversation.status == "active",
+        )
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    if exclude_conversation_id is not None:
+        q = q.where(Message.conversation_id != exclude_conversation_id)
+    result = await session.execute(q)
+    rows = list(reversed(result.scalars().all()))
+    return [{"role": m.role, "content": m.content} for m in rows]
 
 
 async def build_person_context_pack(
@@ -51,6 +155,7 @@ async def build_person_context_pack(
     vault_svc = VaultService(settings)
     unified = await vault_svc.get_unified_vault(session, person, include_sensitive=False)
     completion = unified.get("completion") or {}
+    sparse = unified.get("sparseFields") or {}
     limit = settings.chat_recent_message_limit
     recent: list[dict[str, str]] = []
     topic: str | None = None
@@ -73,6 +178,12 @@ async def build_person_context_pack(
             )
             rows = list(reversed(result.scalars().all()))
             recent = [{"role": m.role, "content": m.content} for m in rows]
+    cross = await _load_cross_thread_messages(
+        session,
+        person.id,
+        exclude_conversation_id=conversation_id,
+        limit=min(12, limit),
+    )
     docs = await session.execute(
         select(Document)
         .where(
@@ -102,19 +213,22 @@ async def build_person_context_pack(
         {"id": str(t.id), "title": t.title, "status": t.status} for t in tasks if t.status == "proposed"
     ]
     typed_records = await load_typed_profile_records(session, person.id)
+    identity = {
+        "email": person.email,
+        "fullName": person.full_name,
+        "preferredName": person.preferred_name,
+    }
+    known = build_known_facts(identity=identity, sparse=sparse, typed=typed_records)
     return PersonContextPack(
         person_id=str(person.id),
-        identity={
-            "email": person.email,
-            "fullName": person.full_name,
-            "preferredName": person.preferred_name,
-        },
-        applicable_vault_fields=unified.get("sparseFields") or {},
-        # Full typed rows (educations/goals/…) so counselor can avoid re-asking known facts.
+        identity=identity,
+        applicable_vault_fields=sparse,
         typed_profile_summary=typed_records,
         vault_completion=completion,
         missing_critical_fields=list(completion.get("missingCriticalFields") or []),
+        known_facts=known,
         recent_messages=recent,
+        cross_thread_recent=cross,
         conversation_topic=topic,
         pending_conflicts=pending_conflicts,
         relevant_documents=doc_summaries,

@@ -16,6 +16,7 @@ REQUIRED_VARS: dict[str, set[str]] = {
     "student_conversation.v1.jinja2": {
         "current_message",
         "student_context",
+        "known_facts",
         "semantic_memory_context",
         "pending_confirmations",
         "applied_vault_changes",
@@ -48,5 +49,12 @@ def validate_prompt_templates() -> None:
         source = path.read_text(encoding="utf-8")
         env.from_string(source)
         for var in required:
-            if f"{{{{ {var}" not in source and f"{{{{ {var} }}" not in source:
+            needle = var
+            if (
+                f"{{{{ {needle}" not in source
+                and f"{{{{ {needle} }}" not in source
+                and f" {needle} " not in source
+                and f"({needle})" not in source
+                and f"in {needle}" not in source
+            ):
                 raise ValueError(f"Prompt {name} missing required variable {var}")

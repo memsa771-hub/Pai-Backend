@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 EXPOSE 8000
 
-CMD ["uvicorn", "auth_service.app:create_app_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "pai.app:create_app_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]

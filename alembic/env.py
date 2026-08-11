@@ -8,12 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from auth_service.data.base import Base
-import auth_service.person.models  # noqa: F401
-import auth_service.conversations.models  # noqa: F401
-import auth_service.documents.models  # noqa: F401
-import auth_service.tasks.models  # noqa: F401
-import auth_service.memory.models  # noqa: F401
+from pai.data.base import Base
+import pai.person.models  # noqa: F401
+import pai.conversations.models  # noqa: F401
+import pai.documents.models  # noqa: F401
+import pai.tasks.models  # noqa: F401
+import pai.memory.models  # noqa: F401
 
 config = context.config
 
@@ -24,7 +24,7 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    from auth_service.config import get_settings
+    from pai.config import get_settings
 
     settings = get_settings()
     # Prefer .env via Settings; allow shell override only when explicitly set after load

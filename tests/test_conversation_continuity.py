@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from auth_service.conversations.service import resolve_chat_conversation
-from auth_service.orchestration.context import build_known_facts
+from pai.conversations.service import resolve_chat_conversation
+from pai.orchestration.context import build_known_facts
 
 
 def test_known_facts_lists_education_and_country():
@@ -44,10 +44,10 @@ def test_known_facts_lists_education_and_country():
 
 @pytest.mark.asyncio
 async def test_resolve_chat_continues_latest(postgres_ready):
-    from auth_service.core.provider import ProviderUser
-    from auth_service.data.db import get_session_factory, reset_engine_for_tests
-    from auth_service.person.models import Person
-    from auth_service.person.service import PersonBootstrapService
+    from pai.core.provider import ProviderUser
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.person.models import Person
+    from pai.person.service import PersonBootstrapService
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

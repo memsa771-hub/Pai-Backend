@@ -7,9 +7,9 @@ import uuid
 import pytest
 from pydantic import BaseModel
 
-from auth_service.llm.gateway import LLMGateway
-from auth_service.llm.schemas import LLMMessage, LLMRequest, LLMResponse
-from auth_service.orchestration.schemas import ConversationResult, VaultCandidate
+from pai.llm.gateway import LLMGateway
+from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
+from pai.orchestration.schemas import ConversationResult, VaultCandidate
 
 
 class _MockLLM:
@@ -86,11 +86,11 @@ def test_chat_llm_failure_leaves_user_message(vault_client, verified_user, test_
 
     gateway = LLMGateway(test_settings)
     gateway.register_provider("deepseek", FailLLM())
-    from auth_service.orchestration.orchestrator import PAIOrchestrator
+    from pai.orchestration.orchestrator import PAIOrchestrator
 
     orch = PAIOrchestrator(test_settings, gateway=gateway)
     monkeypatch.setattr(
-        "auth_service.ingestion.chat.PAIOrchestrator",
+        "pai.ingestion.chat.PAIOrchestrator",
         lambda settings, gateway=None: orch,
     )
     resp = client.post(
@@ -135,7 +135,7 @@ def test_live_deepseek_structured_smoke():
     import asyncio
     import os
 
-    from auth_service.config import get_settings
+    from pai.config import get_settings
 
     settings = get_settings()
     if not settings.deepseek_api_key:

@@ -5,13 +5,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from jose import jwt
 
-from auth_service.config import Settings
-from auth_service.core.errors import (
+from pai.config import Settings
+from pai.core.errors import (
     EmailAlreadyInUseError,
     EmailNotVerifiedError,
     InvalidCredentialsError,
 )
-from auth_service.core.provider import (
+from pai.core.provider import (
     GenericActionResult,
     ProviderSession,
     ProviderUser,
@@ -54,7 +54,7 @@ class FakeAuthProvider:
     async def refresh(self, refresh_token: str) -> ProviderSession:
         access = self.refresh_to_access.get(refresh_token)
         if not access:
-            from auth_service.core.errors import InvalidTokenError
+            from pai.core.errors import InvalidTokenError
 
             raise InvalidTokenError()
         session = self.sessions[access]
@@ -84,7 +84,7 @@ class FakeAuthProvider:
         resolved_email = code.replace("ticket:", "")
         user = self.users.get(resolved_email) or self.users.get(email)
         if not user:
-            from auth_service.core.errors import InvalidTokenError
+            from pai.core.errors import InvalidTokenError
 
             raise InvalidTokenError()
         user["verified"] = True
@@ -100,7 +100,7 @@ class FakeAuthProvider:
     async def reset_password(self, ticket: str, new_password: str) -> GenericActionResult:
         email = ticket.replace("passwordReset:", "")
         if email not in self.users:
-            from auth_service.core.errors import InvalidTokenError
+            from pai.core.errors import InvalidTokenError
 
             raise InvalidTokenError()
         self.users[email]["password"] = new_password
@@ -109,7 +109,7 @@ class FakeAuthProvider:
     async def change_password(self, access_token: str, new_password: str) -> GenericActionResult:
         session = self.sessions.get(access_token)
         if not session:
-            from auth_service.core.errors import InvalidTokenError
+            from pai.core.errors import InvalidTokenError
 
             raise InvalidTokenError()
         for user in self.users.values():
@@ -120,7 +120,7 @@ class FakeAuthProvider:
     async def get_user(self, access_token: str) -> ProviderUser:
         session = self.sessions.get(access_token)
         if not session:
-            from auth_service.core.errors import InvalidTokenError
+            from pai.core.errors import InvalidTokenError
 
             raise InvalidTokenError()
         return session.user
@@ -128,7 +128,7 @@ class FakeAuthProvider:
     async def delete_user(self, access_token: str) -> None:
         session = self.sessions.get(access_token)
         if not session:
-            from auth_service.core.errors import InvalidTokenError
+            from pai.core.errors import InvalidTokenError
 
             raise InvalidTokenError()
         self.deleted.append(session.user.id)
@@ -225,7 +225,7 @@ def bearer_token(test_settings: Settings) -> str:
 def client(test_settings: Settings, fake_provider: FakeAuthProvider):
     from fastapi.testclient import TestClient
 
-    from auth_service.app import create_app
+    from pai.app import create_app
 
     app = create_app(test_settings)
     app.state.auth_provider = fake_provider
@@ -255,7 +255,7 @@ def _run_migrations(database_url: str) -> None:
 async def _ping_db(settings: Settings) -> None:
     from sqlalchemy import text
 
-    from auth_service.data.db import get_engine, reset_engine_for_tests
+    from pai.data.db import get_engine, reset_engine_for_tests
 
     reset_engine_for_tests()
     engine = get_engine(settings)
@@ -266,7 +266,7 @@ async def _ping_db(settings: Settings) -> None:
 async def _truncate_all(settings: Settings) -> None:
     from sqlalchemy import text
 
-    from auth_service.data.db import get_session_factory, reset_engine_for_tests
+    from pai.data.db import get_session_factory, reset_engine_for_tests
 
     reset_engine_for_tests()
     factory = get_session_factory(settings)
@@ -303,8 +303,8 @@ def vault_client(postgres_ready: Settings, fake_provider: FakeAuthProvider):
 
     from fastapi.testclient import TestClient
 
-    from auth_service.app import create_app
-    from auth_service.data.db import reset_engine_for_tests
+    from pai.app import create_app
+    from pai.data.db import reset_engine_for_tests
 
     reset_engine_for_tests()
     asyncio.run(_truncate_all(postgres_ready))

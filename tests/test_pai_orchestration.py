@@ -7,19 +7,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from auth_service.llm.gateway import LLMGateway
-from auth_service.llm.schemas import LLMMessage, LLMRequest, LLMResponse
-from auth_service.orchestration.agents import FactExtractionAgent, StudentConversationAgent
-from auth_service.orchestration.orchestrator import PAIOrchestrator
-from auth_service.orchestration.routing import should_extract_facts
-from auth_service.orchestration.schemas import (
+from pai.llm.gateway import LLMGateway
+from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
+from pai.orchestration.agents import FactExtractionAgent, StudentConversationAgent
+from pai.orchestration.orchestrator import PAIOrchestrator
+from pai.orchestration.routing import should_extract_facts
+from pai.orchestration.schemas import (
     ConversationResult,
     FactExtractionResult,
     TaskProposal,
     VaultCandidate,
 )
-from auth_service.orchestration.candidate_eval import evaluate_candidate_with_context
-from auth_service.orchestration.verifier import validate_candidate
+from pai.orchestration.candidate_eval import evaluate_candidate_with_context
+from pai.orchestration.verifier import validate_candidate
 
 
 class SchemaRoutingMockProvider:
@@ -118,8 +118,8 @@ def test_invalid_llm_field_rejected_before_vault():
 
 @pytest.mark.asyncio
 async def test_evaluate_sensitive_pending(postgres_ready, test_settings):
-    from auth_service.data.db import get_session_factory, reset_engine_for_tests
-    from auth_service.person.models import Person, PersonVault
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.person.models import Person, PersonVault
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -198,7 +198,7 @@ def test_mock_provider_replace_deepseek(test_settings):
 
 
 def test_llm_call_budget_constants():
-    from auth_service.orchestration.orchestrator import MAX_LLM_CALLS_PER_TURN
+    from pai.orchestration.orchestrator import MAX_LLM_CALLS_PER_TURN
 
     assert MAX_LLM_CALLS_PER_TURN == 2
 
@@ -245,10 +245,10 @@ def test_vault_candidate_fields_roundtrip():
 
 def test_duplicate_tasks_prevented(postgres_ready, test_settings):
     import asyncio
-    from auth_service.data.db import get_session_factory, reset_engine_for_tests
-    from auth_service.person.models import Person
-    from auth_service.tasks.service import process_task_proposals
-    from auth_service.orchestration.schemas import TaskProposal
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.person.models import Person
+    from pai.tasks.service import process_task_proposals
+    from pai.orchestration.schemas import TaskProposal
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

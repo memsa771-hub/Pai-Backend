@@ -1,6 +1,6 @@
-# Placement AI — Auth & Person Vault Service
+# Placement AI (PAI) Backend
 
-FastAPI backend for Placement AI: **Phase 1** authentication (Supabase Auth) and **Phase 2** Person profile + Person Vault (PostgreSQL). The frontend calls this service only; Supabase Auth stays behind an `AuthProvider` interface.
+FastAPI backend for **Placement AI**: auth, Person Vault, chat counselor, Vault Intelligence extraction, documents, and memory. The frontend calls this service only; Supabase Auth stays behind an `AuthProvider` interface.
 
 **Detailed handoff:** [DEVELOPER.md](DEVELOPER.md)
 
@@ -26,7 +26,7 @@ cd PAI-main-b-end
 uv sync
 Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 uv run alembic upgrade head
-uv run uvicorn auth_service.app:create_app_from_env --factory --reload --host 127.0.0.1 --port 8000
+uv run uvicorn pai.app:create_app_from_env --factory --reload --host 127.0.0.1 --port 8000
 ```
 
 Or run migrations only:
@@ -40,7 +40,7 @@ Or run migrations only:
 ```bash
 pip install -e ".[dev]"
 python -m alembic upgrade head
-python -m uvicorn auth_service.app:create_app_from_env --factory --reload
+python -m uvicorn pai.app:create_app_from_env --factory --reload
 ```
 
 Open Swagger: `http://localhost:8000/docs`
@@ -220,8 +220,8 @@ Migrations: `001_phase2_person_vault`, `002_phase3_counselor` (conversations, me
 ## Docker (API only)
 
 ```bash
-docker build -t pai-auth-service .
-docker run --env-file .env -p 8000:8000 pai-auth-service
+docker build -t pai-backend .
+docker run --env-file .env -p 8000:8000 pai-backend
 ```
 
 ## Out of scope (Phase 4+)

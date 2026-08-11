@@ -6,12 +6,12 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from auth_service.llm.gateway import LLMGateway
-from auth_service.llm.schemas import LLMMessage, LLMRequest, LLMResponse
-from auth_service.llm.providers.deepseek import LLMProviderError
-from auth_service.orchestration.prompts import render_template, validate_prompt_templates
-from auth_service.orchestration.schemas import ConversationResult, FactExtractionResult, VaultCandidate
-from auth_service.orchestration.verifier import policy_decision, validate_candidate
+from pai.llm.gateway import LLMGateway
+from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
+from pai.llm.providers.deepseek import LLMProviderError
+from pai.orchestration.prompts import render_template, validate_prompt_templates
+from pai.orchestration.schemas import ConversationResult, FactExtractionResult, VaultCandidate
+from pai.orchestration.verifier import policy_decision, validate_candidate
 
 
 class RecordingMockProvider:
@@ -61,14 +61,19 @@ def test_prompt_render_student_conversation():
         task_results="[]",
     )
     assert "PAI" in text or "student" in text.lower()
-    extract = render_template(
-        "fact_extraction.v1.jinja2",
-        message_id="msg-1",
-        user_message="My GPA is 3.9",
-        source_type="chat",
-        catalog_hint="",
+    from pai.intelligence.vault_intel.llm_extractor import _render as render_intel
+
+    extract = render_intel(
+        "omnibus.v1.jinja2",
+        source="chat",
+        source_reference="msg-1",
+        document_type_hint="",
+        known_facts=[],
+        catalog_hint="education.gpa",
+        text="My GPA is 3.9",
     )
     assert "msg-1" in extract
+    assert "3.9" in extract
 
 
 def test_gateway_uses_registered_mock_provider(test_settings):
@@ -119,7 +124,7 @@ def test_gateway_provider_switch_without_changing_orchestration(test_settings):
 
 
 def test_deepseek_invalid_structured_json(test_settings, monkeypatch):
-    from auth_service.llm.providers.deepseek import DeepSeekProvider
+    from pai.llm.providers.deepseek import DeepSeekProvider
 
     settings = test_settings.model_copy(update={"deepseek_api_key": "test-key"})
     provider = DeepSeekProvider(settings)
@@ -178,8 +183,8 @@ def test_policy_sensitive_requires_confirmation():
 
 def test_chat_message_with_mock_counselor(verified_user, test_settings, monkeypatch):
     from tests.test_pai_orchestration import SchemaRoutingMockProvider
-    from auth_service.orchestration.orchestrator import PAIOrchestrator
-    from auth_service.orchestration.schemas import VaultCandidate as OrchVaultCandidate
+    from pai.orchestration.orchestrator import PAIOrchestrator
+    from pai.orchestration.schemas import VaultCandidate as OrchVaultCandidate
 
     client, headers, _ = verified_user
     client.post("/api/v1/person/bootstrap", headers=headers)
@@ -207,7 +212,7 @@ def test_chat_message_with_mock_counselor(verified_user, test_settings, monkeypa
     gateway.register_provider("deepseek", mock)
     orchestrator = PAIOrchestrator(test_settings, gateway=gateway)
     monkeypatch.setattr(
-        "auth_service.ingestion.chat.PAIOrchestrator",
+        "pai.ingestion.chat.PAIOrchestrator",
         lambda settings, gateway=None: orchestrator,
     )
     resp = client.post(
@@ -280,10 +285,10 @@ def test_claim_job_skip_locked(postgres_ready, test_settings):
     import asyncio
     from datetime import UTC, datetime
 
-    from auth_service.data.db import get_session_factory, reset_engine_for_tests
-    from auth_service.documents.models import Document, DocumentJob
-    from auth_service.documents.service import claim_next_job
-    from auth_service.person.models import Person
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.documents.models import Document, DocumentJob
+    from pai.documents.service import claim_next_job
+    from pai.person.models import Person
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

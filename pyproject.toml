@@ -1,7 +1,7 @@
 [project]
-name = "pai-auth-service"
-version = "0.1.0"
-description = "Placement AI Phase 1 authentication backend (FastAPI + Supabase)"
+name = "pai"
+version = "0.2.0"
+description = "Placement AI (PAI) — student counselor backend (FastAPI + Supabase + DeepSeek)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -47,11 +47,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/auth_service"]
+packages = ["src/pai"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/auth_service/orchestration/prompts" = "auth_service/orchestration/prompts"
-"src/auth_service/intelligence/vault_intel/prompts" = "auth_service/intelligence/vault_intel/prompts"
+"src/pai/orchestration/prompts" = "pai/orchestration/prompts"
+"src/pai/intelligence/vault_intel/prompts" = "pai/intelligence/vault_intel/prompts"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

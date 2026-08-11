@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from auth_service.conversations.service import messages_to_flow
-from auth_service.conversations.models import Message
+from pai.conversations.service import messages_to_flow
+from pai.conversations.models import Message
 
 
 def _msg(role: str, content: str) -> Message:

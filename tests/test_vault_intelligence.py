@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from auth_service.intelligence.vault_intel.boosters import run_deterministic_boosters
-from auth_service.intelligence.vault_intel.merge import merge_candidates
-from auth_service.intelligence.vault_intel.normalize import normalize_candidates
-from auth_service.intelligence.vault_intel.service import VaultIntelligenceService
-from auth_service.orchestration.schemas import VaultCandidate
+from pai.intelligence.vault_intel.boosters import run_deterministic_boosters
+from pai.intelligence.vault_intel.merge import merge_candidates
+from pai.intelligence.vault_intel.normalize import normalize_candidates
+from pai.intelligence.vault_intel.service import VaultIntelligenceService
+from pai.orchestration.schemas import VaultCandidate
 
 
 def test_boosters_catch_marks_stream_countries_and_cgpa():
@@ -83,7 +83,7 @@ def test_merge_prefers_booster_on_marks():
 
 
 def test_vault_intel_registers_future_sources(test_settings):
-    from auth_service.llm.gateway import LLMGateway
+    from pai.llm.gateway import LLMGateway
 
     gw = LLMGateway(test_settings)
     svc = VaultIntelligenceService(gw)

@@ -1,9 +1,9 @@
 import httpx
 import pytest
 
-from auth_service.config import Settings
-from auth_service.core.errors import InvalidCredentialsError, ProviderUnavailableError
-from auth_service.providers.supabase import SupabaseAuthProvider
+from pai.config import Settings
+from pai.core.errors import InvalidCredentialsError, ProviderUnavailableError
+from pai.providers.supabase import SupabaseAuthProvider
 
 
 @pytest.fixture

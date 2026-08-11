@@ -7,16 +7,16 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from auth_service.ingestion.vault_apply import process_candidates
-from auth_service.orchestration.schemas import VaultCandidate
-from auth_service.person.models import Education, Person, VaultValue
+from pai.ingestion.vault_apply import process_candidates
+from pai.orchestration.schemas import VaultCandidate
+from pai.person.models import Education, Person, VaultValue
 
 
 @pytest.mark.asyncio
 async def test_education_gpa_typed_apply(postgres_ready):
-    from auth_service.data.db import get_session_factory, reset_engine_for_tests
-    from auth_service.person.service import PersonBootstrapService
-    from auth_service.core.provider import ProviderUser
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.person.service import PersonBootstrapService
+    from pai.core.provider import ProviderUser
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -75,9 +75,9 @@ async def test_education_gpa_typed_apply(postgres_ready):
 
 @pytest.mark.asyncio
 async def test_passport_pending_sensitive(postgres_ready):
-    from auth_service.data.db import get_session_factory, reset_engine_for_tests
-    from auth_service.person.service import PersonBootstrapService
-    from auth_service.core.provider import ProviderUser
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.person.service import PersonBootstrapService
+    from pai.core.provider import ProviderUser
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

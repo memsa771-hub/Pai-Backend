@@ -18,7 +18,9 @@ class VaultCandidate(BaseModel):
     value: Any
     confidence: float = Field(ge=0.0, le=1.0)
     explicitness: Explicitness = "explicit"
-    source_type: Literal["chat", "document", "manual", "auth", "system"] = "chat"
+    source_type: Literal[
+        "chat", "document", "manual", "auth", "system", "linkedin", "social"
+    ] = "chat"
     source_reference: str
     evidence_text: str
     is_correction: bool = False

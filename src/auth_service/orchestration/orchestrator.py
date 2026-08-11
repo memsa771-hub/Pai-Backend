@@ -188,11 +188,29 @@ class PAIOrchestrator:
                 RunError(code="LLM_LIMIT", message="LLM call limit reached", step="extract_facts")
             )
             return state
+        pack = state.get("student_context")
+        known_facts = list(getattr(pack, "known_facts", None) or [])
         candidates = await self._fact_agent.extract_from_chat(
             user_message=state["user_message"],
             user_message_id=state["user_message_id"],
+            known_facts=known_facts,
+            person_id=state.get("person_id"),
+            memory=self._memory,
         )
         state["fact_candidates"] = candidates
+        bundle = getattr(self._fact_agent, "last_bundle", None)
+        if bundle is not None:
+            state.setdefault("tool_trace", []).append(
+                {
+                    "service": "vault_intelligence",
+                    "source": bundle.source.value if hasattr(bundle.source, "value") else str(bundle.source),
+                    "domains": bundle.domains_fired,
+                    "boosterHits": bundle.booster_hits,
+                    "candidateCount": len(bundle.candidates),
+                    "providerCalls": bundle.provider_calls,
+                    "coverage": bundle.coverage_notes,
+                }
+            )
         state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
         if self._run:
             self._run.current_step = "validate_candidates"
@@ -338,7 +356,9 @@ class PAIOrchestrator:
         state["assistant_result"] = result
         state["assistant_reply"] = result.reply
         state["task_proposals"] = result.task_proposals
-        state["tool_trace"] = list(self._conversation_agent.last_tool_trace or [])
+        prior_trace = list(state.get("tool_trace") or [])
+        prior_trace.extend(self._conversation_agent.last_tool_trace or [])
+        state["tool_trace"] = prior_trace
         state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
         if self._memory:
             self._memory.record_turn(user=state["user_message"], assistant=result.reply)

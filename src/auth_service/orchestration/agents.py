@@ -5,18 +5,15 @@ import logging
 from typing import Any
 
 from auth_service.config import Settings, get_settings
+from auth_service.intelligence.vault_intel.service import VaultIntelligenceService
+from auth_service.intelligence.vault_intel.types import ExtractionBundle
 from auth_service.llm.gateway import LLMGateway
 from auth_service.llm.schemas import LLMMessage
 from auth_service.memory.service import PersonMemoryService
 from auth_service.orchestration.counselor_graph import run_counselor_with_tools
 from auth_service.orchestration.prompts import render_template
-from auth_service.orchestration.schemas import (
-    ConversationResult,
-    FactExtractionResult,
-    VaultCandidate,
-)
+from auth_service.orchestration.schemas import ConversationResult, VaultCandidate
 from auth_service.tools.registry import ToolRegistry, build_default_registry
-from auth_service.vault.catalog import extraction_catalog_hint
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +21,12 @@ MAX_REPAIR = 1
 
 
 class FactExtractionAgent:
-    """Silent specialist: extract vault candidates only. Never writes data."""
+    """Compatibility facade over VaultIntelligenceService (chat + document)."""
 
     def __init__(self, gateway: LLMGateway) -> None:
         self._gateway = gateway
+        self._intel = VaultIntelligenceService(gateway)
+        self.last_bundle: ExtractionBundle | None = None
 
     async def extract_from_chat(
         self,
@@ -35,21 +34,20 @@ class FactExtractionAgent:
         user_message: str,
         user_message_id: str,
         catalog_hint: str | None = None,
+        known_facts: list[str] | None = None,
+        person_id: str | None = None,
+        memory: PersonMemoryService | None = None,
     ) -> list[VaultCandidate]:
-        hint = catalog_hint or extraction_catalog_hint()
-        prompt = render_template(
-            "fact_extraction.v1.jinja2",
-            message_id=user_message_id,
+        del catalog_hint  # catalog is owned by Vault Intelligence
+        intel = VaultIntelligenceService(self._gateway, memory=memory)
+        bundle = await intel.extract_chat_bundle(
             user_message=user_message,
-            source_type="chat",
-            catalog_hint=hint,
+            user_message_id=user_message_id,
+            known_facts=known_facts,
+            person_id=person_id,
         )
-        result = await self._run_structured(prompt)
-        for c in result.fact_candidates:
-            c.source_type = "chat"
-            if not c.source_reference:
-                c.source_reference = user_message_id
-        return result.fact_candidates
+        self.last_bundle = bundle
+        return bundle.candidates
 
     async def extract_from_document(
         self,
@@ -57,51 +55,19 @@ class FactExtractionAgent:
         document_id: str,
         document_text: str,
         document_type_hint: str = "generic",
+        known_facts: list[str] | None = None,
+        person_id: str | None = None,
+        memory: PersonMemoryService | None = None,
     ) -> list[VaultCandidate]:
-        hint = (
-            f"{extraction_catalog_hint()}\n\nDocument type hint: {document_type_hint}"
-            if document_type_hint
-            else extraction_catalog_hint()
+        intel = VaultIntelligenceService(self._gateway, memory=memory)
+        candidates = await intel.extract_from_document(
+            document_id=document_id,
+            document_text=document_text,
+            document_type_hint=document_type_hint,
+            known_facts=known_facts,
+            person_id=person_id,
         )
-        prompt = render_template(
-            "fact_extraction.v1.jinja2",
-            message_id=document_id,
-            user_message=document_text,
-            source_type="document",
-            catalog_hint=hint,
-        )
-        result = await self._run_structured(prompt)
-        for c in result.fact_candidates:
-            c.source_type = "document"
-            if not c.source_reference:
-                c.source_reference = document_id
-        return result.fact_candidates
-
-    async def _run_structured(self, user_prompt: str) -> FactExtractionResult:
-        last_err: Exception | None = None
-        for attempt in range(MAX_REPAIR + 1):
-            try:
-                out = await self._gateway.run(
-                    task="fact_extraction",
-                    messages=[
-                        LLMMessage(
-                            role="system",
-                            content=(
-                                "You extract structured profile facts only. "
-                                "Never write counselor replies. Return JSON only."
-                            ),
-                        ),
-                        LLMMessage(role="user", content=user_prompt),
-                    ],
-                    output_schema=FactExtractionResult,
-                    temperature=0.1,
-                )
-                assert isinstance(out, FactExtractionResult)
-                return out
-            except Exception as exc:
-                last_err = exc
-                logger.warning("Fact extraction parse attempt %s failed", attempt + 1)
-        raise last_err or RuntimeError("fact extraction failed")
+        return candidates
 
 
 class StudentConversationAgent:

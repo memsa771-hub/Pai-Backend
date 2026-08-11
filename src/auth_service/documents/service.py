@@ -139,6 +139,7 @@ async def process_document_job(
         document_id=str(doc.id),
         document_text=text_content,
         document_type_hint=doc.document_type or "generic",
+        person_id=str(doc.person_id),
     )
     doc.document_type = doc.document_type or "generic"
     person = await session.get(Person, doc.person_id)

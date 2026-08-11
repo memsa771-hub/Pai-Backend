@@ -1,0 +1,26 @@
+Extract supported profile facts from the user message or document text below.
+
+Source type: {{ source_type }}
+Source reference ID (use exactly for every candidate): {{ message_id }}
+
+{% if catalog_hint %}
+Document or context hint: {{ catalog_hint }}
+{% endif %}
+
+Rules:
+- Map each fact to an existing vault catalog field_key only.
+- Include evidence_text quoting the supporting phrase.
+- Set explicitness: explicit | strongly_implied | uncertain.
+- Set is_correction true when the user corrects prior information.
+- Set requires_confirmation for sensitive or uncertain facts.
+- Return an empty fact_candidates list when there are no supported facts.
+- Never compose a reply to the student.
+
+Content:
+{{ user_message }}
+
+Return JSON: { "fact_candidates": [ ... ] }
+
+Each candidate fields:
+candidate_id, field_key, value, confidence, explicitness, source_type, source_reference,
+evidence_text, is_correction, requires_confirmation, rationale_summary

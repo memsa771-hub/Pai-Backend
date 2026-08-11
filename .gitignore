@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+!supabase-setup.template.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.tmp_pkgs/

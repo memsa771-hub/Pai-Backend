@@ -22,7 +22,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:3000"], alias="CORS_ORIGINS"
     )
     trusted_hosts: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["localhost", "127.0.0.1"],
+        default_factory=lambda: ["*"],
         alias="TRUSTED_HOSTS",
     )
 

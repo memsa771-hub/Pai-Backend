@@ -168,6 +168,8 @@ Optional: goal detail (free-text note), LinkedIn, GPA, graduation year, skills, 
 
 `GET /api/v1/onboarding` returns `enums` — use those ids in the submit payload, not free-text labels.
 
+Field-by-field reference (including `otherLevelLabel`): [docs/onboarding-fields.md](docs/onboarding-fields.md).
+
 National ID is **not** part of general onboarding. Name and email come from signup.
 
 | Method | Path | Description |

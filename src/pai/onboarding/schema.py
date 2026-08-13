@@ -170,7 +170,15 @@ class OnboardingSubmit(BaseModel):
     )
     degree: str | None = Field(default=None, max_length=128, examples=["BSCS"])
     major: FieldOfStudy | None = None
-    otherLevelLabel: str | None = Field(default=None, max_length=128)
+    otherLevelLabel: str | None = Field(
+        default=None,
+        max_length=128,
+        examples=["A-Levels"],
+        description=(
+            "Only when educationLevel is `other`: the name of that qualification "
+            "(e.g. A-Levels, IB, CA). Ignored for high_school / diploma / bachelor / master / phd."
+        ),
+    )
     primaryGoal: PrimaryGoal
     goalDetail: str | None = Field(
         default=None,

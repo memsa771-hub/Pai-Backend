@@ -13,6 +13,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "auth",
         "description": (
             "Sign up, login, refresh, and account recovery. "
+            "Signup collects full name, email, phone, password, and confirm password. "
             "**Start here for Swagger testing:** `POST /auth/login` → copy `data.accessToken` → Authorize."
         ),
     },
@@ -27,8 +28,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "onboarding",
         "description": (
-            "Required three-step Person Vault setup after first verified login. "
-            "Chat and documents stay locked until `POST /api/v1/onboarding/complete`."
+            "Choose Complete Onboarding or Upload My CV after first verified login. "
+            "Chat stays locked until `POST /api/v1/onboarding/complete`."
         ),
     },
     {

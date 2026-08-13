@@ -24,8 +24,10 @@ class AuthService:
     def new_csrf_token() -> str:
         return secrets.token_urlsafe(32)
 
-    async def signup(self, email: str, password: str) -> dict:
-        result = await self._provider.signup(email, password)
+    async def signup(
+        self, email: str, password: str, full_name: str = "", phone: str = ""
+    ) -> dict:
+        result = await self._provider.signup(email, password, full_name, phone)
         payload: dict = {"message": result.message}
         if result.session:
             payload["session"] = self._public_session(result.session, include_refresh=False)

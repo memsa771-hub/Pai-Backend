@@ -85,6 +85,7 @@ async def get_person_me(
                     if person.onboarding_completed_at
                     else None
                 ),
+                "onboardingPath": person.onboarding_path,
             }
         )
     )

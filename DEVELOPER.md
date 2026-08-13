@@ -59,7 +59,7 @@ Authorize with **accessToken only** (no `Bearer` prefix in the Swagger box).
 
 ## Chat model (important)
 
-- After first verified login, complete **3-step onboarding** before chat
+- After first verified login, choose **Complete Onboarding** or **Upload My CV**
 - Onboarding writes into the same Person Vault (not a separate profile)
 - PAI is **one counselor per Person**
 - A conversation is only a **topic thread**

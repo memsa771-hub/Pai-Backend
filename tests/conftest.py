@@ -28,7 +28,9 @@ class FakeAuthProvider:
         self.logout_calls: list[tuple[str, str]] = []
         self.deleted: list[str] = []
 
-    async def signup(self, email: str, password: str) -> SignupResult:
+    async def signup(
+        self, email: str, password: str, full_name: str = "", phone: str = ""
+    ) -> SignupResult:
         if email in self.users:
             raise EmailAlreadyInUseError()
         user_id = f"user-{len(self.users) + 1}"
@@ -37,6 +39,8 @@ class FakeAuthProvider:
             "email": email,
             "password": password,
             "verified": False,
+            "full_name": full_name or None,
+            "phone": phone or None,
         }
         return SignupResult(
             session=None,
@@ -155,7 +159,8 @@ class FakeAuthProvider:
             id=user["id"],
             email=user["email"],
             email_verified=user["verified"],
-            display_name=None,
+            display_name=user.get("full_name"),
+            phone=user.get("phone"),
             roles=["user"],
             created_at=datetime.now(UTC).isoformat(),
         )
@@ -324,14 +329,21 @@ def auth_headers(client, email: str, password: str) -> dict[str, str]:
 
 
 def complete_onboarding(client, headers: dict[str, str]) -> None:
+    chosen = client.post(
+        "/api/v1/onboarding/path",
+        headers=headers,
+        json={"path": "manual"},
+    )
+    assert chosen.status_code == 200, chosen.text
     step1 = client.put(
         "/api/v1/onboarding/steps/1",
         headers=headers,
         json={
-            "fullName": "Test Student",
             "dateOfBirth": "2004-03-12",
-            "gender": "female",
             "nationality": "Pakistani",
+            "currentCountry": "Pakistan",
+            "currentCity": "Lahore",
+            "currentStatus": "student",
         },
     )
     assert step1.status_code == 200, step1.text
@@ -339,9 +351,11 @@ def complete_onboarding(client, headers: dict[str, str]) -> None:
         "/api/v1/onboarding/steps/2",
         headers=headers,
         json={
-            "currentCountry": "Pakistan",
-            "currentCity": "Lahore",
-            "currentStatus": "student",
+            "educationLevel": "bachelor",
+            "institution": "Bahria University",
+            "degree": "BSCS",
+            "major": "Computer Science",
+            "gpa": 3.4,
         },
     )
     assert step2.status_code == 200, step2.text
@@ -349,10 +363,10 @@ def complete_onboarding(client, headers: dict[str, str]) -> None:
         "/api/v1/onboarding/steps/3",
         headers=headers,
         json={
-            "educationLevel": "high_school",
-            "institution": "Punjab College",
-            "major": "Pre-Engineering",
-            "graduationYear": 2022,
+            "primaryGoal": "MS Computer Science in Germany",
+            "studyCountry": "Germany",
+            "intake": "Fall 2027",
+            "budget": "limited",
         },
     )
     assert step3.status_code == 200, step3.text

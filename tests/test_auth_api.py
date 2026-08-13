@@ -1,11 +1,19 @@
+def _signup_body(email: str, **overrides) -> dict:
+    body = {
+        "fullName": "Ali Khan",
+        "email": email,
+        "phone": "+923001234567",
+        "password": "Password123!",
+        "confirmPassword": "Password123!",
+    }
+    body.update(overrides)
+    return body
+
+
 def test_signup_flow(client, fake_provider):
     response = client.post(
         "/api/v1/auth/signup",
-        json={
-            "email": "new@example.com",
-            "password": "Password123!",
-            "confirmPassword": "Password123!",
-        },
+        json=_signup_body("new@example.com"),
     )
     assert response.status_code == 201
     body = response.json()
@@ -17,11 +25,7 @@ def test_signup_flow(client, fake_provider):
 def test_verification_and_login(client, fake_provider):
     client.post(
         "/api/v1/auth/signup",
-        json={
-            "email": "verify@example.com",
-            "password": "Password123!",
-            "confirmPassword": "Password123!",
-        },
+        json=_signup_body("verify@example.com"),
     )
     confirm = client.post(
         "/api/v1/auth/email-verification/confirm",
@@ -122,7 +126,11 @@ def test_forgot_and_reset_password(client, fake_provider):
 
     reset = client.post(
         "/api/v1/auth/password/reset",
-        json={"ticket": "passwordReset:reset@example.com", "newPassword": "NewPassword123!"},
+        json={
+            "ticket": "passwordReset:reset@example.com",
+            "newPassword": "NewPassword123!",
+            "confirmPassword": "NewPassword123!",
+        },
     )
     assert reset.status_code == 200
 
@@ -148,7 +156,7 @@ def test_change_password(client, fake_provider):
 
     response = client.post(
         "/api/v1/auth/password/change",
-        json={"newPassword": "Changed123!"},
+        json={"newPassword": "Changed123!", "confirmPassword": "Changed123!"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
@@ -179,22 +187,8 @@ def test_me_and_delete_account(client, fake_provider):
 
 
 def test_signup_duplicate_email(client, fake_provider):
-    client.post(
-        "/api/v1/auth/signup",
-        json={
-            "email": "dup@example.com",
-            "password": "Password123!",
-            "confirmPassword": "Password123!",
-        },
-    )
-    again = client.post(
-        "/api/v1/auth/signup",
-        json={
-            "email": "dup@example.com",
-            "password": "Password123!",
-            "confirmPassword": "Password123!",
-        },
-    )
+    client.post("/api/v1/auth/signup", json=_signup_body("dup@example.com"))
+    again = client.post("/api/v1/auth/signup", json=_signup_body("dup@example.com"))
     assert again.status_code == 409
     assert again.json()["error"]["code"] == "EMAIL_ALREADY_IN_USE"
 
@@ -202,14 +196,34 @@ def test_signup_duplicate_email(client, fake_provider):
 def test_signup_password_mismatch(client):
     response = client.post(
         "/api/v1/auth/signup",
-        json={
-            "email": "mismatch@example.com",
-            "password": "Password123!",
-            "confirmPassword": "Password123?",
-        },
+        json=_signup_body("mismatch@example.com", confirmPassword="Password123?"),
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_signup_requires_name_and_phone(client):
+    response = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "email": "x@example.com",
+            "password": "Password123!",
+            "confirmPassword": "Password123!",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_reset_password_mismatch(client):
+    response = client.post(
+        "/api/v1/auth/password/reset",
+        json={
+            "ticket": "passwordReset:x@example.com",
+            "newPassword": "NewPassword123!",
+            "confirmPassword": "OtherPassword123!",
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_resend_verification(client):

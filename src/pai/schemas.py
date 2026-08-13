@@ -1,6 +1,9 @@
+from __future__ import annotations
+
+import re
 from typing import Any, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 T = TypeVar("T")
 
@@ -20,15 +23,38 @@ class ApiSuccessResponse[T](BaseModel):
     data: T
 
 
+def _passwords_must_match(password: str, confirm: str) -> None:
+    if password != confirm:
+        raise ValueError("Passwords do not match.")
+
+
+def _normalize_phone(value: str) -> str:
+    compact = re.sub(r"[\s().-]", "", value.strip())
+    if not re.fullmatch(r"\+?[0-9]{8,15}", compact):
+        raise ValueError("Enter a valid phone number.")
+    return compact
+
+
 class SignupRequest(BaseModel):
+    fullName: str = Field(min_length=2, max_length=256, examples=["Ali Khan"])
     email: EmailStr = Field(examples=["user@example.com"])
+    phone: str = Field(min_length=8, max_length=32, examples=["+923001234567"])
     password: str = Field(min_length=8, max_length=128, examples=["Str0ngPass#1"])
     confirmPassword: str = Field(min_length=8, max_length=128, examples=["Str0ngPass#1"])
 
+    @field_validator("fullName", mode="before")
+    @classmethod
+    def strip_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, value: str) -> str:
+        return _normalize_phone(value)
+
     @model_validator(mode="after")
     def passwords_match(self) -> Self:
-        if self.password != self.confirmPassword:
-            raise ValueError("Passwords do not match.")
+        _passwords_must_match(self.password, self.confirmPassword)
         return self
 
 
@@ -53,10 +79,22 @@ class VerificationConfirmRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     ticket: str = Field(min_length=1, description="Password reset ticket from the email link.")
     newPassword: str = Field(min_length=8, max_length=128, examples=["NewStr0ngPass#1"])
+    confirmPassword: str = Field(min_length=8, max_length=128, examples=["NewStr0ngPass#1"])
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> Self:
+        _passwords_must_match(self.newPassword, self.confirmPassword)
+        return self
 
 
 class PasswordChangeRequest(BaseModel):
     newPassword: str = Field(min_length=8, max_length=128, examples=["NewStr0ngPass#1"])
+    confirmPassword: str = Field(min_length=8, max_length=128, examples=["NewStr0ngPass#1"])
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> Self:
+        _passwords_must_match(self.newPassword, self.confirmPassword)
+        return self
 
 
 class UserPublic(BaseModel):

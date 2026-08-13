@@ -120,13 +120,13 @@ async def _bootstrap_person_if_verified(
     "/signup",
     response_model=ApiSuccessResponse[SignupResponseData],
     responses={409: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
-    summary="Register with email and password",
+    summary="Register with name, email, phone, and password",
 )
 async def signup(
     body: SignupRequest,
     service: Annotated[AuthService, Depends(get_pai)],
 ) -> JSONResponse:
-    data = await service.signup(body.email, body.password)
+    data = await service.signup(body.email, body.password, body.fullName, body.phone)
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=success(data))
 
 

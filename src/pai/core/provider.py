@@ -8,6 +8,7 @@ class ProviderUser:
     email: str | None
     email_verified: bool
     display_name: str | None = None
+    phone: str | None = None
     avatar_url: str | None = None
     roles: list[str] | None = None
     created_at: str | None = None
@@ -33,7 +34,13 @@ class GenericActionResult:
 
 
 class AuthProvider(Protocol):
-    async def signup(self, email: str, password: str) -> SignupResult: ...
+    async def signup(
+        self,
+        email: str,
+        password: str,
+        full_name: str = "",
+        phone: str = "",
+    ) -> SignupResult: ...
 
     async def login(self, email: str, password: str) -> ProviderSession: ...
 

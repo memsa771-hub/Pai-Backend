@@ -142,7 +142,7 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/auth/signup` | Register (`email`, `password`, `confirmPassword`) |
+| POST | `/api/v1/auth/signup` | Register (`fullName`, `email`, `phone`, `password`, `confirmPassword`) |
 | POST | `/api/v1/auth/login` | Login; cookies + Person bootstrap; returns `onboardingCompleted` |
 | POST | `/api/v1/auth/refresh` | Refresh (CSRF + cookie) |
 | POST | `/api/v1/auth/logout` | Logout |
@@ -153,15 +153,20 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 ### Onboarding (required after first verified login)
 
-New users cannot use chat or documents until onboarding is complete. Answers map into Person + Person Vault and persist across every future conversation.
+After verified login, the user chooses **Complete Onboarding** or **Upload My CV**. Both paths write the same Person Vault. Chat stays locked until PAI has enough reliable profile data (`onboardingCompleted`).
+
+Signup already stored full name, email, and phone. National ID is **not** part of general onboarding.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/onboarding` | Status, current step, saved values |
-| PUT | `/api/v1/onboarding/steps/1` | Identity: full name, DOB, gender, nationality |
-| PUT | `/api/v1/onboarding/steps/2` | Location/status; optional national ID + LinkedIn |
-| PUT | `/api/v1/onboarding/steps/3` | Academic background |
-| POST | `/api/v1/onboarding/complete` | Mark complete (required fields only) |
+| GET | `/api/v1/onboarding` | Status, path choice, missing questions |
+| POST | `/api/v1/onboarding/path` | `"manual"` or `"cv"` |
+| PUT | `/api/v1/onboarding/steps/1` | DOB, nationality, country/city, status (gender/LinkedIn optional) |
+| PUT | `/api/v1/onboarding/steps/2` | Education level, institution, degree/field |
+| PUT | `/api/v1/onboarding/steps/3` | Primary goal; optional destination, intake, budget |
+| POST | `/api/v1/onboarding/cv` | Upload CV; extract then return only missing questions |
+| POST | `/api/v1/onboarding/review` | Fill leftover gaps (CV path) |
+| POST | `/api/v1/onboarding/complete` | Unlock chat when required facts are present |
 
 ### Person & Vault (Phase 2)
 

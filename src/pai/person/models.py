@@ -41,6 +41,7 @@ class Person(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    onboarding_path: Mapped[str | None] = mapped_column(String(32))
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     vault: Mapped[PersonVault | None] = relationship(back_populates="person", uselist=False)

@@ -83,7 +83,7 @@ class OnboardingIncompleteError(AuthError):
     def __init__(
         self,
         message: str = (
-            "Complete the three-step onboarding before using PAI. "
+            "Complete onboarding (manual or CV) before using PAI. "
             "Call GET /api/v1/onboarding."
         ),
     ) -> None:

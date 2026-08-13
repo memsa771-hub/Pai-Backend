@@ -51,8 +51,18 @@ class SupabaseAuthProvider:
         if self._owns_client:
             await self._client.aclose()
 
-    async def signup(self, email: str, password: str) -> SignupResult:
-        payload = {"email": email, "password": password}
+    async def signup(
+        self, email: str, password: str, full_name: str = "", phone: str = ""
+    ) -> SignupResult:
+        payload: dict[str, Any] = {
+            "email": email,
+            "password": password,
+            "data": {
+                "full_name": full_name,
+                "display_name": full_name,
+                "phone": phone,
+            },
+        }
         data = await self._request_json("POST", "/signup", json_body=payload)
         if data.get("access_token") and data.get("user"):
             session = self._parse_token_response(data)
@@ -301,6 +311,7 @@ class SupabaseAuthProvider:
             email=data.get("email"),
             email_verified=data.get("email_confirmed_at") is not None,
             display_name=metadata.get("display_name") or metadata.get("full_name"),
+            phone=metadata.get("phone") or data.get("phone"),
             avatar_url=metadata.get("avatar_url"),
             roles=role_list,
             created_at=data.get("created_at"),

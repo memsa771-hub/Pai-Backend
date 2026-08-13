@@ -70,6 +70,7 @@ class PersonBootstrapService:
                         email=email,
                         email_verified=True,
                         full_name=provider_user.display_name,
+                        phone=provider_user.phone,
                         account_status="active",
                     )
                     session.add(person)
@@ -79,6 +80,8 @@ class PersonBootstrapService:
                 person.email_verified = True
                 if provider_user.display_name and not person.full_name:
                     person.full_name = provider_user.display_name
+                if provider_user.phone and not person.phone:
+                    person.phone = provider_user.phone
                 person.account_status = "active"
 
                 vault = await self._get_vault_for_update(session, person.id)
@@ -230,6 +233,7 @@ class PersonBootstrapService:
                 if person.onboarding_completed_at
                 else None
             ),
+            "onboardingPath": person.onboarding_path,
         }
 
     def _vault_summary(self, vault: PersonVault, completion: dict[str, Any]) -> dict[str, Any]:
@@ -295,6 +299,7 @@ async def soft_delete_person_data(session: AsyncSession, person: Person) -> None
         person.preferred_name = None
         person.phone = None
         person.onboarding_completed_at = None
+        person.onboarding_path = None
         person.version += 1
         for model in (
             Education,

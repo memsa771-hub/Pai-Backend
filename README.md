@@ -154,20 +154,21 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 ### Onboarding (required after first verified login)
 
-After verified login, the user chooses **Complete Onboarding** or **Upload My CV**. Both paths write the same Person Vault. Chat stays locked until PAI has enough reliable profile data (`onboardingCompleted`).
+After verified login, the user chooses **Complete Onboarding** (form) or **Upload My CV**. The frontend may collect the form across screens; the backend accepts the **complete payload in one `POST /api/v1/onboarding`**. Chat stays locked until that submit succeeds (`onboardingCompleted`).
 
-Signup already stored full name and email. National ID is **not** part of general onboarding.
+Signup and login **never** mark onboarding complete. `onboardingCompleted` is false for every new user until a valid submit, or until CV extraction plus confirmation of any missing critical fields.
+
+Required: phone, date of birth, nationality, current country/city, current status, education level, institution, degree or field of study, primary academic/professional goal.
+
+Optional: gender, LinkedIn, GPA, graduation year, skills, work experience, target countries, budget, test scores, intake, scholarships.
+
+National ID is **not** part of general onboarding. Name and email come from signup.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/onboarding` | Status, path choice, missing questions |
-| POST | `/api/v1/onboarding/path` | `"manual"` or `"cv"` |
-| PUT | `/api/v1/onboarding/steps/1` | DOB, nationality, country/city, status (gender/LinkedIn optional) |
-| PUT | `/api/v1/onboarding/steps/2` | Education level, institution, degree/field |
-| PUT | `/api/v1/onboarding/steps/3` | Primary goal; optional destination, intake, budget |
-| POST | `/api/v1/onboarding/cv` | Upload CV; extract then return only missing questions |
-| POST | `/api/v1/onboarding/review` | Fill leftover gaps (CV path) |
-| POST | `/api/v1/onboarding/complete` | Unlock chat when required facts are present |
+| GET | `/api/v1/onboarding` | Status, path choices, required/optional fields, extracted CV facts, `nextPath` |
+| POST | `/api/v1/onboarding` | Submit the full profile; validates, maps to the Person Vault, marks complete. Idempotent. |
+| POST | `/api/v1/onboarding/cv` | Upload CV/PDF; extract only — does **not** mark complete. Then POST `/onboarding` to confirm missing criticals. |
 
 ### Person & Vault (Phase 2)
 

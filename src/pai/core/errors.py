@@ -95,8 +95,9 @@ class OnboardingIncompleteError(AuthError):
     def __init__(
         self,
         message: str = (
-            "Complete onboarding (manual or CV) before using PAI. "
-            "Call GET /api/v1/onboarding."
+            "Complete onboarding before using PAI. "
+            "POST /api/v1/onboarding with the full profile, or upload a CV "
+            "then confirm any missing critical fields."
         ),
     ) -> None:
         super().__init__(code="ONBOARDING_INCOMPLETE", message=message, status_code=403)

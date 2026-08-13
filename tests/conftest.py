@@ -334,51 +334,32 @@ def auth_headers(client, email: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+ONBOARDING_PAYLOAD = {
+    "path": "manual",
+    "phone": "+923001234567",
+    "dateOfBirth": "2004-03-12",
+    "nationality": "Pakistani",
+    "currentCountry": "Pakistan",
+    "currentCity": "Lahore",
+    "currentStatus": "student",
+    "educationLevel": "bachelor",
+    "institution": "Bahria University",
+    "degree": "BSCS",
+    "major": "Computer Science",
+    "gpa": 3.4,
+    "primaryGoal": "MS Computer Science in Germany",
+    "studyCountry": "Germany",
+    "intake": "Fall 2027",
+    "budget": "limited",
+}
+
+
 def complete_onboarding(client, headers: dict[str, str]) -> None:
-    chosen = client.post(
-        "/api/v1/onboarding/path",
-        headers=headers,
-        json={"path": "manual"},
-    )
-    assert chosen.status_code == 200, chosen.text
-    step1 = client.put(
-        "/api/v1/onboarding/steps/1",
-        headers=headers,
-        json={
-            "dateOfBirth": "2004-03-12",
-            "nationality": "Pakistani",
-            "currentCountry": "Pakistan",
-            "currentCity": "Lahore",
-            "currentStatus": "student",
-        },
-    )
-    assert step1.status_code == 200, step1.text
-    step2 = client.put(
-        "/api/v1/onboarding/steps/2",
-        headers=headers,
-        json={
-            "educationLevel": "bachelor",
-            "institution": "Bahria University",
-            "degree": "BSCS",
-            "major": "Computer Science",
-            "gpa": 3.4,
-        },
-    )
-    assert step2.status_code == 200, step2.text
-    step3 = client.put(
-        "/api/v1/onboarding/steps/3",
-        headers=headers,
-        json={
-            "primaryGoal": "MS Computer Science in Germany",
-            "studyCountry": "Germany",
-            "intake": "Fall 2027",
-            "budget": "limited",
-        },
-    )
-    assert step3.status_code == 200, step3.text
-    done = client.post("/api/v1/onboarding/complete", headers=headers)
+    done = client.post("/api/v1/onboarding", headers=headers, json=ONBOARDING_PAYLOAD)
     assert done.status_code == 200, done.text
-    assert done.json()["data"]["completed"] is True
+    data = done.json()["data"]
+    assert data["completed"] is True
+    assert data["onboardingCompleted"] is True
 
 
 @pytest.fixture

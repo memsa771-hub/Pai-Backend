@@ -7,13 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pai.config import Settings, get_settings
 from pai.dependencies import get_db, resolve_person_from_token
 from pai.llm.gateway import LLMGateway
-from pai.onboarding.schema import (
-    ChoosePathRequest,
-    OnboardingGapAnswers,
-    OnboardingStep1,
-    OnboardingStep2,
-    OnboardingStep3,
-)
+from pai.onboarding.schema import OnboardingSubmit
 from pai.onboarding.service import OnboardingService
 from pai.person.models import Person
 from pai.schemas import ApiErrorResponse, success
@@ -38,8 +32,9 @@ def _svc(settings: Settings) -> OnboardingService:
     responses=_ONBOARDING_ERRORS,
     summary="Get onboarding status",
     description=(
-        "After first login, choose `manual` or `cv`. Chat stays locked until "
-        "`POST /api/v1/onboarding/complete` and required profile facts are present."
+        "Returns path choices (`manual` or `cv`), required vs optional fields, "
+        "extracted CV facts, and `onboardingCompleted` / `nextPath` for routing. "
+        "Signup and login never mark onboarding complete."
     ),
 )
 async def get_onboarding(
@@ -52,70 +47,36 @@ async def get_onboarding(
 
 
 @router.post(
-    "/path",
+    "",
     responses=_ONBOARDING_ERRORS,
-    summary="Choose Complete Onboarding or Upload My CV",
+    summary="Submit complete onboarding",
+    description=(
+        "Accepts the full profile in one request (the frontend may collect it in steps). "
+        "Validates required identity fields, maps accepted values into the Person Vault, "
+        "and sets `onboardingCompleted` only on success. Idempotent: re-submit updates "
+        "the vault and still returns completed status. After a CV upload, send the same "
+        "payload with any missing critical fields filled in to confirm and complete."
+    ),
 )
-async def choose_path(
-    body: ChoosePathRequest,
+async def submit_onboarding(
+    body: OnboardingSubmit,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     person: Annotated[Person, Depends(resolve_person_from_token)],
 ) -> JSONResponse:
-    data = await _svc(settings).choose_path(session, person, body.path)
-    return JSONResponse(content=success(data))
-
-
-@router.put(
-    "/steps/1",
-    responses=_ONBOARDING_ERRORS,
-    summary="Manual step 1 — about you",
-)
-async def put_step1(
-    body: OnboardingStep1,
-    session: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
-    person: Annotated[Person, Depends(resolve_person_from_token)],
-) -> JSONResponse:
-    data = await _svc(settings).save_step(session, person, 1, body)
-    return JSONResponse(content=success(data))
-
-
-@router.put(
-    "/steps/2",
-    responses=_ONBOARDING_ERRORS,
-    summary="Manual step 2 — education",
-)
-async def put_step2(
-    body: OnboardingStep2,
-    session: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
-    person: Annotated[Person, Depends(resolve_person_from_token)],
-) -> JSONResponse:
-    data = await _svc(settings).save_step(session, person, 2, body)
-    return JSONResponse(content=success(data))
-
-
-@router.put(
-    "/steps/3",
-    responses=_ONBOARDING_ERRORS,
-    summary="Manual step 3 — goal",
-)
-async def put_step3(
-    body: OnboardingStep3,
-    session: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
-    person: Annotated[Person, Depends(resolve_person_from_token)],
-) -> JSONResponse:
-    data = await _svc(settings).save_step(session, person, 3, body)
+    data = await _svc(settings).submit(session, person, body)
     return JSONResponse(content=success(data))
 
 
 @router.post(
     "/cv",
     responses=_ONBOARDING_ERRORS,
-    summary="Upload CV for onboarding",
-    description="Extracts education, skills, and projects, then returns only missing questions.",
+    summary="Upload CV/PDF for profile extraction",
+    description=(
+        "Extracts profile facts from a CV/PDF. Does **not** mark onboarding complete. "
+        "GET /onboarding then lists `missingRequired`; POST /onboarding with those "
+        "fields (plus extracted values) to confirm and unlock PAI."
+    ),
 )
 async def upload_onboarding_cv(
     request: Request,
@@ -140,32 +101,3 @@ async def upload_onboarding_cv(
     finally:
         await storage.aclose()
     return JSONResponse(status_code=202, content=success(result))
-
-
-@router.post(
-    "/review",
-    responses=_ONBOARDING_ERRORS,
-    summary="Answer missing onboarding questions after CV (or leftover gaps)",
-)
-async def review_onboarding(
-    body: OnboardingGapAnswers,
-    session: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
-    person: Annotated[Person, Depends(resolve_person_from_token)],
-) -> JSONResponse:
-    data = await _svc(settings).apply_gap_answers(session, person, body)
-    return JSONResponse(content=success(data))
-
-
-@router.post(
-    "/complete",
-    responses=_ONBOARDING_ERRORS,
-    summary="Mark onboarding complete and unlock PAI",
-)
-async def complete_onboarding(
-    session: Annotated[AsyncSession, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
-    person: Annotated[Person, Depends(resolve_person_from_token)],
-) -> JSONResponse:
-    data = await _svc(settings).complete(session, person)
-    return JSONResponse(content=success(data))

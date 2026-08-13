@@ -28,7 +28,7 @@ src/pai/
   api/                   # HTTP routes (auth, onboarding, chat, vault, person, documents)
   orchestration/         # LangGraph turn control + counselor agent
   intelligence/          # Vault Intelligence (multi-source extraction)
-  onboarding/            # Three-step post-login Person Vault setup
+  onboarding/            # Single-submit Person Vault setup (form or CV)
   vault/                 # Catalog, completion, vault service
   person/                # Person bootstrap + typed resources
   ingestion/             # Deterministic vault/typed applies

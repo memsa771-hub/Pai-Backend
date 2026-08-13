@@ -30,8 +30,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "onboarding",
         "description": (
-            "Choose Complete Onboarding or Upload My CV after first verified login. "
-            "Chat stays locked until `POST /api/v1/onboarding/complete`."
+            "After verified login, choose Complete Onboarding or Upload My CV. "
+            "Submit the full profile with `POST /api/v1/onboarding`. "
+            "Signup and login never mark onboarding complete. Chat stays locked until then."
         ),
     },
     {
@@ -76,7 +77,7 @@ Agents reason; deterministic services write trusted data. LLM provider is replac
 3. Click **Authorize** (top right) → paste the token **without** the word `Bearer`.
 4. Swagger adds `Bearer` for you. Adding it twice causes `401`.
 5. Call **`GET /api/v1/auth/me`** — must return 200 before chat.
-6. If `data.onboardingCompleted` is false, complete **`GET /api/v1/onboarding`** then steps 1–3 and **`POST /api/v1/onboarding/complete`**.
+6. If `data.onboardingCompleted` is false, `GET /api/v1/onboarding` then `POST /api/v1/onboarding` with the full profile (or upload a CV and confirm missing critical fields).
 7. Call **`POST /api/v1/chat`** with a message.
 
 Login auto-bootstraps the Person Vault for verified users. New users must finish onboarding before counselor chat.

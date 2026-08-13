@@ -72,6 +72,7 @@ class PersonBootstrapService:
                         full_name=provider_user.display_name,
                         phone=provider_user.phone,
                         account_status="active",
+                        onboarding_completed_at=None,
                     )
                     session.add(person)
                     await session.flush()

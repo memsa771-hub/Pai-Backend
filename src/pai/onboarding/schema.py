@@ -1,54 +1,72 @@
-"""Onboarding: one complete payload, or CV extract then confirm missing criticals."""
+"""Lightweight onboarding seed. Chat, CV, and later updates enrich the Person Vault."""
 
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from pai.schemas import _normalize_phone
-
-Gender = Literal["male", "female", "non_binary", "prefer_not_to_say", "other"]
-CurrentStatus = Literal["student", "professional", "other"]
-EducationLevel = Literal["high_school", "bachelor", "master", "other"]
-OnboardingPath = Literal["manual", "cv"]
-
-DEGREE_FOR_LEVEL: dict[str, str] = {
-    "high_school": "High School",
-    "bachelor": "Bachelor's",
-    "master": "Master's",
-    "other": "Other",
-}
+from pai.geo import coerce_country
+from pai.onboarding.enums import (
+    DEGREE_FOR_LEVEL,
+    ENUM_LABELS,
+    BudgetBand,
+    CurrentStatus,
+    EducationLevel,
+    EmploymentType,
+    FieldOfStudy,
+    Gender,
+    IntakeSeason,
+    OnboardingPath,
+    PrimaryGoal,
+    SkillProficiency,
+    StandardizedTest,
+)
+from pai.phone import normalize_phone
 
 PATH_CHOICES = [
     {
-        "id": "manual",
-        "label": "Complete Onboarding",
-        "description": "Fill in your profile. The frontend may show this as steps; PAI stores it in one submit.",
+        "id": OnboardingPath.manual.value,
+        "label": ENUM_LABELS["path"][OnboardingPath.manual.value],
+        "description": (
+            "A short starting profile so PAI can advise from the first chat. "
+            "Deeper facts come from conversation."
+        ),
     },
     {
-        "id": "cv",
-        "label": "Upload My CV",
-        "description": "PAI reads your CV/PDF, then you confirm any missing critical fields.",
+        "id": OnboardingPath.cv.value,
+        "label": ENUM_LABELS["path"][OnboardingPath.cv.value],
+        "description": "PAI reads your CV/PDF, then you confirm only missing critical fields.",
     },
 ]
+
+ONBOARDING_PURPOSE = (
+    "Onboarding is a lightweight starting profile, not the main way to fill the Person Vault. "
+    "Chat, CV/document extraction, and later updates continuously enrich the same Vault."
+)
 
 REQUIRED_FIELDS = [
     "phone",
     "dateOfBirth",
     "nationality",
+    "gender",
     "currentCountry",
     "currentCity",
     "currentStatus",
     "educationLevel",
-    "institution",
-    "degreeOrField",
     "primaryGoal",
 ]
 
+CONDITIONAL_FIELDS = [
+    "institution",
+    "degree",
+    "major",
+    "otherLevelLabel",
+]
+
 OPTIONAL_FIELDS = [
-    "gender",
+    "goalDetail",
     "linkedinUrl",
     "gpa",
     "graduationYear",
@@ -57,6 +75,7 @@ OPTIONAL_FIELDS = [
     "targetCountries",
     "studyCountry",
     "intake",
+    "intakeYear",
     "budget",
     "scholarships",
     "testScores",
@@ -84,18 +103,23 @@ def _reasonable_dob(value: date) -> date:
 def _linkedin_url(value: str | None) -> str | None:
     if value is None:
         return None
-    url = value if value.startswith(("http://", "https://")) else f"https://{value}"
-    host = url.split("://", 1)[1].split("/", 1)[0].lower()
-    if "linkedin.com" not in host:
+    raw = value.strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}", allow_fragments=True)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not (
+        host == "linkedin.com" or host.endswith(".linkedin.com")
+    ):
         raise ValueError("LinkedIn URL must be a linkedin.com profile link.")
-    return url
+    return parsed.geturl()
 
 
 class OnboardingSkillItem(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    proficiency: str | None = Field(default=None, max_length=64)
+    proficiency: SkillProficiency | None = None
 
-    @field_validator("name", "proficiency", mode="before")
+    @field_validator("name", mode="before")
     @classmethod
     def strip_text(cls, value: object) -> object:
         return _blank_to_none(value) if isinstance(value, str) else value
@@ -104,92 +128,96 @@ class OnboardingSkillItem(BaseModel):
 class OnboardingWorkItem(BaseModel):
     organization: str = Field(min_length=1, max_length=256)
     title: str = Field(min_length=1, max_length=256)
-    employmentType: str | None = Field(default=None, max_length=64)
+    employmentType: EmploymentType | None = None
     isCurrent: bool = False
     description: str | None = Field(default=None, max_length=4000)
 
-    @field_validator("organization", "title", "employmentType", "description", mode="before")
+    @field_validator("organization", "title", "description", mode="before")
     @classmethod
     def strip_text(cls, value: object) -> object:
         return _blank_to_none(value) if isinstance(value, str) else value
 
 
 class OnboardingTestScoreItem(BaseModel):
-    name: str = Field(min_length=1, max_length=64, examples=["IELTS"])
+    name: StandardizedTest
     score: str = Field(min_length=1, max_length=64, examples=["7.5"])
 
-    @field_validator("name", "score", mode="before")
+    @field_validator("score", mode="before")
     @classmethod
     def strip_text(cls, value: object) -> object:
         return _blank_to_none(value) if isinstance(value, str) else value
 
 
 class OnboardingSubmit(BaseModel):
-    """Complete onboarding payload. Frontend may collect this across UI steps."""
+    """Starting profile. Categorical fields are closed enums; GET /onboarding returns choices."""
 
     path: OnboardingPath | None = Field(
         default=None,
-        description="manual (form) or cv (confirm after extract). Defaults to the path already chosen, else manual.",
+        description=(
+            "manual (form) or cv (confirm after extract). "
+            "Defaults to the path already chosen, else manual."
+        ),
     )
     phone: str = Field(min_length=8, max_length=32, examples=["+923001234567"])
     dateOfBirth: date = Field(examples=["2004-03-12"])
-    nationality: str = Field(min_length=2, max_length=128, examples=["Pakistani"])
-    currentCountry: str = Field(min_length=2, max_length=128, examples=["Pakistan"])
+    nationality: str = Field(min_length=2, max_length=2, examples=["PK"])
+    currentCountry: str = Field(min_length=2, max_length=2, examples=["PK"])
     currentCity: str = Field(min_length=2, max_length=128, examples=["Lahore"])
     currentStatus: CurrentStatus
     educationLevel: EducationLevel
-    institution: str = Field(min_length=2, max_length=256, examples=["Bahria University"])
+    institution: str | None = Field(
+        default=None, max_length=256, examples=["Bahria University"]
+    )
     degree: str | None = Field(default=None, max_length=128, examples=["BSCS"])
-    major: str | None = Field(default=None, max_length=128, examples=["Computer Science"])
+    major: FieldOfStudy | None = None
     otherLevelLabel: str | None = Field(default=None, max_length=128)
-    primaryGoal: str = Field(
-        min_length=2,
+    primaryGoal: PrimaryGoal
+    goalDetail: str | None = Field(
+        default=None,
         max_length=256,
         examples=["MS Computer Science in Germany"],
+        description="Optional note when primaryGoal is admission/placement/etc.",
     )
-    gender: Gender | None = None
+    gender: Gender
     linkedinUrl: str | None = Field(default=None, max_length=512)
     gpa: float | None = Field(default=None, ge=0, le=4)
     graduationYear: int | None = Field(default=None, ge=1950, le=2100)
     skills: list[OnboardingSkillItem] = Field(default_factory=list)
     workExperience: list[OnboardingWorkItem] = Field(default_factory=list)
     targetCountries: list[str] = Field(default_factory=list)
-    studyCountry: str | None = Field(default=None, max_length=128, examples=["Germany"])
-    intake: str | None = Field(default=None, max_length=64, examples=["Fall 2027"])
-    budget: str | None = Field(default=None, max_length=128, examples=["limited"])
+    studyCountry: str | None = Field(default=None, min_length=2, max_length=2, examples=["DE"])
+    intake: IntakeSeason | None = None
+    intakeYear: int | None = Field(default=None, ge=2020, le=2100)
+    budget: BudgetBand | None = None
     scholarships: bool | None = None
     testScores: list[OnboardingTestScoreItem] = Field(default_factory=list)
 
-    @field_validator(
-        "nationality",
-        "currentCountry",
-        "currentCity",
-        "institution",
-        "primaryGoal",
-        mode="before",
-    )
+    @field_validator("nationality", "currentCountry", "studyCountry", mode="before")
     @classmethod
-    def strip_required(cls, value: object) -> object:
+    def country_code(cls, value: object) -> object:
+        return coerce_country(value)
+
+    @field_validator("currentCity", mode="before")
+    @classmethod
+    def strip_city(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
     @field_validator(
+        "institution",
         "degree",
-        "major",
         "otherLevelLabel",
         "linkedinUrl",
-        "studyCountry",
-        "intake",
-        "budget",
+        "goalDetail",
         mode="before",
     )
     @classmethod
     def empty_optional(cls, value: object) -> object:
         return _blank_to_none(value) if isinstance(value, str) else value
 
-    @field_validator("phone")
-    @classmethod
-    def phone_ok(cls, value: str) -> str:
-        return _normalize_phone(value)
+    @model_validator(mode="after")
+    def phone_e164(self):
+        self.phone = normalize_phone(self.phone, default_region=self.currentCountry)
+        return self
 
     @field_validator("dateOfBirth")
     @classmethod
@@ -224,26 +252,21 @@ class OnboardingSubmit(BaseModel):
         if value is None:
             return []
         if isinstance(value, str):
-            stripped = value.strip()
-            return [stripped] if stripped else []
+            code = coerce_country(value)
+            return [code] if code else []
         if isinstance(value, list):
-            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+            out: list[object] = []
+            for item in value:
+                code = coerce_country(item)
+                if code:
+                    out.append(code)
+            return out
         return value
-
-    @model_validator(mode="after")
-    def degree_or_field(self) -> OnboardingSubmit:
-        if self.educationLevel == "high_school":
-            return self
-        if self.degree or self.major:
-            return self
-        if self.educationLevel == "other" and self.otherLevelLabel:
-            return self
-        raise ValueError("Provide degree or field of study.")
 
     def resolved_degree(self) -> str | None:
         if self.degree:
             return self.degree
-        if self.educationLevel == "other" and self.otherLevelLabel:
+        if self.educationLevel == EducationLevel.other and self.otherLevelLabel:
             return self.otherLevelLabel
         if self.major:
             return None

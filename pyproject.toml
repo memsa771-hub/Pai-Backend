@@ -23,6 +23,8 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.1.1",
     "agentspan>=0.2.0",
     "tavily-python>=0.5.0",
+    "pycountry>=24.6.0",
+    "phonenumbers>=9.0.36",
 ]
 
 [project.optional-dependencies]

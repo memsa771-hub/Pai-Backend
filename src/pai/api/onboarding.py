@@ -32,8 +32,9 @@ def _svc(settings: Settings) -> OnboardingService:
     responses=_ONBOARDING_ERRORS,
     summary="Get onboarding status",
     description=(
-        "Returns path choices (`manual` or `cv`), required vs optional fields, "
-        "extracted CV facts, and `onboardingCompleted` / `nextPath` for routing. "
+        "Returns path choices, required/optional/conditional fields, and `enums` "
+        "(closed lists for goal, education, gender, countries, budget, intake, …). "
+        "Onboarding is only a starting seed; chat and documents enrich the Vault. "
         "Signup and login never mark onboarding complete."
     ),
 )
@@ -49,13 +50,13 @@ async def get_onboarding(
 @router.post(
     "",
     responses=_ONBOARDING_ERRORS,
-    summary="Submit complete onboarding",
+    summary="Submit starting onboarding profile",
     description=(
-        "Accepts the full profile in one request (the frontend may collect it in steps). "
-        "Validates required identity fields, maps accepted values into the Person Vault, "
-        "and sets `onboardingCompleted` only on success. Idempotent: re-submit updates "
-        "the vault and still returns completed status. After a CV upload, send the same "
-        "payload with any missing critical fields filled in to confirm and complete."
+        "Accepts a small starting profile in one request (the UI may still show steps). "
+        "Only critical identity fields are required. Optional extras are stored if sent. "
+        "Deeper Vault facts come from chat extraction and documents. "
+        "Sets `onboardingCompleted` only on success. Idempotent. After a CV upload, "
+        "POST the same payload with any missing critical fields to confirm."
     ),
 )
 async def submit_onboarding(
@@ -73,9 +74,10 @@ async def submit_onboarding(
     responses=_ONBOARDING_ERRORS,
     summary="Upload CV/PDF for profile extraction",
     description=(
-        "Extracts profile facts from a CV/PDF. Does **not** mark onboarding complete. "
-        "GET /onboarding then lists `missingRequired`; POST /onboarding with those "
-        "fields (plus extracted values) to confirm and unlock PAI."
+        "Extracts profile facts from a CV/PDF into the Vault. Does **not** mark "
+        "onboarding complete. Confirm missing *critical* fields with POST /onboarding. "
+        "Skills, work history, and other details can stay in the Vault from extraction "
+        "and later chat — they are not required to finish onboarding."
     ),
 )
 async def upload_onboarding_cv(

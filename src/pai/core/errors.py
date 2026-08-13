@@ -96,7 +96,7 @@ class OnboardingIncompleteError(AuthError):
         self,
         message: str = (
             "Complete onboarding before using PAI. "
-            "POST /api/v1/onboarding with the full profile, or upload a CV "
+            "POST /api/v1/onboarding with the starting profile, or upload a CV "
             "then confirm any missing critical fields."
         ),
     ) -> None:

@@ -6,6 +6,8 @@ import re
 import uuid
 from typing import Any
 
+from pai.geo import extract_countries_from_text
+from pai.onboarding.enums import BudgetBand
 from pai.orchestration.schemas import VaultCandidate
 
 _MARKS = re.compile(
@@ -22,11 +24,6 @@ _CGPA_BARE = re.compile(
 _STREAM = re.compile(
     r"\b(pre[\s-]?medical|pre[\s-]?engineering|fsc|fa\b|ics|bscs|bcss|bsc|bs\s*cs|"
     r"computer\s+science|software\s+engineering)\b",
-    re.I,
-)
-_COUNTRY = re.compile(
-    r"\b(germany|china|canada|usa|u\.?s\.?a\.?|united\s+states|uk|united\s+kingdom|"
-    r"australia|pakistan|turkey|malaysia|uae|dubai)\b",
     re.I,
 )
 _CITY = re.compile(
@@ -200,21 +197,14 @@ def run_deterministic_boosters(
                 )
                 hits.append("education.program")
 
-    countries = []
-    for m in _COUNTRY.finditer(raw):
-        countries.append(_normalize_country(m.group(1)))
+    countries = extract_countries_from_text(raw)
     if countries:
-        # Preserve order unique
-        uniq: list[str] = []
-        for c in countries:
-            if c not in uniq:
-                uniq.append(c)
-        value = ", ".join(uniq)
+        value = ", ".join(countries)
         out.append(
             _cand(
                 "application.study_country",
                 value,
-                evidence=", ".join(uniq),
+                evidence=value,
                 source_reference=source_reference,
                 source_type=source_type,
                 rationale="booster:study_country",
@@ -223,8 +213,8 @@ def run_deterministic_boosters(
         out.append(
             _cand(
                 "mobility.preferred_regions",
-                uniq,
-                evidence=", ".join(uniq),
+                countries,
+                evidence=value,
                 source_reference=source_reference,
                 source_type=source_type,
                 confidence=0.9,
@@ -299,7 +289,7 @@ def run_deterministic_boosters(
             out.append(
                 _cand(
                     "finance.funding_status",
-                    "limited_budget",
+                    BudgetBand.limited.value,
                     evidence=funded.group(0),
                     source_reference=source_reference,
                     source_type=source_type,
@@ -352,24 +342,3 @@ def _normalize_stream(raw: str) -> str:
         "software engineering": "Software Engineering",
     }
     return mapping.get(low, t)
-
-
-def _normalize_country(raw: str) -> str:
-    low = raw.lower().strip().replace(".", "")
-    mapping = {
-        "usa": "USA",
-        "us": "USA",
-        "united states": "USA",
-        "uk": "UK",
-        "united kingdom": "UK",
-        "uae": "UAE",
-        "germany": "Germany",
-        "china": "China",
-        "canada": "Canada",
-        "australia": "Australia",
-        "pakistan": "Pakistan",
-        "turkey": "Turkey",
-        "malaysia": "Malaysia",
-        "dubai": "UAE",
-    }
-    return mapping.get(low, raw.title())

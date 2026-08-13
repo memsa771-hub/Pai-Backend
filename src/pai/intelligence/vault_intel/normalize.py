@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pai.geo import country_codes_from_value
+from pai.onboarding.enums import BudgetBand
 from pai.orchestration.schemas import VaultCandidate
 from pai.vault.catalog import VAULT_CATALOG, get_catalog_field
 
@@ -73,9 +75,27 @@ def _normalize_value(field_key: str, value: Any) -> Any:
         if isinstance(value, str):
             return [v.strip() for v in value.split(",") if v.strip()]
         return value
+    if field_key in {
+        "demographics.nationality",
+        "location.current_country",
+        "application.study_country",
+    }:
+        codes = country_codes_from_value(value)
+        if not codes:
+            return value
+        return codes[0] if len(codes) == 1 else ", ".join(codes)
     if field_key == "mobility.preferred_regions":
-        if isinstance(value, str):
-            return [v.strip() for v in value.replace(" and ", ",").split(",") if v.strip()]
+        codes = country_codes_from_value(value)
+        return codes or value
+    if field_key == "finance.funding_status" and isinstance(value, str):
+        token = value.strip().lower().replace(" ", "_")
+        aliases = {
+            "limited_budget": BudgetBand.limited.value,
+            "low_budget": BudgetBand.limited.value,
+        }
+        token = aliases.get(token, token)
+        if token in {item.value for item in BudgetBand}:
+            return token
         return value
     if field_key == "education.additional_maths" and isinstance(value, str):
         return value.strip().lower() in ("true", "yes", "y", "1")

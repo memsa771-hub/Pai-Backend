@@ -30,9 +30,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "onboarding",
         "description": (
-            "After verified login, choose Complete Onboarding or Upload My CV. "
-            "Submit the full profile with `POST /api/v1/onboarding`. "
-            "Signup and login never mark onboarding complete. Chat stays locked until then."
+            "Lightweight starting profile only — not the main Person Vault fill. "
+            "Required: a few identity fields. Chat, CV/documents, and later updates "
+            "enrich the same Vault. Signup and login never mark onboarding complete."
         ),
     },
     {
@@ -68,6 +68,8 @@ API_DESCRIPTION = """
 Persistent student counselor: **Person Vault** (structured truth) + conversation + semantic memory.
 Agents reason; deterministic services write trusted data. LLM provider is replaceable (DeepSeek today).
 
+Onboarding seeds a **small starting profile**. The Vault grows from **chat extraction**, **CV/documents**, and later updates — not from a long onboarding form.
+
 ---
 
 ### Swagger quick start (local testing)
@@ -77,7 +79,7 @@ Agents reason; deterministic services write trusted data. LLM provider is replac
 3. Click **Authorize** (top right) → paste the token **without** the word `Bearer`.
 4. Swagger adds `Bearer` for you. Adding it twice causes `401`.
 5. Call **`GET /api/v1/auth/me`** — must return 200 before chat.
-6. If `data.onboardingCompleted` is false, `GET /api/v1/onboarding` then `POST /api/v1/onboarding` with the full profile (or upload a CV and confirm missing critical fields).
+6. If `data.onboardingCompleted` is false, `GET /api/v1/onboarding` then `POST /api/v1/onboarding` with the **required starting fields** (or upload a CV and confirm missing criticals). Deeper profile facts come from chat.
 7. Call **`POST /api/v1/chat`** with a message.
 
 Login auto-bootstraps the Person Vault for verified users. New users must finish onboarding before counselor chat.

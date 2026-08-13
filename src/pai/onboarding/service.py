@@ -1,4 +1,4 @@
-"""Persist onboarding into Person + Person Vault (one submit, or CV then confirm)."""
+"""Seed a small Person profile. Chat, documents, and later updates enrich the Vault."""
 
 from __future__ import annotations
 
@@ -10,7 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.core.errors import AuthError, ValidationFailedError
+from pai.onboarding.enums import (
+    GOAL_TYPE_FOR_PRIMARY,
+    PRIMARY_GOAL_TITLES,
+    PrimaryGoal,
+    field_enum_catalog,
+)
 from pai.onboarding.schema import (
+    CONDITIONAL_FIELDS,
+    ONBOARDING_PURPOSE,
     OPTIONAL_FIELDS,
     PATH_CHOICES,
     REQUIRED_FIELDS,
@@ -31,9 +39,8 @@ _REQUIRED_LABELS = {
     "currentCity": "current city",
     "currentStatus": "current status",
     "educationLevel": "education level",
-    "institution": "institution",
-    "degreeOrField": "degree or field of study",
-    "primaryGoal": "primary academic or professional goal",
+    "gender": "gender",
+    "primaryGoal": "primary goal",
 }
 
 
@@ -87,10 +94,14 @@ class OnboardingService:
             "completedAt": public.get("onboardingCompletedAt"),
             "path": person.onboarding_path,
             "choices": PATH_CHOICES if not completed and not person.onboarding_path else [],
+            "purpose": ONBOARDING_PURPOSE,
+            "vaultEnrichment": "chat_and_documents",
             "canComplete": not completed and not missing,
             "missingRequired": [] if completed else missing,
             "requiredFields": REQUIRED_FIELDS,
+            "conditionalFields": CONDITIONAL_FIELDS,
             "optionalFields": OPTIONAL_FIELDS,
+            "enums": field_enum_catalog(),
             "identity": {
                 "fullName": person.full_name,
                 "email": person.email,
@@ -103,7 +114,7 @@ class OnboardingService:
     async def submit(
         self, session: AsyncSession, person: Person, body: OnboardingSubmit
     ) -> dict[str, Any]:
-        """Validate, map into the Person Vault, and mark onboarding complete. Idempotent."""
+        """Map the starting profile into the Vault and mark onboarding complete. Idempotent."""
         self._require_vault(person)
         person.onboarding_path = body.path or person.onboarding_path or "manual"
         await self._apply_submit(session, person, body)
@@ -225,18 +236,25 @@ class OnboardingService:
             body.dateOfBirth.isoformat(),
             skip_consent=True,
         )
-        await self._upsert_vault(session, person, "demographics.nationality", body.nationality)
-        await self._upsert_vault(session, person, "location.current_country", body.currentCountry)
+        await self._upsert_vault(
+            session, person, "demographics.nationality", body.nationality
+        )
+        await self._upsert_vault(
+            session, person, "location.current_country", body.currentCountry
+        )
         await self._upsert_vault(session, person, "location.current_city", body.currentCity)
-        await self._upsert_vault(session, person, "identity.current_status", body.currentStatus)
-        if body.gender:
-            await self._upsert_vault(session, person, "demographics.gender", body.gender)
+        await self._upsert_vault(
+            session, person, "identity.current_status", body.currentStatus.value
+        )
+        await self._upsert_vault(session, person, "demographics.gender", body.gender.value)
         if body.linkedinUrl:
             await self._upsert_vault(session, person, "social.linkedin_url", body.linkedinUrl)
 
-        await self._upsert_vault(session, person, "education.highest_level", body.educationLevel)
+        await self._upsert_vault(
+            session, person, "education.highest_level", body.educationLevel.value
+        )
         await self._upsert_education(session, person, body)
-        await self._upsert_goal(session, person, body.primaryGoal)
+        await self._upsert_goal(session, person, body)
 
         destinations = list(body.targetCountries)
         if body.studyCountry and body.studyCountry not in destinations:
@@ -250,13 +268,14 @@ class OnboardingService:
                     session, person, "mobility.preferred_regions", destinations
                 )
         if body.intake:
-            await self._upsert_vault(
-                session, person, "application.admission_cycle", body.intake
-            )
+            cycle = body.intake.value
+            if body.intakeYear:
+                cycle = f"{cycle} {body.intakeYear}"
+            await self._upsert_vault(session, person, "application.admission_cycle", cycle)
         if body.budget:
             await self._vault.ensure_consent(session, person.id, "finance")
             await self._upsert_vault(
-                session, person, "finance.funding_status", body.budget, skip_consent=True
+                session, person, "finance.funding_status", body.budget.value, skip_consent=True
             )
         if body.scholarships is not None:
             await self._vault.ensure_consent(session, person.id, "finance")
@@ -298,26 +317,37 @@ class OnboardingService:
     async def _upsert_education(
         self, session: AsyncSession, person: Person, body: OnboardingSubmit
     ) -> None:
+        if not (
+            body.institution
+            or body.degree
+            or body.major
+            or body.gpa is not None
+            or body.graduationYear is not None
+        ):
+            return
         degree = body.resolved_degree()
         row = await self._first_education(session, person)
         if row is None:
+            if not body.institution:
+                return
             session.add(
                 Education(
                     person_id=person.id,
                     institution=body.institution,
                     degree=degree,
-                    major=body.major,
+                    major=body.major.value if body.major else None,
                     gpa=body.gpa,
                     graduation_year=body.graduationYear,
                     status="completed",
                 )
             )
         else:
-            row.institution = body.institution
+            if body.institution:
+                row.institution = body.institution
             if degree:
                 row.degree = degree
             if body.major is not None:
-                row.major = body.major
+                row.major = body.major.value
             if body.gpa is not None:
                 row.gpa = body.gpa
             if body.graduationYear is not None:
@@ -327,19 +357,27 @@ class OnboardingService:
             if "education" not in scopes:
                 person.vault.applicable_scopes = scopes + ["education"]
 
-    async def _upsert_goal(self, session: AsyncSession, person: Person, title: str) -> None:
+    async def _upsert_goal(
+        self, session: AsyncSession, person: Person, body: OnboardingSubmit
+    ) -> None:
+        goal_key = body.primaryGoal.value
+        title = (body.goalDetail or PRIMARY_GOAL_TITLES[goal_key])[:256]
+        goal_type = GOAL_TYPE_FOR_PRIMARY[goal_key]
         row = await self._first_goal(session, person)
         if row is None:
             session.add(
                 Goal(
                     person_id=person.id,
-                    goal_type="career",
-                    title=title[:256],
+                    goal_type=goal_type,
+                    title=title,
+                    description=goal_key,
                     status="active",
                 )
             )
         else:
-            row.title = title[:256]
+            row.title = title
+            row.goal_type = goal_type
+            row.description = goal_key
             row.status = "active"
         if person.vault:
             scopes = list(person.vault.applicable_scopes or [])
@@ -362,7 +400,7 @@ class OnboardingService:
                 Skill(
                     person_id=person.id,
                     name=item.name.strip(),
-                    proficiency=item.proficiency,
+                    proficiency=item.proficiency.value if item.proficiency else None,
                 )
             )
         if person.vault:
@@ -393,7 +431,7 @@ class OnboardingService:
                     person_id=person.id,
                     organization=item.organization.strip(),
                     title=item.title.strip(),
-                    employment_type=item.employmentType,
+                    employment_type=item.employmentType.value if item.employmentType else None,
                     is_current=item.isCurrent,
                     description=item.description,
                 )
@@ -425,8 +463,12 @@ class OnboardingService:
             "major": education.major if education else None,
             "gpa": education.gpa if education else None,
             "graduationYear": education.graduation_year if education else None,
-            "primaryGoal": (goal.title if goal else None)
-            or _sparse_get(sparse, "application.career_interest"),
+            "primaryGoal": (
+                goal.description
+                if goal and goal.description in {item.value for item in PrimaryGoal}
+                else None
+            ),
+            "goalDetail": goal.title if goal else None,
             "studyCountry": _sparse_get(sparse, "application.study_country"),
             "intake": _sparse_get(sparse, "application.admission_cycle"),
             "budget": _sparse_get(sparse, "finance.funding_status"),
@@ -435,21 +477,9 @@ class OnboardingService:
 
     def _missing_required(self, values: dict[str, Any]) -> list[str]:
         missing: list[str] = []
-        for name in (
-            "phone",
-            "dateOfBirth",
-            "nationality",
-            "currentCountry",
-            "currentCity",
-            "currentStatus",
-            "educationLevel",
-            "institution",
-            "primaryGoal",
-        ):
+        for name in REQUIRED_FIELDS:
             if not _present(values.get(name)):
                 missing.append(name)
-        if not _present(values.get("degree")) and not _present(values.get("major")):
-            missing.append("degreeOrField")
         return missing
 
     async def _first_education(

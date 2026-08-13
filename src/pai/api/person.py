@@ -3,7 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.core.provider import AuthProvider
@@ -24,6 +24,7 @@ from pai.person.typed_resources import (
     list_resources,
     update_resource,
 )
+from pai.phone import normalize_phone
 from pai.schemas import success
 
 router = APIRouter(prefix="/api/v1/person", tags=["person"])
@@ -34,6 +35,13 @@ class PersonProfilePatch(BaseModel):
     preferredName: str | None = None
     phone: str | None = None
     version: int = Field(..., ge=1)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_e164(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return normalize_phone(value)
 
 
 class EducationCreate(BaseModel):

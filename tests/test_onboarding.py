@@ -1,10 +1,27 @@
 from __future__ import annotations
 
 import pytest
+from conftest import ONBOARDING_PAYLOAD
 from pydantic import ValidationError
 
-from conftest import ONBOARDING_PAYLOAD
+from pai.onboarding.enums import field_enum_catalog
 from pai.onboarding.schema import OnboardingSubmit
+
+
+def test_enum_catalog_exposes_dropdown_ids():
+    catalog = field_enum_catalog()
+    assert {item["id"] for item in catalog["primaryGoal"]} == {
+        "exploring",
+        "placement",
+        "admission",
+        "professional",
+        "journey_tracker",
+    }
+    assert any(item["id"] == "PK" for item in catalog["currentCountry"])
+    assert len(catalog["currentCountry"]) > 200
+    assert "phd" in {item["id"] for item in catalog["educationLevel"]}
+    assert "fully_funded" in {item["id"] for item in catalog["budget"]}
+
 
 
 def test_submit_schema_requires_critical_fields():
@@ -18,19 +35,39 @@ def test_submit_schema_requires_critical_fields():
         "currentCity",
         "currentStatus",
         "educationLevel",
-        "institution",
+        "gender",
         "primaryGoal",
     ):
         assert field in names
+    assert "institution" not in names
+    assert "degree" not in names
 
 
 def test_submit_schema_optional_fields_can_be_omitted():
     body = OnboardingSubmit.model_validate(ONBOARDING_PAYLOAD)
-    assert body.gender is None
     assert body.linkedinUrl is None
     assert body.skills == []
     assert body.workExperience == []
     assert body.testScores == []
+
+
+def test_submit_schema_minimal_criticals_are_enough():
+    body = OnboardingSubmit.model_validate(
+        {
+            "phone": "+923001234567",
+            "dateOfBirth": "2004-03-12",
+            "nationality": "PK",
+            "currentCountry": "PK",
+            "currentCity": "Lahore",
+            "currentStatus": "student",
+            "gender": "male",
+            "educationLevel": "bachelor",
+            "primaryGoal": "admission",
+        }
+    )
+    assert body.institution is None
+    assert body.degree is None
+    assert body.gpa is None
 
 
 def test_submit_schema_high_school_does_not_need_degree():
@@ -45,15 +82,38 @@ def test_submit_schema_high_school_does_not_need_degree():
     assert body.resolved_degree() == "High School"
 
 
-def test_submit_schema_bachelor_needs_degree_or_field():
-    payload = {
-        **ONBOARDING_PAYLOAD,
-        "educationLevel": "bachelor",
-        "degree": None,
-        "major": None,
-    }
-    with pytest.raises(ValidationError, match="degree or field"):
+def test_submit_schema_rejects_vague_primary_goal():
+    payload = {**ONBOARDING_PAYLOAD, "primaryGoal": "MS Computer Science in Germany"}
+    with pytest.raises(ValidationError):
         OnboardingSubmit.model_validate(payload)
+
+
+def test_submit_schema_accepts_country_name_alias():
+    payload = {**ONBOARDING_PAYLOAD, "nationality": "Pakistan", "currentCountry": "Germany"}
+    body = OnboardingSubmit.model_validate(payload)
+    assert body.nationality == "PK"
+    assert body.currentCountry == "DE"
+    uk = OnboardingSubmit.model_validate({**ONBOARDING_PAYLOAD, "currentCountry": "UK"})
+    assert uk.currentCountry == "GB"
+    alpha3 = OnboardingSubmit.model_validate({**ONBOARDING_PAYLOAD, "currentCountry": "DEU"})
+    assert alpha3.currentCountry == "DE"
+    turkey = OnboardingSubmit.model_validate({**ONBOARDING_PAYLOAD, "currentCountry": "Turkey"})
+    assert turkey.currentCountry == "TR"
+
+
+def test_submit_schema_rejects_unknown_country():
+    with pytest.raises(ValidationError, match="ISO 3166-1"):
+        OnboardingSubmit.model_validate({**ONBOARDING_PAYLOAD, "currentCountry": "Narnia"})
+
+
+def test_submit_schema_normalizes_phone_to_e164():
+    body = OnboardingSubmit.model_validate(
+        {**ONBOARDING_PAYLOAD, "phone": "0300 1234567", "currentCountry": "PK"}
+    )
+    assert body.phone == "+923001234567"
+    with pytest.raises(ValidationError, match="phone"):
+        OnboardingSubmit.model_validate({**ONBOARDING_PAYLOAD, "phone": "12345"})
+
 
 
 
@@ -86,10 +146,31 @@ def test_onboarding_offers_manual_or_cv_choice(verified_user):
     ids = {c["id"] for c in body["choices"]}
     assert ids == {"manual", "cv"}
     assert "phone" in body["requiredFields"]
+    assert "gender" in body["requiredFields"]
     assert "primaryGoal" in body["requiredFields"]
-    assert "gender" in body["optionalFields"]
+    assert "institution" not in body["requiredFields"]
+    assert "institution" in body["conditionalFields"]
     assert "linkedinUrl" in body["optionalFields"]
+    goal_ids = {item["id"] for item in body["enums"]["primaryGoal"]}
+    assert goal_ids == {
+        "exploring",
+        "placement",
+        "admission",
+        "professional",
+        "journey_tracker",
+    }
+    assert any(item["id"] == "PK" for item in body["enums"]["currentCountry"])
+    assert {item["id"] for item in body["enums"]["educationLevel"]} >= {
+        "high_school",
+        "diploma",
+        "bachelor",
+        "master",
+        "phd",
+        "other",
+    }
     assert "nationalId" not in body["requiredFields"]
+    assert body["vaultEnrichment"] == "chat_and_documents"
+    assert "starting profile" in body["purpose"].lower() or "lightweight" in body["purpose"].lower()
 
 
 def test_incomplete_submit_is_rejected(verified_user):

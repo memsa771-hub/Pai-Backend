@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Self, TypeVar
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
@@ -28,13 +27,6 @@ def _passwords_must_match(password: str, confirm: str) -> None:
         raise ValueError("Passwords do not match.")
 
 
-def _normalize_phone(value: str) -> str:
-    compact = re.sub(r"[\s().-]", "", value.strip())
-    if not re.fullmatch(r"\+?[0-9]{8,15}", compact):
-        raise ValueError("Enter a valid phone number.")
-    return compact
-
-
 _FIELD_LABELS = {
     "fullName": "Full name",
     "email": "Email",
@@ -49,6 +41,8 @@ _FIELD_LABELS = {
     "degree": "Degree",
     "major": "Field of study",
     "primaryGoal": "Primary goal",
+    "goalDetail": "Goal detail",
+    "gender": "Gender",
     "linkedinUrl": "LinkedIn URL",
     "password": "Password",
     "confirmPassword": "Confirm password",

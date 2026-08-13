@@ -152,23 +152,29 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 | GET | `/api/v1/auth/me` | Supabase user + onboarding flag (Bearer) |
 | DELETE | `/api/v1/account` | Delete auth user + app data |
 
-### Onboarding (required after first verified login)
+### Onboarding (lightweight seed after first verified login)
 
-After verified login, the user chooses **Complete Onboarding** (form) or **Upload My CV**. The frontend may collect the form across screens; the backend accepts the **complete payload in one `POST /api/v1/onboarding`**. Chat stays locked until that submit succeeds (`onboardingCompleted`).
+Onboarding is **not** the main way to fill the Person Vault. It collects a small reliable starting profile so PAI can advise from the first chat. Deeper student intelligence is built over time from **chat fact extraction**, **CV/document extraction**, and later updates to the same Vault.
 
-Signup and login **never** mark onboarding complete. `onboardingCompleted` is false for every new user until a valid submit, or until CV extraction plus confirmation of any missing critical fields.
+After verified login, the user chooses **Complete Onboarding** (form) or **Upload My CV**. The frontend may collect the form across screens; the backend accepts one `POST /api/v1/onboarding`. Chat stays locked until that submit succeeds (`onboardingCompleted`).
 
-Required: phone, date of birth, nationality, current country/city, current status, education level, institution, degree or field of study, primary academic/professional goal.
+Signup and login **never** mark onboarding complete.
 
-Optional: gender, LinkedIn, GPA, graduation year, skills, work experience, target countries, budget, test scores, intake, scholarships.
+Required: phone (E.164 via `phonenumbers` — send `+923001234567` or a national number with `currentCountry`), date of birth, nationality and current country (ISO 3166-1 via `pycountry` — send `PK` or `Pakistan`), gender, current city, current status, education level, primary goal (`exploring` | `placement` | `admission` | `professional` | `journey_tracker`).
+
+Conditional (send if known): institution, degree, field of study (`major` enum).
+
+Optional: goal detail (free-text note), LinkedIn, GPA, graduation year, skills, work experience, target countries (ISO), study country (ISO), intake season + year, budget band, test scores, scholarships.
+
+`GET /api/v1/onboarding` returns `enums` — use those ids in the submit payload, not free-text labels.
 
 National ID is **not** part of general onboarding. Name and email come from signup.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/onboarding` | Status, path choices, required/optional fields, extracted CV facts, `nextPath` |
-| POST | `/api/v1/onboarding` | Submit the full profile; validates, maps to the Person Vault, marks complete. Idempotent. |
-| POST | `/api/v1/onboarding/cv` | Upload CV/PDF; extract only — does **not** mark complete. Then POST `/onboarding` to confirm missing criticals. |
+| GET | `/api/v1/onboarding` | Status, path choices, required/optional/conditional fields, `purpose`, `nextPath` |
+| POST | `/api/v1/onboarding` | Submit the starting profile; validates criticals, maps to the Vault, marks complete. Idempotent. |
+| POST | `/api/v1/onboarding/cv` | Upload CV/PDF; extract into the Vault — does **not** mark complete. Then POST `/onboarding` to confirm missing criticals. |
 
 ### Person & Vault (Phase 2)
 

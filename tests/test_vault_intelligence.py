@@ -20,10 +20,21 @@ def test_boosters_catch_marks_stream_countries_and_cgpa():
     assert "education.stream" in keys or "education.program" in keys
     assert "education.gpa" in keys
     assert "application.study_country" in keys
+    study = next(c for c in cands if c.field_key == "application.study_country")
+    assert study.value == "DE, CN"
+    regions = next(c for c in cands if c.field_key == "mobility.preferred_regions")
+    assert regions.value == ["DE", "CN"]
     assert "application.target_universities" in keys
     assert "location.current_city" in keys
     assert "application.career_interest" in keys
     assert "education.marks" in hits
+
+
+def test_boosters_funding_uses_budget_enum():
+    cands, hits = run_deterministic_boosters("I have a limited budget", source_reference="m1")
+    funding = next(c for c in cands if c.field_key == "finance.funding_status")
+    assert funding.value == "limited"
+    assert "finance.funding_status" in hits
 
 
 def test_normalize_aliases_and_marks_string():

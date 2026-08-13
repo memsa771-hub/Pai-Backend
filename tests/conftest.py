@@ -28,6 +28,7 @@ class FakeAuthProvider:
         self.refresh_to_access: dict[str, str] = {}
         self.logout_calls: list[tuple[str, str]] = []
         self.deleted: list[str] = []
+        self.get_user_calls = 0
 
     async def signup(
         self, email: str, password: str, full_name: str = "", phone: str = ""
@@ -125,6 +126,7 @@ class FakeAuthProvider:
         return GenericActionResult(message="Password changed successfully. Please sign in again.")
 
     async def get_user(self, access_token: str) -> ProviderUser:
+        self.get_user_calls += 1
         session = self.sessions.get(access_token)
         if not session:
             from pai.core.errors import InvalidTokenError

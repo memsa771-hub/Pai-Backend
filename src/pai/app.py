@@ -23,6 +23,7 @@ from pai.api.person import router as person_router
 from pai.api.vault import router as vault_router
 from pai.config import Settings, get_settings
 from pai.core.errors import AuthError
+from pai.data.db import warmup_database
 from pai.documents.worker import document_worker_loop
 from pai.llm.gateway import LLMGateway
 from pai.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
@@ -46,6 +47,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
     )
     app.state.llm_gateway = LLMGateway(settings)
+    if settings.app_env not in {"test", "testing"}:
+        try:
+            await warmup_database(settings)
+        except Exception:
+            logger.warning(
+                "Database warmup failed; first request may be slower.", exc_info=True
+            )
     if not getattr(app.state, "_provider_initialized", False):
         provider = SupabaseAuthProvider(settings)
         app.state.auth_provider = provider

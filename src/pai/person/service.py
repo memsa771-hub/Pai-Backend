@@ -118,6 +118,52 @@ class PersonBootstrapService:
             "vault": self._vault_summary(person.vault, completion),
         }
 
+    async def ensure_person(self, session: AsyncSession, provider_user: ProviderUser) -> Person:
+        """Create the Person Vault on first verified auth; skip heavy work on later logins."""
+        if not provider_user.email_verified:
+            raise EmailNotVerifiedError()
+        external_id = str(provider_user.id)
+        person = await self._find_person(session, AUTH_PROVIDER_NAME, external_id)
+        if person is not None:
+            if self._sync_identity(person, provider_user):
+                await session.commit()
+            return person
+        if session.in_transaction():
+            await session.rollback()
+        await self.bootstrap(session, provider_user)
+        return await get_person_by_auth(session, external_id)
+
+    def _sync_identity(self, person: Person, provider_user: ProviderUser) -> bool:
+        dirty = False
+        email = normalize_email(provider_user.email)
+        if person.email != email:
+            person.email = email
+            dirty = True
+        if not person.email_verified:
+            person.email_verified = True
+            dirty = True
+        if provider_user.display_name and not person.full_name:
+            person.full_name = provider_user.display_name
+            dirty = True
+        if provider_user.phone and not person.phone:
+            person.phone = provider_user.phone
+            dirty = True
+        if person.account_status != "active":
+            person.account_status = "active"
+            dirty = True
+        return dirty
+
+    async def _find_person(
+        self, session: AsyncSession, provider: str, external_id: str
+    ) -> Person | None:
+        stmt = select(Person).where(
+            Person.auth_provider == provider,
+            Person.external_auth_id == external_id,
+            Person.deleted_at.is_(None),
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def _get_person_for_update(
         self, session: AsyncSession, provider: str, external_id: str
     ) -> Person | None:

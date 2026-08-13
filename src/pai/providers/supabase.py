@@ -46,8 +46,19 @@ class SupabaseAuthProvider:
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings
         self._owns_client = client is None
+        timeout = httpx.Timeout(
+            connect=5.0,
+            read=settings.auth_http_timeout_seconds,
+            write=settings.auth_http_timeout_seconds,
+            pool=5.0,
+        )
         self._client = client or httpx.AsyncClient(
-            timeout=httpx.Timeout(settings.auth_http_timeout_seconds),
+            timeout=timeout,
+            limits=httpx.Limits(
+                max_keepalive_connections=20,
+                max_connections=40,
+                keepalive_expiry=30.0,
+            ),
         )
 
     async def aclose(self) -> None:

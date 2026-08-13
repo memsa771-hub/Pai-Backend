@@ -48,6 +48,7 @@ def test_verification_and_login(client, fake_provider):
     assert login.json()["data"]["accessToken"]
     assert login.cookies.get("pai_refresh_token")
     assert login.cookies.get("pai_csrf_token")
+    assert fake_provider.get_user_calls == 0
 
 
 def test_login_unverified(client, fake_provider):

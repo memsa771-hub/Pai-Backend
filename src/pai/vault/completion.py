@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.person.models import (
@@ -57,14 +57,20 @@ async def load_presence_snapshot(
     typed_counts: dict[str, int] = {}
     typed_present: dict[str, bool] = {}
     typed_resources: dict[str, str] = {}
-    for storage_key, model, api_name in _TYPED_MODELS:
-        count = await session.scalar(
-            select(func.count()).select_from(model).where(model.person_id == person.id)
-        )
-        n = int(count or 0)
-        typed_counts[storage_key] = n
-        typed_present[storage_key] = n > 0
-        typed_resources[api_name] = str(n)
+    if _TYPED_MODELS:
+        count_parts = [
+            select(literal(storage_key).label("k"), func.count().label("n"))
+            .select_from(model)
+            .where(model.person_id == person.id)
+            for storage_key, model, _api_name in _TYPED_MODELS
+        ]
+        rows = (await session.execute(union_all(*count_parts))).all()
+        by_key = {str(key): int(n or 0) for key, n in rows}
+        for storage_key, _model, api_name in _TYPED_MODELS:
+            n = by_key.get(storage_key, 0)
+            typed_counts[storage_key] = n
+            typed_present[storage_key] = n > 0
+            typed_resources[api_name] = str(n)
 
     return {
         "active_keys": active_keys,

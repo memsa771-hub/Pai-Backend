@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.core.errors import AuthError, PersonNotFoundError
-from pai.core.provider import AuthProvider
+from pai.core.provider import ProviderUser
 from pai.core.service import AuthService, SessionBundle
+from pai.data.db import get_session_factory
 from pai.dependencies import (
-    get_auth_provider,
     get_db,
     get_pai,
     get_validated_access_token,
@@ -20,6 +20,7 @@ from pai.dependencies import (
     validate_access_token,
 )
 from pai.onboarding.service import onboarding_public_status
+from pai.person.models import Person
 from pai.person.service import (
     PersonBootstrapService,
     get_person_by_auth,
@@ -101,20 +102,19 @@ def _session_response(
     return response
 
 
-async def _bootstrap_person_if_verified(
-    session: AsyncSession,
-    provider: AuthProvider,
-    settings: Settings,
-    access_token: str,
-):
+async def _person_after_verified_auth(
+    settings: Settings, user: ProviderUser
+) -> Person | None:
+    """Attach Person after auth. Uses the token user (no extra Supabase /user call)."""
+    if not user.email_verified:
+        return None
     try:
-        user = await provider.get_user(access_token)
-        if user.email_verified:
-            await PersonBootstrapService(settings).bootstrap(session, user)
-            return await get_person_by_auth(session, str(user.id))
+        factory = get_session_factory(settings)
+        async with factory() as session:
+            return await PersonBootstrapService(settings).ensure_person(session, user)
     except Exception:
         logger.exception("Person bootstrap failed after authentication")
-    return None
+        return None
 
 
 @router.post(
@@ -145,11 +145,9 @@ async def login(
     body: LoginRequest,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
-    session: Annotated[AsyncSession, Depends(get_db)],
-    provider: Annotated[AuthProvider, Depends(get_auth_provider)],
 ) -> JSONResponse:
     bundle = await service.login(body.email, body.password)
-    person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
+    person = await _person_after_verified_auth(settings, bundle.user)
     return _session_response(bundle, settings, onboarding_public_status(person, settings))
 
 
@@ -218,11 +216,9 @@ async def confirm_email_verification(
     body: VerificationConfirmRequest,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
-    session: Annotated[AsyncSession, Depends(get_db)],
-    provider: Annotated[AuthProvider, Depends(get_auth_provider)],
 ) -> JSONResponse:
     bundle = await service.confirm_verification(body.code, body.verifier, body.email)
-    person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
+    person = await _person_after_verified_auth(settings, bundle.user)
     return _session_response(bundle, settings, onboarding_public_status(person, settings))
 
 
@@ -242,11 +238,9 @@ async def establish_session(
     body: SessionFromTokensRequest,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
-    session: Annotated[AsyncSession, Depends(get_db)],
-    provider: Annotated[AuthProvider, Depends(get_auth_provider)],
 ) -> JSONResponse:
     bundle = await service.establish_session(body.accessToken, body.refreshToken)
-    person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
+    person = await _person_after_verified_auth(settings, bundle.user)
     return _session_response(bundle, settings, onboarding_public_status(person, settings))
 
 

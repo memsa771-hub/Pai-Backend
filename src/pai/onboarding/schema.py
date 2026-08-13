@@ -67,7 +67,7 @@ class ChoosePathRequest(BaseModel):
 
 
 class OnboardingStep1(BaseModel):
-    """Basics: who and where you are. Name/phone already collected at signup."""
+    """Basics: who and where you are. Name was collected at signup."""
 
     dateOfBirth: date = Field(examples=["2004-03-12"])
     nationality: str = Field(min_length=2, max_length=128, examples=["Pakistani"])

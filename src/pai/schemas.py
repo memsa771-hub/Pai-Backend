@@ -90,7 +90,6 @@ def humanize_validation_error(errors: list[Any]) -> str:
 class SignupRequest(BaseModel):
     fullName: str = Field(min_length=2, max_length=256, examples=["Ali Khan"])
     email: EmailStr = Field(examples=["user@example.com"])
-    phone: str = Field(min_length=8, max_length=32, examples=["+923001234567"])
     password: str = Field(min_length=8, max_length=128, examples=["Str0ngPass#1"])
     confirmPassword: str = Field(min_length=8, max_length=128, examples=["Str0ngPass#1"])
 
@@ -98,11 +97,6 @@ class SignupRequest(BaseModel):
     @classmethod
     def strip_name(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
-
-    @field_validator("phone")
-    @classmethod
-    def valid_phone(cls, value: str) -> str:
-        return _normalize_phone(value)
 
     @model_validator(mode="after")
     def passwords_match(self) -> Self:

@@ -25,9 +25,9 @@ class AuthService:
         return secrets.token_urlsafe(32)
 
     async def signup(
-        self, email: str, password: str, full_name: str = "", phone: str = ""
+        self, email: str, password: str, full_name: str = ""
     ) -> dict:
-        result = await self._provider.signup(email, password, full_name, phone)
+        result = await self._provider.signup(email.strip().lower(), password, full_name)
         if result.session:
             return {
                 "message": "Account created successfully.",
@@ -41,7 +41,7 @@ class AuthService:
         }
 
     async def login(self, email: str, password: str) -> SessionBundle:
-        session = await self._provider.login(email, password)
+        session = await self._provider.login(email.strip().lower(), password)
         return self._to_bundle(session)
 
     async def refresh(self, refresh_token: str) -> SessionBundle:
@@ -54,8 +54,9 @@ class AuthService:
         await self._provider.logout(access_token, refresh_token)
 
     async def resend_verification(self, email: str) -> dict:
-        await self._provider.resend_verification(email)
-        return {"message": f"Verification email has been sent to {email}."}
+        normalized = email.strip().lower()
+        await self._provider.resend_verification(normalized)
+        return {"message": f"Verification email has been sent to {normalized}."}
 
     async def confirm_verification(
         self, code: str, verifier: str | None, email: str
@@ -84,8 +85,9 @@ class AuthService:
         return self._to_bundle(session)
 
     async def request_password_reset(self, email: str) -> dict:
-        await self._provider.request_password_reset(email)
-        return {"message": f"A password recovery email has been sent to {email}."}
+        normalized = email.strip().lower()
+        await self._provider.request_password_reset(normalized)
+        return {"message": f"A password recovery email has been sent to {normalized}."}
 
     async def reset_password(self, ticket: str, new_password: str) -> dict:
         result = await self._provider.reset_password(ticket, new_password)

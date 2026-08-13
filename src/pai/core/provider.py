@@ -39,7 +39,6 @@ class AuthProvider(Protocol):
         email: str,
         password: str,
         full_name: str = "",
-        phone: str = "",
     ) -> SignupResult: ...
 
     async def login(self, email: str, password: str) -> ProviderSession: ...

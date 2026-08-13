@@ -13,7 +13,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "auth",
         "description": (
             "Sign up, login, refresh, and account recovery. "
-            "Signup collects full name, email, phone, password, and confirm password, "
+            "Signup collects full name, email, password, and confirm password, "
             "then emails a verification link to the frontend callback. "
             "After the click, `POST /auth/session` with the hash tokens and follow `nextPath`. "
             "**Swagger:** `POST /auth/login` → copy `data.accessToken` → Authorize."

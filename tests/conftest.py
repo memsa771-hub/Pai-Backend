@@ -31,18 +31,19 @@ class FakeAuthProvider:
         self.get_user_calls = 0
 
     async def signup(
-        self, email: str, password: str, full_name: str = "", phone: str = ""
+        self, email: str, password: str, full_name: str = ""
     ) -> SignupResult:
-        if email in self.users:
+        key = email.strip().lower()
+        if key in self.users:
             raise EmailAlreadyInUseError()
         user_id = f"user-{len(self.users) + 1}"
-        self.users[email] = {
+        self.users[key] = {
             "id": user_id,
-            "email": email,
+            "email": key,
             "password": password,
             "verified": False,
             "full_name": full_name or None,
-            "phone": phone or None,
+            "phone": None,
         }
         return SignupResult(
             session=None,
@@ -50,7 +51,7 @@ class FakeAuthProvider:
         )
 
     async def login(self, email: str, password: str) -> ProviderSession:
-        user = self.users.get(email)
+        user = self.users.get(email.strip().lower())
         if not user:
             raise UserNotFoundError()
         if user["password"] != password:
@@ -79,7 +80,7 @@ class FakeAuthProvider:
         self.refresh_to_access.pop(refresh_token, None)
 
     async def resend_verification(self, email: str) -> GenericActionResult:
-        if email not in self.users:
+        if email.strip().lower() not in self.users:
             raise UserNotFoundError()
         return GenericActionResult(message=f"Verification email has been sent to {email}.")
 
@@ -99,7 +100,7 @@ class FakeAuthProvider:
         return self._issue_session(user)
 
     async def request_password_reset(self, email: str) -> GenericActionResult:
-        if email not in self.users:
+        if email.strip().lower() not in self.users:
             raise UserNotFoundError()
         return GenericActionResult(
             message=f"A password recovery email has been sent to {email}."

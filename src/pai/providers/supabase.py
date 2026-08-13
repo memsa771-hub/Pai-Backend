@@ -66,8 +66,15 @@ class SupabaseAuthProvider:
             await self._client.aclose()
 
     async def signup(
-        self, email: str, password: str, full_name: str = "", phone: str = ""
+        self, email: str, password: str, full_name: str = ""
     ) -> SignupResult:
+        try:
+            if await self._admin_user_exists(email):
+                raise EmailAlreadyInUseError()
+        except EmailAlreadyInUseError:
+            raise
+        except AuthError:
+            pass
         redirect_to = self._settings.email_verification_redirect_url
         payload: dict[str, Any] = {
             "email": email,
@@ -75,7 +82,6 @@ class SupabaseAuthProvider:
             "data": {
                 "full_name": full_name,
                 "display_name": full_name,
-                "phone": phone,
             },
             "options": {"email_redirect_to": redirect_to},
         }
@@ -85,6 +91,9 @@ class SupabaseAuthProvider:
             json_body=payload,
             params={"redirect_to": redirect_to},
         )
+        identities = data.get("identities")
+        if isinstance(identities, list) and identities == [] and data.get("id"):
+            raise EmailAlreadyInUseError()
         if data.get("access_token") and data.get("user"):
             session = self._parse_token_response(data)
             if not session.user.email_verified:

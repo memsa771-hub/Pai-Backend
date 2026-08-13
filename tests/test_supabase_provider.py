@@ -6,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from pai.config import Settings
-from pai.core.errors import IncorrectPasswordError, ProviderUnavailableError, UserNotFoundError
+from pai.core.errors import (
+    EmailAlreadyInUseError,
+    IncorrectPasswordError,
+    ProviderUnavailableError,
+    UserNotFoundError,
+)
 from pai.providers.supabase import SupabaseAuthProvider
 
 
@@ -97,12 +102,15 @@ async def test_supabase_timeout_raises_provider_unavailable(supabase_settings: S
 @pytest.mark.asyncio
 async def test_supabase_signup_without_session(supabase_settings: Settings):
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/admin/users"):
+            return httpx.Response(200, json={"users": []})
         assert request.url.path.endswith("/signup")
         query = parse_qs(urlparse(str(request.url)).query)
         assert query["redirect_to"] == ["http://localhost:3000/verify"]
         body = json.loads(request.content)
         assert body["options"]["email_redirect_to"] == "http://localhost:3000/verify"
         assert body["data"]["full_name"] == "Ali Khan"
+        assert "phone" not in body["data"]
         return httpx.Response(
             200,
             json={
@@ -116,8 +124,28 @@ async def test_supabase_signup_without_session(supabase_settings: Settings):
     client = httpx.AsyncClient(transport=transport)
     provider = SupabaseAuthProvider(supabase_settings, client=client)
 
-    result = await provider.signup("new@example.com", "Password123!", "Ali Khan", "+923001234567")
+    result = await provider.signup("new@example.com", "Password123!", "Ali Khan")
     assert result.session is None
+
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_supabase_signup_rejects_existing_email(supabase_settings: Settings):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/admin/users"):
+            return httpx.Response(
+                200,
+                json={"users": [{"id": "u1", "email": "taken@example.com"}]},
+            )
+        return httpx.Response(500, json={"message": "signup should not be called"})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    provider = SupabaseAuthProvider(supabase_settings, client=client)
+
+    with pytest.raises(EmailAlreadyInUseError):
+        await provider.signup("taken@example.com", "Password123!", "Ali Khan")
 
     await provider.aclose()
 

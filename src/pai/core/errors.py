@@ -40,7 +40,9 @@ class EmailNotVerifiedError(AuthError):
 
 
 class EmailAlreadyInUseError(AuthError):
-    def __init__(self, message: str = "An account with this email already exists.") -> None:
+    def __init__(
+        self, message: str = "An account with this email already exists. Please log in instead."
+    ) -> None:
         super().__init__(code="EMAIL_ALREADY_IN_USE", message=message, status_code=409)
 
 

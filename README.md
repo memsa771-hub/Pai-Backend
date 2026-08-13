@@ -142,7 +142,7 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/auth/signup` | Register (`fullName`, `email`, `phone`, `password`, `confirmPassword`). Verification email uses `EMAIL_VERIFICATION_REDIRECT_URL`. |
+| POST | `/api/v1/auth/signup` | Register (`fullName`, `email`, `password`, `confirmPassword`). Duplicate email returns `409 EMAIL_ALREADY_IN_USE`. |
 | POST | `/api/v1/auth/login` | Login; cookies + Person bootstrap; returns `onboardingCompleted` and `nextPath` |
 | POST | `/api/v1/auth/session` | Exchange email-redirect tokens for a PAI session (cookies + bootstrap + `nextPath`) |
 | POST | `/api/v1/auth/refresh` | Refresh (CSRF + cookie) |
@@ -156,7 +156,7 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 After verified login, the user chooses **Complete Onboarding** or **Upload My CV**. Both paths write the same Person Vault. Chat stays locked until PAI has enough reliable profile data (`onboardingCompleted`).
 
-Signup already stored full name, email, and phone. National ID is **not** part of general onboarding.
+Signup already stored full name and email. National ID is **not** part of general onboarding.
 
 | Method | Path | Description |
 |--------|------|-------------|

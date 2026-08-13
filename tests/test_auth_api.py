@@ -2,7 +2,6 @@ def _signup_body(email: str, **overrides) -> dict:
     body = {
         "fullName": "Ali Khan",
         "email": email,
-        "phone": "+923001234567",
         "password": "Password123!",
         "confirmPassword": "Password123!",
     }
@@ -216,6 +215,10 @@ def test_signup_duplicate_email(client, fake_provider):
     again = client.post("/api/v1/auth/signup", json=_signup_body("dup@example.com"))
     assert again.status_code == 409
     assert again.json()["error"]["code"] == "EMAIL_ALREADY_IN_USE"
+    assert "already exists" in again.json()["error"]["message"].lower()
+
+    mixed = client.post("/api/v1/auth/signup", json=_signup_body("Dup@example.com"))
+    assert mixed.status_code == 409
 
 
 def test_signup_password_mismatch(client):
@@ -238,7 +241,7 @@ def test_signup_invalid_email(client):
     assert response.json()["error"]["message"] == "Enter a valid email address."
 
 
-def test_signup_requires_name_and_phone(client):
+def test_signup_requires_name(client):
     response = client.post(
         "/api/v1/auth/signup",
         json={
@@ -248,6 +251,15 @@ def test_signup_requires_name_and_phone(client):
         },
     )
     assert response.status_code == 422
+    assert "full name" in response.json()["error"]["message"].lower()
+
+
+def test_signup_does_not_require_phone(client):
+    response = client.post(
+        "/api/v1/auth/signup",
+        json=_signup_body("nophone@example.com"),
+    )
+    assert response.status_code == 201
 
 
 def test_reset_password_mismatch(client):

@@ -121,13 +121,13 @@ async def _person_after_verified_auth(
     "/signup",
     response_model=ApiSuccessResponse[SignupResponseData],
     responses={409: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
-    summary="Register with name, email, phone, and password",
+    summary="Register with name, email, and password",
 )
 async def signup(
     body: SignupRequest,
     service: Annotated[AuthService, Depends(get_pai)],
 ) -> JSONResponse:
-    data = await service.signup(body.email, body.password, body.fullName, body.phone)
+    data = await service.signup(body.email, body.password, body.fullName)
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=success(data))
 
 

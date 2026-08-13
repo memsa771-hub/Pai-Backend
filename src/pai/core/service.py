@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 
-from pai.core.errors import AuthError, EmailNotVerifiedError
+from pai.core.errors import AuthError, EmailNotVerifiedError, InvalidTokenError
 from pai.core.provider import AuthProvider, ProviderSession, ProviderUser
 
 
@@ -28,10 +28,17 @@ class AuthService:
         self, email: str, password: str, full_name: str = "", phone: str = ""
     ) -> dict:
         result = await self._provider.signup(email, password, full_name, phone)
-        payload: dict = {"message": result.message}
         if result.session:
-            payload["session"] = self._public_session(result.session, include_refresh=False)
-        return payload
+            return {
+                "message": "Account created successfully.",
+                "session": self._public_session(result.session, include_refresh=False),
+            }
+        return {
+            "message": (
+                f"Account created. Verification link has been sent to {email}, "
+                "verify to continue."
+            )
+        }
 
     async def login(self, email: str, password: str) -> SessionBundle:
         session = await self._provider.login(email, password)
@@ -47,18 +54,38 @@ class AuthService:
         await self._provider.logout(access_token, refresh_token)
 
     async def resend_verification(self, email: str) -> dict:
-        result = await self._provider.resend_verification(email)
-        return {"message": result.message}
+        await self._provider.resend_verification(email)
+        return {"message": f"Verification email has been sent to {email}."}
 
-    async def confirm_verification(self, code: str, verifier: str | None, email: str) -> SessionBundle:
+    async def confirm_verification(
+        self, code: str, verifier: str | None, email: str
+    ) -> SessionBundle:
         session = await self._provider.confirm_verification(code, verifier, email)
         if not session.user.email_verified:
             raise EmailNotVerifiedError()
         return self._to_bundle(session)
 
+    async def establish_session(self, access_token: str, refresh_token: str) -> SessionBundle:
+        """Turn tokens from the email-verification redirect into a PAI session."""
+        user = await self._provider.get_user(access_token)
+        if not user.email_verified:
+            raise EmailNotVerifiedError()
+        try:
+            session = await self._provider.refresh(refresh_token)
+        except InvalidTokenError:
+            session = ProviderSession(
+                access_token=access_token,
+                access_token_expires_in=3600,
+                refresh_token=refresh_token,
+                user=user,
+            )
+        if not session.user.email_verified:
+            raise EmailNotVerifiedError()
+        return self._to_bundle(session)
+
     async def request_password_reset(self, email: str) -> dict:
-        result = await self._provider.request_password_reset(email)
-        return {"message": result.message}
+        await self._provider.request_password_reset(email)
+        return {"message": f"A password recovery email has been sent to {email}."}
 
     async def reset_password(self, ticket: str, new_password: str) -> dict:
         result = await self._provider.reset_password(ticket, new_password)

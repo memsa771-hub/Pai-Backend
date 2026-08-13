@@ -18,8 +18,13 @@ def test_signup_flow(client, fake_provider):
     assert response.status_code == 201
     body = response.json()
     assert body["success"] is True
-    assert "verify" in body["data"]["message"].lower()
+    assert body["data"]["message"] == (
+        "Account created. Verification link has been sent to new@example.com, "
+        "verify to continue."
+    )
     assert body["data"].get("session") is None
+    assert "emailRedirectTo" not in body["data"]
+    assert "nextPath" not in body["data"]
 
 
 def test_verification_and_login(client, fake_provider):
@@ -60,13 +65,30 @@ def test_login_unverified(client, fake_provider):
     assert response.json()["error"]["code"] == "EMAIL_NOT_VERIFIED"
 
 
-def test_login_generic_invalid_credentials(client):
+def test_login_unknown_email(client):
     response = client.post(
         "/api/v1/auth/login",
         json={"email": "missing@example.com", "password": "Password123!"},
     )
+    error = response.json()["error"]
+    assert error["code"] == "USER_NOT_FOUND"
+    assert "no account" in error["message"].lower()
+
+
+def test_login_incorrect_password(client, fake_provider):
+    fake_provider.users["ali@example.com"] = {
+        "id": "ali",
+        "email": "ali@example.com",
+        "password": "Password123!",
+        "verified": True,
+    }
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "ali@example.com", "password": "WrongPass123!"},
+    )
     assert response.status_code == 401
-    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
+    assert response.json()["error"]["code"] == "INCORRECT_PASSWORD"
+    assert "password" in response.json()["error"]["message"].lower()
 
 
 def test_refresh_and_logout_cookies(client, fake_provider, bearer_token):
@@ -122,7 +144,9 @@ def test_forgot_and_reset_password(client, fake_provider):
         json={"email": "reset@example.com"},
     )
     assert forgot.status_code == 200
-    assert "If an account exists" in forgot.json()["data"]["message"]
+    assert forgot.json()["data"]["message"] == (
+        "A password recovery email has been sent to reset@example.com."
+    )
 
     reset = client.post(
         "/api/v1/auth/password/reset",
@@ -200,6 +224,17 @@ def test_signup_password_mismatch(client):
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert response.json()["error"]["message"] == "Passwords do not match."
+
+
+def test_signup_invalid_email(client):
+    response = client.post(
+        "/api/v1/auth/signup",
+        json=_signup_body("not-an-email"),
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert response.json()["error"]["message"] == "Enter a valid email address."
 
 
 def test_signup_requires_name_and_phone(client):
@@ -224,15 +259,106 @@ def test_reset_password_mismatch(client):
         },
     )
     assert response.status_code == 422
+    assert response.json()["error"]["message"] == "Passwords do not match."
 
 
-def test_resend_verification(client):
+def test_change_password_mismatch(client, fake_provider):
+    fake_provider.users["change@example.com"] = {
+        "id": "user-1",
+        "email": "change@example.com",
+        "password": "Password123!",
+        "verified": True,
+    }
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "change@example.com", "password": "Password123!"},
+    )
+    token = login.json()["data"]["accessToken"]
+    response = client.post(
+        "/api/v1/auth/password/change",
+        json={"newPassword": "Changed123!", "confirmPassword": "Different123!"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == "Passwords do not match."
+
+
+def test_resend_verification(client, fake_provider):
+    client.post("/api/v1/auth/signup", json=_signup_body("any@example.com"))
     response = client.post(
         "/api/v1/auth/email-verification/request",
         json={"email": "any@example.com"},
     )
     assert response.status_code == 200
-    assert response.json()["success"] is True
+    assert response.json()["data"]["message"] == (
+        "Verification email has been sent to any@example.com."
+    )
+
+
+def test_resend_verification_unknown_email(client):
+    response = client.post(
+        "/api/v1/auth/email-verification/request",
+        json={"email": "missing@example.com"},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "USER_NOT_FOUND"
+
+
+def test_forgot_password_unknown_email(client):
+    response = client.post(
+        "/api/v1/auth/password/forgot",
+        json={"email": "missing@example.com"},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "USER_NOT_FOUND"
+
+
+def test_session_from_verification_tokens(client, fake_provider):
+    client.post("/api/v1/auth/signup", json=_signup_body("ali@example.com"))
+    fake_provider.verify_user("ali@example.com")
+    issued = fake_provider._issue_session(fake_provider.users["ali@example.com"])
+
+    response = client.post(
+        "/api/v1/auth/session",
+        json={
+            "accessToken": issued.access_token,
+            "refreshToken": issued.refresh_token,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["user"]["emailVerified"] is True
+    assert body["onboardingCompleted"] is False
+    assert body["nextPath"] == "/onboarding"
+    assert response.cookies.get("pai_refresh_token")
+    assert response.cookies.get("pai_csrf_token")
+
+
+def test_session_rejects_unverified_tokens(client, fake_provider):
+    client.post("/api/v1/auth/signup", json=_signup_body("pending@example.com"))
+    issued = fake_provider._issue_session(fake_provider.users["pending@example.com"])
+
+    response = client.post(
+        "/api/v1/auth/session",
+        json={
+            "accessToken": issued.access_token,
+            "refreshToken": issued.refresh_token,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "EMAIL_NOT_VERIFIED"
+
+
+def test_session_rejects_invalid_tokens(client):
+    response = client.post(
+        "/api/v1/auth/session",
+        json={
+            "accessToken": "this-is-not-a-real-access-token",
+            "refreshToken": "this-is-not-a-real-refresh",
+        },
+    )
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_TOKEN"
 
 
 def test_health_endpoints(client):

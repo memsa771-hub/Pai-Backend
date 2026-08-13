@@ -9,7 +9,8 @@ from pai.config import Settings
 from pai.core.errors import (
     EmailAlreadyInUseError,
     EmailNotVerifiedError,
-    InvalidCredentialsError,
+    IncorrectPasswordError,
+    UserNotFoundError,
 )
 from pai.core.provider import (
     GenericActionResult,
@@ -49,8 +50,10 @@ class FakeAuthProvider:
 
     async def login(self, email: str, password: str) -> ProviderSession:
         user = self.users.get(email)
-        if not user or user["password"] != password:
-            raise InvalidCredentialsError()
+        if not user:
+            raise UserNotFoundError()
+        if user["password"] != password:
+            raise IncorrectPasswordError()
         if not user["verified"]:
             raise EmailNotVerifiedError()
         return self._issue_session(user)
@@ -75,9 +78,9 @@ class FakeAuthProvider:
         self.refresh_to_access.pop(refresh_token, None)
 
     async def resend_verification(self, email: str) -> GenericActionResult:
-        return GenericActionResult(
-            message="If an account exists for this email, a verification message has been sent."
-        )
+        if email not in self.users:
+            raise UserNotFoundError()
+        return GenericActionResult(message=f"Verification email has been sent to {email}.")
 
     async def confirm_verification(
         self,
@@ -95,10 +98,10 @@ class FakeAuthProvider:
         return self._issue_session(user)
 
     async def request_password_reset(self, email: str) -> GenericActionResult:
+        if email not in self.users:
+            raise UserNotFoundError()
         return GenericActionResult(
-            message=(
-                "If an account exists for this email, password reset instructions have been sent."
-            ),
+            message=f"A password recovery email has been sent to {email}."
         )
 
     async def reset_password(self, ticket: str, new_password: str) -> GenericActionResult:

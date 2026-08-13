@@ -29,7 +29,7 @@ from pai.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
 from pai.orchestration.checkpoint import close_graph_checkpointer, init_graph_checkpointer
 from pai.orchestration.prompts import validate_prompt_templates
 from pai.providers.supabase import SupabaseAuthProvider
-from pai.schemas import error, success
+from pai.schemas import error, humanize_validation_error, success
 
 logger = logging.getLogger(__name__)
 
@@ -136,22 +136,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-        message = "Invalid request."
-        if exc.errors():
-            first = exc.errors()[0]
-            loc = ".".join(str(part) for part in first.get("loc", []) if part != "body")
-            if loc:
-                message = f"Invalid value for {loc}."
         return JSONResponse(
             status_code=422,
-            content=error("VALIDATION_ERROR", message),
+            content=error("VALIDATION_ERROR", humanize_validation_error(exc.errors())),
         )
 
     @app.exception_handler(ValidationError)
     async def pydantic_validation_handler(_: Request, exc: ValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
-            content=error("VALIDATION_ERROR", str(exc.errors()[0]["msg"])),
+            content=error("VALIDATION_ERROR", humanize_validation_error(exc.errors())),
         )
 
     @app.get(

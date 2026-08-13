@@ -10,9 +10,11 @@ from pai.core.errors import (
     AuthError,
     EmailAlreadyInUseError,
     EmailNotVerifiedError,
+    IncorrectPasswordError,
     InvalidCredentialsError,
     InvalidTokenError,
     ProviderUnavailableError,
+    UserNotFoundError,
     ValidationFailedError,
 )
 from pai.core.provider import (
@@ -28,6 +30,7 @@ SUPABASE_ERROR_MAP: dict[str, tuple[str, int]] = {
     "invalid_grant": ("INVALID_CREDENTIALS", 401),
     "invalid_credentials": ("INVALID_CREDENTIALS", 401),
     "email_not_confirmed": ("EMAIL_NOT_VERIFIED", 403),
+    "user_not_found": ("USER_NOT_FOUND", 404),
     "user_already_exists": ("EMAIL_ALREADY_IN_USE", 409),
     "signup_disabled": ("FORBIDDEN", 403),
     "user_banned": ("FORBIDDEN", 403),
@@ -54,6 +57,7 @@ class SupabaseAuthProvider:
     async def signup(
         self, email: str, password: str, full_name: str = "", phone: str = ""
     ) -> SignupResult:
+        redirect_to = self._settings.email_verification_redirect_url
         payload: dict[str, Any] = {
             "email": email,
             "password": password,
@@ -62,8 +66,14 @@ class SupabaseAuthProvider:
                 "display_name": full_name,
                 "phone": phone,
             },
+            "options": {"email_redirect_to": redirect_to},
         }
-        data = await self._request_json("POST", "/signup", json_body=payload)
+        data = await self._request_json(
+            "POST",
+            "/signup",
+            json_body=payload,
+            params={"redirect_to": redirect_to},
+        )
         if data.get("access_token") and data.get("user"):
             session = self._parse_token_response(data)
             if not session.user.email_verified:
@@ -75,12 +85,21 @@ class SupabaseAuthProvider:
         )
 
     async def login(self, email: str, password: str) -> ProviderSession:
-        data = await self._request_json(
-            "POST",
-            "/token",
-            params={"grant_type": "password"},
-            json_body={"email": email, "password": password},
-        )
+        try:
+            data = await self._request_json(
+                "POST",
+                "/token",
+                params={"grant_type": "password"},
+                json_body={"email": email, "password": password},
+            )
+        except InvalidCredentialsError:
+            try:
+                exists = await self._admin_user_exists(email)
+            except AuthError:
+                raise InvalidCredentialsError("Email or password is incorrect.") from None
+            if exists:
+                raise IncorrectPasswordError() from None
+            raise UserNotFoundError() from None
         session = self._parse_token_response(data)
         if not session.user.email_verified:
             raise EmailNotVerifiedError()
@@ -104,15 +123,15 @@ class SupabaseAuthProvider:
         )
 
     async def resend_verification(self, email: str) -> GenericActionResult:
+        if not await self._admin_user_exists(email):
+            raise UserNotFoundError()
         payload = {
             "type": "signup",
             "email": email,
             "options": {"email_redirect_to": self._settings.email_verification_redirect_url},
         }
         await self._request_json("POST", "/resend", json_body=payload)
-        return GenericActionResult(
-            message="If an account exists for this email, a verification message has been sent.",
-        )
+        return GenericActionResult(message=f"Verification email has been sent to {email}.")
 
     async def confirm_verification(
         self,
@@ -132,15 +151,15 @@ class SupabaseAuthProvider:
         return session
 
     async def request_password_reset(self, email: str) -> GenericActionResult:
+        if not await self._admin_user_exists(email):
+            raise UserNotFoundError()
         payload = {
             "email": email,
             "redirect_to": self._settings.password_reset_redirect_url,
         }
         await self._request_json("POST", "/recover", json_body=payload)
         return GenericActionResult(
-            message=(
-                "If an account exists for this email, password reset instructions have been sent."
-            ),
+            message=f"A password recovery email has been sent to {email}.",
         )
 
     async def reset_password(self, ticket: str, new_password: str) -> GenericActionResult:
@@ -193,6 +212,19 @@ class SupabaseAuthProvider:
             return response.status_code == 200
         except (httpx.TimeoutException, httpx.RequestError):
             return False
+
+    async def _admin_user_exists(self, email: str) -> bool:
+        data = await self._request_json(
+            "GET",
+            "/admin/users",
+            params={"page": "1", "per_page": "50", "email": email},
+            use_service_role=True,
+        )
+        needle = email.lower()
+        users = data.get("users")
+        if isinstance(users, list):
+            return any(str(user.get("email") or "").lower() == needle for user in users)
+        return str(data.get("email") or "").lower() == needle
 
     def _anon_headers(self, bearer_token: str | None = None) -> dict[str, str]:
         key = self._settings.supabase_anon_key
@@ -276,15 +308,22 @@ class SupabaseAuthProvider:
                 elif error_code:
                     code = error_code.upper().replace(" ", "_")
 
-                if "email not confirmed" in message.lower():
-                    code = "EMAIL_NOT_VERIFIED"
-                    status = 403
-                if "invalid login credentials" in message.lower():
-                    code = "INVALID_CREDENTIALS"
-                    status = 401
+        if "email not confirmed" in message.lower():
+            code = "EMAIL_NOT_VERIFIED"
+            status = 403
+        if "invalid login credentials" in message.lower():
+            code = "INVALID_CREDENTIALS"
+            status = 401
+        if "user not found" in message.lower():
+            code = "USER_NOT_FOUND"
+            status = 404
 
         if code == "INVALID_CREDENTIALS":
             raise InvalidCredentialsError(message)
+        if code == "INCORRECT_PASSWORD":
+            raise IncorrectPasswordError(message)
+        if code == "USER_NOT_FOUND":
+            raise UserNotFoundError(message)
         if code == "EMAIL_NOT_VERIFIED":
             raise EmailNotVerifiedError(message)
         if code == "EMAIL_ALREADY_IN_USE":

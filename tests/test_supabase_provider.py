@@ -1,8 +1,12 @@
+import json
+from urllib.parse import parse_qs, urlparse
+
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from pai.config import Settings
-from pai.core.errors import InvalidCredentialsError, ProviderUnavailableError
+from pai.core.errors import IncorrectPasswordError, ProviderUnavailableError, UserNotFoundError
 from pai.providers.supabase import SupabaseAuthProvider
 
 
@@ -23,21 +27,53 @@ def supabase_settings() -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_supabase_login_maps_invalid_credentials(supabase_settings: Settings):
+async def test_supabase_login_unknown_email(supabase_settings: Settings):
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            400,
-            json={
-                "error": "invalid_grant",
-                "error_description": "Invalid login credentials",
-            },
-        )
+        if request.url.path.endswith("/token"):
+            return httpx.Response(
+                400,
+                json={
+                    "error": "invalid_grant",
+                    "error_description": "Invalid login credentials",
+                },
+            )
+        if request.url.path.endswith("/admin/users"):
+            return httpx.Response(200, json={"users": []})
+        return httpx.Response(404, json={"message": "not found"})
 
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport)
     provider = SupabaseAuthProvider(supabase_settings, client=client)
 
-    with pytest.raises(InvalidCredentialsError):
+    with pytest.raises(UserNotFoundError):
+        await provider.login("a@example.com", "wrong")
+
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_supabase_login_incorrect_password(supabase_settings: Settings):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(
+                400,
+                json={
+                    "error": "invalid_grant",
+                    "error_description": "Invalid login credentials",
+                },
+            )
+        if request.url.path.endswith("/admin/users"):
+            return httpx.Response(
+                200,
+                json={"users": [{"id": "u1", "email": "a@example.com"}]},
+            )
+        return httpx.Response(404, json={"message": "not found"})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    provider = SupabaseAuthProvider(supabase_settings, client=client)
+
+    with pytest.raises(IncorrectPasswordError):
         await provider.login("a@example.com", "wrong")
 
     await provider.aclose()
@@ -62,6 +98,11 @@ async def test_supabase_timeout_raises_provider_unavailable(supabase_settings: S
 async def test_supabase_signup_without_session(supabase_settings: Settings):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/signup")
+        query = parse_qs(urlparse(str(request.url)).query)
+        assert query["redirect_to"] == ["http://localhost:3000/verify"]
+        body = json.loads(request.content)
+        assert body["options"]["email_redirect_to"] == "http://localhost:3000/verify"
+        assert body["data"]["full_name"] == "Ali Khan"
         return httpx.Response(
             200,
             json={
@@ -75,7 +116,38 @@ async def test_supabase_signup_without_session(supabase_settings: Settings):
     client = httpx.AsyncClient(transport=transport)
     provider = SupabaseAuthProvider(supabase_settings, client=client)
 
-    result = await provider.signup("new@example.com", "Password123!")
+    result = await provider.signup("new@example.com", "Password123!", "Ali Khan", "+923001234567")
     assert result.session is None
 
     await provider.aclose()
+
+
+def _settings_kwargs(**overrides) -> dict:
+    data = {
+        "SUPABASE_URL": "https://project.supabase.co",
+        "SUPABASE_ANON_KEY": "anon-key",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-key",
+        "SUPABASE_JWT_SECRET": "jwt-secret",
+        "EMAIL_VERIFICATION_REDIRECT_URL": "http://localhost:3000/auth/verify-email",
+        "PASSWORD_RESET_REDIRECT_URL": "http://localhost:3000/auth/reset-password",
+        "CORS_ORIGINS": "http://localhost:3000",
+        "TRUSTED_HOSTS": "testserver",
+        "DATABASE_URL": "postgresql+asyncpg://pai:pai@127.0.0.1:5433/pai_auth",
+        "VAULT_ENCRYPTION_KEY": "nAiPKgHP0wblQhCFnmH_2hRsQts1BmOKdHQUa2m0FzQ=",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_redirect_url_cannot_be_site_root():
+    with pytest.raises(ValidationError):
+        Settings(**_settings_kwargs(EMAIL_VERIFICATION_REDIRECT_URL="http://localhost:3000"))
+
+
+def test_redirect_origin_must_be_in_cors():
+    with pytest.raises(ValidationError):
+        Settings(
+            **_settings_kwargs(
+                EMAIL_VERIFICATION_REDIRECT_URL="http://localhost:3001/auth/verify-email"
+            )
+        )

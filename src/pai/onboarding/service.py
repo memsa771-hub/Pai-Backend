@@ -41,17 +41,19 @@ def _present(value: Any) -> bool:
     return value not in (None, "", [], {})
 
 
-def onboarding_public_status(person: Person | None) -> dict[str, Any]:
-    if person is None or person.onboarding_completed_at is None:
-        return {
-            "onboardingCompleted": False,
-            "onboardingPath": getattr(person, "onboarding_path", None) if person else None,
-        }
-    return {
-        "onboardingCompleted": True,
-        "onboardingCompletedAt": person.onboarding_completed_at.isoformat(),
-        "onboardingPath": person.onboarding_path,
+def onboarding_public_status(
+    person: Person | None, settings: Settings | None = None
+) -> dict[str, Any]:
+    resolved = settings or get_settings()
+    completed = person is not None and person.onboarding_completed_at is not None
+    payload: dict[str, Any] = {
+        "onboardingCompleted": completed,
+        "onboardingPath": getattr(person, "onboarding_path", None) if person else None,
+        "nextPath": resolved.next_path(onboarding_completed=completed),
     }
+    if completed and person is not None and person.onboarding_completed_at is not None:
+        payload["onboardingCompletedAt"] = person.onboarding_completed_at.isoformat()
+    return payload
 
 
 class OnboardingService:

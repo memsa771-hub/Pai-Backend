@@ -1,7 +1,8 @@
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
+from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -41,6 +42,8 @@ class Settings(BaseSettings):
 
     email_verification_redirect_url: str = Field(..., alias="EMAIL_VERIFICATION_REDIRECT_URL")
     password_reset_redirect_url: str = Field(..., alias="PASSWORD_RESET_REDIRECT_URL")
+    frontend_onboarding_path: str = Field(default="/onboarding", alias="FRONTEND_ONBOARDING_PATH")
+    frontend_home_path: str = Field(default="/", alias="FRONTEND_HOME_PATH")
 
     auth_http_timeout_seconds: float = Field(default=10.0, alias="AUTH_HTTP_TIMEOUT_SECONDS")
 
@@ -104,6 +107,43 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator(
+        "email_verification_redirect_url",
+        "password_reset_redirect_url",
+        mode="before",
+    )
+    @classmethod
+    def frontend_redirect_url(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        url = value.strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("Redirect URL must be an absolute http(s) frontend address.")
+        if not parsed.path or parsed.path == "/":
+            raise ValueError(
+                "Redirect URL must include a dedicated path "
+                "(e.g. /auth/verify-email or /auth/reset-password), not the site root."
+            )
+        return url
+
+    @model_validator(mode="after")
+    def redirects_match_cors(self) -> Self:
+        allowed = set(self.cors_origins)
+        if "*" in allowed:
+            return self
+        for url in (self.email_verification_redirect_url, self.password_reset_redirect_url):
+            parsed = urlparse(url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            if origin not in allowed:
+                raise ValueError(
+                    f"Redirect origin {origin} must also be listed in CORS_ORIGINS."
+                )
+        return self
+
+    def next_path(self, *, onboarding_completed: bool) -> str:
+        return self.frontend_home_path if onboarding_completed else self.frontend_onboarding_path
 
     @property
     def supabase_auth_base(self) -> str:

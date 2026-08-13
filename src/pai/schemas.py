@@ -35,6 +35,58 @@ def _normalize_phone(value: str) -> str:
     return compact
 
 
+_FIELD_LABELS = {
+    "fullName": "Full name",
+    "email": "Email",
+    "phone": "Phone number",
+    "password": "Password",
+    "confirmPassword": "Confirm password",
+    "newPassword": "New password",
+    "ticket": "Reset ticket",
+    "code": "Verification code",
+    "accessToken": "Access token",
+    "refreshToken": "Refresh token",
+}
+
+_MSG_PREFIXES = ("Value error, ", "Assertion failed, ")
+
+
+def humanize_validation_error(errors: list[Any]) -> str:
+    if not errors:
+        return "Invalid request."
+    first = errors[0]
+    loc = [str(part) for part in first.get("loc", []) if part not in ("body", "query", "path")]
+    field = loc[-1] if loc else ""
+    label = _FIELD_LABELS.get(field, field.replace("_", " ").capitalize() if field else "")
+    raw = str(first.get("msg") or "")
+    for prefix in _MSG_PREFIXES:
+        if raw.startswith(prefix):
+            raw = raw[len(prefix) :]
+            break
+    type_name = str(first.get("type") or "")
+    lowered = raw.lower()
+
+    if "passwords do not match" in lowered:
+        return "Passwords do not match."
+    if "email" in type_name or "email address" in lowered or (
+        field == "email" and type_name == "value_error"
+    ):
+        return "Enter a valid email address."
+    if type_name == "missing":
+        return f"{label or 'This field'} is required."
+    if type_name in {"string_too_short", "too_short"}:
+        min_length = (first.get("ctx") or {}).get("min_length")
+        if field in {"password", "newPassword", "confirmPassword"}:
+            return f"Password must be at least {min_length or 8} characters."
+        if label:
+            return f"{label} is too short."
+    if raw:
+        return raw[0].upper() + raw[1:] if raw[0].islower() else raw
+    if label:
+        return f"Invalid value for {label.lower()}."
+    return "Invalid request."
+
+
 class SignupRequest(BaseModel):
     fullName: str = Field(min_length=2, max_length=256, examples=["Ali Khan"])
     email: EmailStr = Field(examples=["user@example.com"])
@@ -97,6 +149,13 @@ class PasswordChangeRequest(BaseModel):
         return self
 
 
+class SessionFromTokensRequest(BaseModel):
+    """Tokens from the Supabase email-verification redirect hash (never log these)."""
+
+    accessToken: str = Field(min_length=16)
+    refreshToken: str = Field(min_length=8)
+
+
 class UserPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -115,6 +174,8 @@ class AuthSessionPublic(BaseModel):
     user: UserPublic
     onboardingCompleted: bool = False
     onboardingCompletedAt: str | None = None
+    onboardingPath: str | None = None
+    nextPath: str = "/onboarding"
 
 
 class SignupResponseData(BaseModel):
@@ -134,6 +195,8 @@ class MeResponseData(BaseModel):
     user: UserPublic
     onboardingCompleted: bool = False
     onboardingCompletedAt: str | None = None
+    onboardingPath: str | None = None
+    nextPath: str = "/onboarding"
 
 
 class HealthData(BaseModel):

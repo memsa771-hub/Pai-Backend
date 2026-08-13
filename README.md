@@ -142,11 +142,12 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/auth/signup` | Register (`fullName`, `email`, `phone`, `password`, `confirmPassword`) |
-| POST | `/api/v1/auth/login` | Login; cookies + Person bootstrap; returns `onboardingCompleted` |
+| POST | `/api/v1/auth/signup` | Register (`fullName`, `email`, `phone`, `password`, `confirmPassword`). Verification email uses `EMAIL_VERIFICATION_REDIRECT_URL`. |
+| POST | `/api/v1/auth/login` | Login; cookies + Person bootstrap; returns `onboardingCompleted` and `nextPath` |
+| POST | `/api/v1/auth/session` | Exchange email-redirect tokens for a PAI session (cookies + bootstrap + `nextPath`) |
 | POST | `/api/v1/auth/refresh` | Refresh (CSRF + cookie) |
 | POST | `/api/v1/auth/logout` | Logout |
-| POST | `/api/v1/auth/email-verification/*` | Verify email |
+| POST | `/api/v1/auth/email-verification/*` | Resend or confirm email (OTP / `token_hash`) |
 | POST | `/api/v1/auth/password/*` | Password flows |
 | GET | `/api/v1/auth/me` | Supabase user + onboarding flag (Bearer) |
 | DELETE | `/api/v1/account` | Delete auth user + app data |
@@ -208,8 +209,26 @@ Session: access token in JSON (`Authorization: Bearer`); refresh in HttpOnly `pa
 
 1. [supabase.com/dashboard](https://supabase.com/dashboard) — create project.
 2. **Project Settings → API** — `SUPABASE_URL`, anon key, service_role key, JWT secret → `.env`.
-3. **Authentication** — enable Email; set redirect URLs from `.env`.
-4. Optional: **SMTP** for production email.
+3. **Authentication → Providers → Email** — enable Email; **Confirm email: ON**.
+4. **Authentication → URL Configuration**
+   - Site URL: `http://localhost:3000` (production frontend origin later).
+   - Redirect URLs (exact match):
+     - `http://localhost:3000/auth/verify-email`
+     - `http://localhost:3000/auth/reset-password`
+     - production copies of those paths
+5. PAI `.env` must use the **same** callback URLs (`EMAIL_VERIFICATION_REDIRECT_URL`, `PASSWORD_RESET_REDIRECT_URL`) and list that origin in `CORS_ORIGINS`. FastAPI Cloud needs the same env vars.
+6. Optional: **SMTP** for production email.
+
+### After the user clicks “verify email”
+
+Supabase verifies the address and redirects to `/auth/verify-email` with tokens in the **URL hash** (`#access_token=…&refresh_token=…&type=signup`). The frontend should:
+
+1. Read the hash on a client page (the hash is never sent to a server).
+2. `POST /api/v1/auth/session` with `{ accessToken, refreshToken }` (`credentials: "include"`).
+3. Clear the hash (`history.replaceState`).
+4. Route to `data.nextPath` — `/onboarding` until onboarding is complete, then `/`.
+
+Do not keep tokens in the URL or in `localStorage`. PAI stores the refresh token in an HttpOnly cookie and bootstraps the Person Vault on this call.
 
 Worksheet: `supabase-setup.template.env`
 

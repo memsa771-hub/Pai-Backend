@@ -35,6 +35,7 @@ from pai.schemas import (
     MessageData,
     PasswordChangeRequest,
     PasswordResetRequest,
+    SessionFromTokensRequest,
     SignupRequest,
     SignupResponseData,
     VerificationConfirmRequest,
@@ -149,7 +150,7 @@ async def login(
 ) -> JSONResponse:
     bundle = await service.login(body.email, body.password)
     person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
-    return _session_response(bundle, settings, onboarding_public_status(person))
+    return _session_response(bundle, settings, onboarding_public_status(person, settings))
 
 
 @router.post(
@@ -222,7 +223,31 @@ async def confirm_email_verification(
 ) -> JSONResponse:
     bundle = await service.confirm_verification(body.code, body.verifier, body.email)
     person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
-    return _session_response(bundle, settings, onboarding_public_status(person))
+    return _session_response(bundle, settings, onboarding_public_status(person, settings))
+
+
+@router.post(
+    "/session",
+    response_model=ApiSuccessResponse[LoginResponseData],
+    responses={401: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse}},
+    summary="Create a PAI session from email-verification redirect tokens",
+    description=(
+        "Frontend `/auth/verify-email` reads `#access_token` and `#refresh_token` from the "
+        "Supabase redirect, then POSTs them here. PAI validates the user, bootstraps the "
+        "Person Vault, sets cookies, and returns `nextPath` (`/onboarding` until complete). "
+        "Clear the hash from the browser URL after this call."
+    ),
+)
+async def establish_session(
+    body: SessionFromTokensRequest,
+    service: Annotated[AuthService, Depends(get_pai)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    provider: Annotated[AuthProvider, Depends(get_auth_provider)],
+) -> JSONResponse:
+    bundle = await service.establish_session(body.accessToken, body.refreshToken)
+    person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
+    return _session_response(bundle, settings, onboarding_public_status(person, settings))
 
 
 @router.post(
@@ -287,7 +312,7 @@ async def me(
     access_token: Annotated[str, Depends(get_validated_access_token)],
 ) -> JSONResponse:
     user = await service.get_me(access_token)
-    onboarding = onboarding_public_status(None)
+    onboarding = onboarding_public_status(None, settings)
     try:
         from pai.data.db import get_session_factory
 
@@ -295,7 +320,7 @@ async def me(
         factory = get_session_factory(settings)
         async with factory() as session:
             person = await get_person_by_auth(session, str(payload["sub"]))
-            onboarding = onboarding_public_status(person)
+            onboarding = onboarding_public_status(person, settings)
     except PersonNotFoundError:
         pass
     except Exception:

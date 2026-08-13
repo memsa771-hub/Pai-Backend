@@ -21,6 +21,16 @@ class InvalidCredentialsError(AuthError):
         super().__init__(code="INVALID_CREDENTIALS", message=message, status_code=401)
 
 
+class UserNotFoundError(AuthError):
+    def __init__(self, message: str = "No account exists with this email.") -> None:
+        super().__init__(code="USER_NOT_FOUND", message=message, status_code=404)
+
+
+class IncorrectPasswordError(AuthError):
+    def __init__(self, message: str = "Incorrect password.") -> None:
+        super().__init__(code="INCORRECT_PASSWORD", message=message, status_code=401)
+
+
 class EmailNotVerifiedError(AuthError):
     def __init__(
         self,

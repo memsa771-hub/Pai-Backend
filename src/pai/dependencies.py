@@ -9,7 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.core.errors import CsrfError, InvalidTokenError
+from pai.core.errors import CsrfError, InvalidTokenError, OnboardingIncompleteError
 from pai.core.provider import AuthProvider
 from pai.core.service import AuthService
 from pai.data.db import get_session_factory
@@ -31,6 +31,7 @@ __all__ = [
     "get_validated_access_token",
     "get_db",
     "resolve_person_from_token",
+    "require_onboarding_complete",
     "require_csrf",
     "validate_access_token",
 ]
@@ -94,6 +95,14 @@ async def resolve_person_from_token(
     payload = validate_access_token(token, settings)
     external_id = str(payload["sub"])
     return await get_person_by_auth(session, external_id)
+
+
+async def require_onboarding_complete(
+    person: Annotated[Person, Depends(resolve_person_from_token)],
+) -> Person:
+    if person.onboarding_completed_at is None:
+        raise OnboardingIncompleteError()
+    return person
 
 
 async def require_csrf(

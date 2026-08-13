@@ -142,14 +142,26 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/auth/signup` | Register |
-| POST | `/api/v1/auth/login` | Login; cookies + optional bootstrap |
+| POST | `/api/v1/auth/signup` | Register (`email`, `password`, `confirmPassword`) |
+| POST | `/api/v1/auth/login` | Login; cookies + Person bootstrap; returns `onboardingCompleted` |
 | POST | `/api/v1/auth/refresh` | Refresh (CSRF + cookie) |
 | POST | `/api/v1/auth/logout` | Logout |
 | POST | `/api/v1/auth/email-verification/*` | Verify email |
 | POST | `/api/v1/auth/password/*` | Password flows |
-| GET | `/api/v1/auth/me` | Supabase user (Bearer) |
+| GET | `/api/v1/auth/me` | Supabase user + onboarding flag (Bearer) |
 | DELETE | `/api/v1/account` | Delete auth user + app data |
+
+### Onboarding (required after first verified login)
+
+New users cannot use chat or documents until onboarding is complete. Answers map into Person + Person Vault and persist across every future conversation.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/onboarding` | Status, current step, saved values |
+| PUT | `/api/v1/onboarding/steps/1` | Identity: full name, DOB, gender, nationality |
+| PUT | `/api/v1/onboarding/steps/2` | Location/status; optional national ID + LinkedIn |
+| PUT | `/api/v1/onboarding/steps/3` | Academic background |
+| POST | `/api/v1/onboarding/complete` | Mark complete (required fields only) |
 
 ### Person & Vault (Phase 2)
 

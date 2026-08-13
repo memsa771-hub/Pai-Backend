@@ -304,6 +304,107 @@ class VaultService:
             summary[name] = str(count or 0)
         return summary
 
+    async def upsert_sparse_field(
+        self,
+        session: AsyncSession,
+        person: Person,
+        field_key: str,
+        value: Any,
+        *,
+        source_type: str = "onboarding",
+        actor_type: str = "person",
+        skip_consent_check: bool = False,
+    ) -> None:
+        """Write a vault_value field without opening a nested transaction."""
+        field = get_catalog_field(field_key)
+        if field is None:
+            raise UnknownFieldError()
+        if field.derived or not field.editable or field.storage != "vault_value":
+            raise FieldNotEditableError()
+        vault = person.vault
+        if vault is None:
+            raise UnknownFieldError("Vault not initialized.")
+        if (
+            field.consent_category
+            and not skip_consent_check
+            and not await self._has_consent(session, person.id, field.consent_category)
+        ):
+            raise ConsentRequiredError()
+
+        result = await session.execute(
+            select(VaultValue).where(
+                VaultValue.vault_id == vault.id,
+                VaultValue.field_key == field_key,
+                VaultValue.status == "active",
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.status = "superseded"
+            old_val = existing.value
+        else:
+            old_val = None
+
+        row = VaultValue(
+            vault_id=vault.id,
+            field_key=field_key,
+            value=None if field.sensitive else value,
+            value_encrypted=self._codec.encrypt_json(value) if field.sensitive else None,
+            status="active",
+            verification_level="self_reported",
+            confidence=1.0,
+            supersedes_id=existing.id if existing else None,
+        )
+        session.add(row)
+        await session.flush()
+        session.add(
+            VaultEvidence(
+                vault_value_id=row.id,
+                source_type=source_type,
+                source_reference=str(person.id),
+                confidence=1.0,
+            )
+        )
+        session.add(
+            VaultHistory(
+                vault_id=vault.id,
+                field_key=field_key,
+                action="updated" if old_val is not None else "created",
+                old_value=old_val,
+                new_value=value,
+                actor_type=actor_type,
+                actor_id=str(person.id),
+            )
+        )
+        await self._maybe_expand_scopes(session, vault, field.applicable_scope)
+
+    async def ensure_consent(
+        self, session: AsyncSession, person_id: uuid.UUID, category: str
+    ) -> None:
+        from datetime import UTC, datetime
+
+        result = await session.execute(
+            select(PersonConsent).where(
+                PersonConsent.person_id == person_id,
+                PersonConsent.category == category,
+            )
+        )
+        row = result.scalar_one_or_none()
+        now = datetime.now(UTC)
+        if row is None:
+            session.add(
+                PersonConsent(
+                    person_id=person_id,
+                    category=category,
+                    granted=True,
+                    granted_at=now,
+                )
+            )
+            return
+        row.granted = True
+        row.granted_at = row.granted_at or now
+        row.revoked_at = None
+
     async def _consent_map(self, session: AsyncSession, person_id: uuid.UUID) -> dict[str, bool]:
         result = await session.execute(
             select(PersonConsent).where(PersonConsent.person_id == person_id)

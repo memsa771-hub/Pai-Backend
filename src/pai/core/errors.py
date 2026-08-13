@@ -77,3 +77,14 @@ class FieldNotEditableError(AuthError):
 class ConsentRequiredError(AuthError):
     def __init__(self, message: str = "Consent required for this sensitive category.") -> None:
         super().__init__(code="CONSENT_REQUIRED", message=message, status_code=403)
+
+
+class OnboardingIncompleteError(AuthError):
+    def __init__(
+        self,
+        message: str = (
+            "Complete the three-step onboarding before using PAI. "
+            "Call GET /api/v1/onboarding."
+        ),
+    ) -> None:
+        super().__init__(code="ONBOARDING_INCOMPLETE", message=message, status_code=403)

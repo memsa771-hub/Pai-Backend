@@ -32,11 +32,12 @@ def test_document_candidates_not_visible_cross_user(vault_client, fake_provider)
             "password": "Password123!",
             "verified": True,
         }
-    from tests.conftest import auth_headers
+    from tests.conftest import auth_headers, complete_onboarding
 
     ha = auth_headers(vault_client, "audit-a@ex.com", "Password123!")
     hb = auth_headers(vault_client, "audit-b@ex.com", "Password123!")
-    vault_client.post("/api/v1/person/bootstrap", headers=ha)
+    complete_onboarding(vault_client, ha)
+    complete_onboarding(vault_client, hb)
     conv_a = vault_client.post("/api/v1/conversations", headers=ha, json={}).json()["data"]["id"]
     denied_conv = vault_client.get(f"/api/v1/conversations/{conv_a}", headers=hb)
     assert denied_conv.status_code in (403, 404)
@@ -70,9 +71,8 @@ def test_scenario_manual_profile_education(vault_client, verified_user):
     assert items[0]["gpa"] == 3.4
 
 
-def test_chat_llm_failure_leaves_user_message(vault_client, verified_user, test_settings, monkeypatch):
-    client, headers, _ = verified_user
-    client.post("/api/v1/person/bootstrap", headers=headers)
+def test_chat_llm_failure_leaves_user_message(vault_client, onboarded_user, test_settings, monkeypatch):
+    client, headers, _ = onboarded_user
     conv_id = client.post("/api/v1/conversations", headers=headers, json={}).json()["data"]["id"]
 
     class FailLLM:

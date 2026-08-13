@@ -18,6 +18,7 @@ from pai.api.auth import router as auth_router
 from pai.api.chat import chat_router
 from pai.api.chat import router as chat_router_conversations
 from pai.api.documents import router as documents_router
+from pai.api.onboarding import router as onboarding_router
 from pai.api.person import router as person_router
 from pai.api.vault import router as vault_router
 from pai.config import Settings, get_settings
@@ -121,7 +122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Request-ID"],
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=app_settings.trusted_hosts)
@@ -181,6 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(account_router)
     app.include_router(person_router)
+    app.include_router(onboarding_router)
     app.include_router(vault_router)
     app.include_router(chat_router)
     app.include_router(chat_router_conversations)

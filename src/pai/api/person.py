@@ -79,6 +79,12 @@ async def get_person_me(
                 "phone": person.phone,
                 "accountStatus": person.account_status,
                 "version": person.version,
+                "onboardingCompleted": person.onboarding_completed_at is not None,
+                "onboardingCompletedAt": (
+                    person.onboarding_completed_at.isoformat()
+                    if person.onboarding_completed_at
+                    else None
+                ),
             }
         )
     )

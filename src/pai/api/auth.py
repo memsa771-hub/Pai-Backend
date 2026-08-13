@@ -13,12 +13,13 @@ from pai.core.provider import AuthProvider
 from pai.core.service import AuthService, SessionBundle
 from pai.dependencies import (
     get_auth_provider,
-    get_pai,
     get_db,
+    get_pai,
     get_validated_access_token,
     require_csrf,
     validate_access_token,
 )
+from pai.onboarding.service import onboarding_public_status
 from pai.person.service import (
     PersonBootstrapService,
     get_person_by_auth,
@@ -73,26 +74,28 @@ def _clear_session_cookies(response: Response, settings: Settings) -> None:
     response.delete_cookie(settings.csrf_cookie_name, path="/")
 
 
-def _session_json(bundle: SessionBundle) -> dict:
-    return success(
-        {
-            "accessToken": bundle.access_token,
-            "accessTokenExpiresIn": bundle.access_token_expires_in,
-            "user": {
-                "id": bundle.user.id,
-                "email": bundle.user.email,
-                "emailVerified": bundle.user.email_verified,
-                "displayName": bundle.user.display_name,
-                "avatarUrl": bundle.user.avatar_url,
-                "roles": bundle.user.roles or [],
-                "createdAt": bundle.user.created_at,
-            },
-        }
-    )
+def _session_json(bundle: SessionBundle, onboarding: dict | None = None) -> dict:
+    payload = {
+        "accessToken": bundle.access_token,
+        "accessTokenExpiresIn": bundle.access_token_expires_in,
+        "user": {
+            "id": bundle.user.id,
+            "email": bundle.user.email,
+            "emailVerified": bundle.user.email_verified,
+            "displayName": bundle.user.display_name,
+            "avatarUrl": bundle.user.avatar_url,
+            "roles": bundle.user.roles or [],
+            "createdAt": bundle.user.created_at,
+        },
+    }
+    payload.update(onboarding or onboarding_public_status(None))
+    return success(payload)
 
 
-def _session_response(bundle: SessionBundle, settings: Settings) -> JSONResponse:
-    response = JSONResponse(content=_session_json(bundle))
+def _session_response(
+    bundle: SessionBundle, settings: Settings, onboarding: dict | None = None
+) -> JSONResponse:
+    response = JSONResponse(content=_session_json(bundle, onboarding))
     _set_session_cookies(response, bundle, settings)
     return response
 
@@ -102,13 +105,15 @@ async def _bootstrap_person_if_verified(
     provider: AuthProvider,
     settings: Settings,
     access_token: str,
-) -> None:
+):
     try:
         user = await provider.get_user(access_token)
         if user.email_verified:
             await PersonBootstrapService(settings).bootstrap(session, user)
+            return await get_person_by_auth(session, str(user.id))
     except Exception:
         logger.exception("Person bootstrap failed after authentication")
+    return None
 
 
 @router.post(
@@ -143,8 +148,8 @@ async def login(
     provider: Annotated[AuthProvider, Depends(get_auth_provider)],
 ) -> JSONResponse:
     bundle = await service.login(body.email, body.password)
-    await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
-    return _session_response(bundle, settings)
+    person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
+    return _session_response(bundle, settings, onboarding_public_status(person))
 
 
 @router.post(
@@ -216,8 +221,8 @@ async def confirm_email_verification(
     provider: Annotated[AuthProvider, Depends(get_auth_provider)],
 ) -> JSONResponse:
     bundle = await service.confirm_verification(body.code, body.verifier, body.email)
-    await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
-    return _session_response(bundle, settings)
+    person = await _bootstrap_person_if_verified(session, provider, settings, bundle.access_token)
+    return _session_response(bundle, settings, onboarding_public_status(person))
 
 
 @router.post(
@@ -278,9 +283,23 @@ async def change_password(
 )
 async def me(
     service: Annotated[AuthService, Depends(get_pai)],
+    settings: Annotated[Settings, Depends(get_settings)],
     access_token: Annotated[str, Depends(get_validated_access_token)],
 ) -> JSONResponse:
     user = await service.get_me(access_token)
+    onboarding = onboarding_public_status(None)
+    try:
+        from pai.data.db import get_session_factory
+
+        payload = validate_access_token(access_token, settings)
+        factory = get_session_factory(settings)
+        async with factory() as session:
+            person = await get_person_by_auth(session, str(payload["sub"]))
+            onboarding = onboarding_public_status(person)
+    except PersonNotFoundError:
+        pass
+    except Exception:
+        logger.warning("Onboarding status skipped (database unavailable).", exc_info=True)
     return JSONResponse(
         content=success(
             {
@@ -292,7 +311,8 @@ async def me(
                     "avatarUrl": user.avatar_url,
                     "roles": user.roles or [],
                     "createdAt": user.created_at,
-                }
+                },
+                **onboarding,
             }
         )
     )

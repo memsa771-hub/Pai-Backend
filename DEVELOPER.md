@@ -25,9 +25,10 @@ A **standalone FastAPI backend** for Placement AI:
 src/pai/
   app.py                 # FastAPI app, lifespan, health
   config.py              # Settings from .env
-  api/                   # HTTP routes (auth, chat, vault, person, documents)
+  api/                   # HTTP routes (auth, onboarding, chat, vault, person, documents)
   orchestration/         # LangGraph turn control + counselor agent
   intelligence/          # Vault Intelligence (multi-source extraction)
+  onboarding/            # Three-step post-login Person Vault setup
   vault/                 # Catalog, completion, vault service
   person/                # Person bootstrap + typed resources
   ingestion/             # Deterministic vault/typed applies
@@ -58,6 +59,8 @@ Authorize with **accessToken only** (no `Bearer` prefix in the Swagger box).
 
 ## Chat model (important)
 
+- After first verified login, complete **3-step onboarding** before chat
+- Onboarding writes into the same Person Vault (not a separate profile)
 - PAI is **one counselor per Person**
 - A conversation is only a **topic thread**
 - `newConversation: true` = new topic, not amnesia

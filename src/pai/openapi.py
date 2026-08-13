@@ -25,6 +25,13 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": "Student identity + typed profile resources (education, skills, goals, …).",
     },
     {
+        "name": "onboarding",
+        "description": (
+            "Required three-step Person Vault setup after first verified login. "
+            "Chat and documents stay locked until `POST /api/v1/onboarding/complete`."
+        ),
+    },
+    {
         "name": "vault",
         "description": (
             "Person Vault. Prefer **`GET /api/v1/vault/status`** for a simple filled/missing view "
@@ -65,10 +72,11 @@ Agents reason; deterministic services write trusted data. LLM provider is replac
 2. Copy **`data.accessToken`** only (the long `eyJ…` string).
 3. Click **Authorize** (top right) → paste the token **without** the word `Bearer`.
 4. Swagger adds `Bearer` for you. Adding it twice causes `401`.
-5. Call **`GET /api/v1/auth/me`** — must return `200` before chat.
-6. Call **`POST /api/v1/chat`** with a message.
+5. Call **`GET /api/v1/auth/me`** — must return 200 before chat.
+6. If `data.onboardingCompleted` is false, complete **`GET /api/v1/onboarding`** then steps 1–3 and **`POST /api/v1/onboarding/complete`**.
+7. Call **`POST /api/v1/chat`** with a message.
 
-Login auto-bootstraps the Person Vault for verified users.
+Login auto-bootstraps the Person Vault for verified users. New users must finish onboarding before counselor chat.
 
 ### Auth model
 

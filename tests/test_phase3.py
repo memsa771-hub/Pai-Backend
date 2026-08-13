@@ -181,13 +181,12 @@ def test_policy_sensitive_requires_confirmation():
     assert policy_decision(sensitive) == "pending"
 
 
-def test_chat_message_with_mock_counselor(verified_user, test_settings, monkeypatch):
+def test_chat_message_with_mock_counselor(onboarded_user, test_settings, monkeypatch):
     from tests.test_pai_orchestration import SchemaRoutingMockProvider
     from pai.orchestration.orchestrator import PAIOrchestrator
     from pai.orchestration.schemas import VaultCandidate as OrchVaultCandidate
 
-    client, headers, _ = verified_user
-    client.post("/api/v1/person/bootstrap", headers=headers)
+    client, headers, _ = onboarded_user
     conv_id = client.post("/api/v1/conversations", headers=headers, json={}).json()["data"]["id"]
 
     mock = SchemaRoutingMockProvider(
@@ -245,9 +244,8 @@ def test_policy_high_confidence_non_sensitive_accepts():
     assert policy_decision(c) == "accept"
 
 
-def test_conversation_create_and_ownership(verified_user, test_settings):
-    client, headers, _ = verified_user
-    client.post("/api/v1/person/bootstrap", headers=headers)
+def test_conversation_create_and_ownership(onboarded_user, test_settings):
+    client, headers, _ = onboarded_user
     created = client.post("/api/v1/conversations", headers=headers, json={"title": "Plan"})
     assert created.status_code == 201
     conv_id = created.json()["data"]["id"]
@@ -273,9 +271,8 @@ def test_conversation_create_and_ownership(verified_user, test_settings):
     assert forbidden.status_code in (403, 404)
 
 
-def test_document_upload_validation_rejects_executable(verified_user):
-    client, headers, _ = verified_user
-    client.post("/api/v1/person/bootstrap", headers=headers)
+def test_document_upload_validation_rejects_executable(onboarded_user):
+    client, headers, _ = onboarded_user
     files = {"file": ("malware.exe", b"MZ", "application/octet-stream")}
     resp = client.post("/api/v1/documents", headers=headers, files=files)
     assert resp.status_code == 400

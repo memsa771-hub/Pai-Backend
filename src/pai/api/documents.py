@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.dependencies import get_db, resolve_person_from_token
+from pai.dependencies import get_db, require_onboarding_complete
 from pai.documents.models import DocumentCandidate
 from pai.documents.service import (
     create_document_upload,
@@ -36,7 +36,7 @@ def _storage(settings: Settings) -> SupabaseStorageProvider:
 async def upload_document(
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
     file: UploadFile = File(...),
 ) -> JSONResponse:
     data = await file.read()
@@ -63,7 +63,7 @@ async def upload_document(
 @router.get("")
 async def list_documents(
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     from pai.documents.models import Document
 
@@ -87,7 +87,7 @@ async def get_document(
     document_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     doc = await get_document_owned(session, person.id, document_id)
     storage = _storage(settings)
@@ -115,7 +115,7 @@ async def delete_document(
     document_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     doc = await get_document_owned(session, person.id, document_id)
     storage = _storage(settings)
@@ -132,7 +132,7 @@ async def delete_document(
 async def document_status(
     document_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     doc = await get_document_owned(session, person.id, document_id)
     return JSONResponse(content=success({"status": doc.status, "documentType": doc.document_type}))
@@ -142,7 +142,7 @@ async def document_status(
 async def document_candidates(
     document_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     await get_document_owned(session, person.id, document_id)
     result = await session.execute(
@@ -168,7 +168,7 @@ async def review_document(
     document_id: uuid.UUID,
     body: DocumentReviewRequest,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     ids = [uuid.UUID(x) for x in body.acceptCandidateIds]
     await review_document_candidates(session, person, document_id, accept_ids=ids)
@@ -179,7 +179,7 @@ async def review_document(
 async def reprocess_document(
     document_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     await enqueue_reprocess(session, person.id, document_id)
     return JSONResponse(content=success({"message": "Reprocess queued."}))

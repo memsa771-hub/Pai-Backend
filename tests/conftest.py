@@ -323,6 +323,44 @@ def auth_headers(client, email: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def complete_onboarding(client, headers: dict[str, str]) -> None:
+    step1 = client.put(
+        "/api/v1/onboarding/steps/1",
+        headers=headers,
+        json={
+            "fullName": "Test Student",
+            "dateOfBirth": "2004-03-12",
+            "gender": "female",
+            "nationality": "Pakistani",
+        },
+    )
+    assert step1.status_code == 200, step1.text
+    step2 = client.put(
+        "/api/v1/onboarding/steps/2",
+        headers=headers,
+        json={
+            "currentCountry": "Pakistan",
+            "currentCity": "Lahore",
+            "currentStatus": "student",
+        },
+    )
+    assert step2.status_code == 200, step2.text
+    step3 = client.put(
+        "/api/v1/onboarding/steps/3",
+        headers=headers,
+        json={
+            "educationLevel": "high_school",
+            "institution": "Punjab College",
+            "major": "Pre-Engineering",
+            "graduationYear": 2022,
+        },
+    )
+    assert step3.status_code == 200, step3.text
+    done = client.post("/api/v1/onboarding/complete", headers=headers)
+    assert done.status_code == 200, done.text
+    assert done.json()["data"]["completed"] is True
+
+
 @pytest.fixture
 def verified_user(vault_client, fake_provider: FakeAuthProvider):
     email = "vault-user@example.com"
@@ -334,3 +372,10 @@ def verified_user(vault_client, fake_provider: FakeAuthProvider):
     }
     headers = auth_headers(vault_client, email, "Password123!")
     return vault_client, headers, email
+
+
+@pytest.fixture
+def onboarded_user(verified_user):
+    client, headers, email = verified_user
+    complete_onboarding(client, headers)
+    return client, headers, email

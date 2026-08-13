@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.conversations import service as conv_svc
-from pai.dependencies import get_db, resolve_person_from_token
+from pai.dependencies import get_db, require_onboarding_complete
 from pai.ingestion.chat import handle_user_message
 from pai.schemas import ApiErrorResponse, success
 
@@ -110,6 +110,7 @@ class ChatRequest(BaseModel):
 
 _AUTH_ERRORS = {
     401: {"model": ApiErrorResponse, "description": "Missing/invalid Bearer token"},
+    403: {"model": ApiErrorResponse, "description": "Onboarding not completed"},
     404: {"model": ApiErrorResponse, "description": "Conversation or person not found"},
     422: {"model": ApiErrorResponse, "description": "Validation error"},
     502: {"model": ApiErrorResponse, "description": "LLM / orchestration failure"},
@@ -141,7 +142,7 @@ async def chat(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     conv = await conv_svc.resolve_chat_conversation(
         session,
@@ -169,7 +170,7 @@ async def chat(
 async def create_conversation(
     body: ConversationCreate,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     conv = await conv_svc.create_conversation(session, person, title=body.title)
     return JSONResponse(
@@ -185,7 +186,7 @@ async def create_conversation(
 )
 async def list_conversations(
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
@@ -218,7 +219,7 @@ async def list_conversations(
 )
 async def list_conversation_threads(
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
@@ -236,7 +237,7 @@ async def list_conversation_threads(
 async def get_conversation(
     conversation_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     conv = await conv_svc.get_conversation_owned(session, person.id, conversation_id)
     return JSONResponse(
@@ -260,7 +261,7 @@ async def get_conversation(
 async def get_conversation_flow(
     conversation_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     data = await conv_svc.get_conversation_flow(session, person.id, conversation_id)
     return JSONResponse(content=success(data))
@@ -274,7 +275,7 @@ async def get_conversation_flow(
 async def delete_conversation(
     conversation_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     await conv_svc.delete_conversation(session, person.id, conversation_id)
     return JSONResponse(content=success({"message": "Conversation deleted."}))
@@ -288,7 +289,7 @@ async def delete_conversation(
 async def get_messages(
     conversation_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     rows = await conv_svc.list_messages(session, person.id, conversation_id)
     return JSONResponse(
@@ -323,7 +324,7 @@ async def post_message(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-    person=Depends(resolve_person_from_token),
+    person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     user_msg = await conv_svc.save_user_message(session, person, conversation_id, body.content)
     gateway = getattr(request.app.state, "llm_gateway", None)

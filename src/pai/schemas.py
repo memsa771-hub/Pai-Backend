@@ -1,6 +1,6 @@
-from typing import Any, TypeVar
+from typing import Any, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 T = TypeVar("T")
 
@@ -23,6 +23,13 @@ class ApiSuccessResponse[T](BaseModel):
 class SignupRequest(BaseModel):
     email: EmailStr = Field(examples=["user@example.com"])
     password: str = Field(min_length=8, max_length=128, examples=["Str0ngPass#1"])
+    confirmPassword: str = Field(min_length=8, max_length=128, examples=["Str0ngPass#1"])
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> Self:
+        if self.password != self.confirmPassword:
+            raise ValueError("Passwords do not match.")
+        return self
 
 
 class LoginRequest(BaseModel):
@@ -68,6 +75,8 @@ class AuthSessionPublic(BaseModel):
     accessToken: str
     accessTokenExpiresIn: int
     user: UserPublic
+    onboardingCompleted: bool = False
+    onboardingCompletedAt: str | None = None
 
 
 class SignupResponseData(BaseModel):
@@ -85,6 +94,8 @@ class LoginResponseData(AuthSessionPublic):
 
 class MeResponseData(BaseModel):
     user: UserPublic
+    onboardingCompleted: bool = False
+    onboardingCompletedAt: str | None = None
 
 
 class HealthData(BaseModel):

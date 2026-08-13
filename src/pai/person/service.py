@@ -224,6 +224,12 @@ class PersonBootstrapService:
             "version": person.version,
             "createdAt": person.created_at.isoformat() if person.created_at else None,
             "updatedAt": person.updated_at.isoformat() if person.updated_at else None,
+            "onboardingCompleted": person.onboarding_completed_at is not None,
+            "onboardingCompletedAt": (
+                person.onboarding_completed_at.isoformat()
+                if person.onboarding_completed_at
+                else None
+            ),
         }
 
     def _vault_summary(self, vault: PersonVault, completion: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +294,7 @@ async def soft_delete_person_data(session: AsyncSession, person: Person) -> None
         person.full_name = None
         person.preferred_name = None
         person.phone = None
+        person.onboarding_completed_at = None
         person.version += 1
         for model in (
             Education,

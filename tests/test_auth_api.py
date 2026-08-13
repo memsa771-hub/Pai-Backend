@@ -1,7 +1,11 @@
 def test_signup_flow(client, fake_provider):
     response = client.post(
         "/api/v1/auth/signup",
-        json={"email": "new@example.com", "password": "Password123!"},
+        json={
+            "email": "new@example.com",
+            "password": "Password123!",
+            "confirmPassword": "Password123!",
+        },
     )
     assert response.status_code == 201
     body = response.json()
@@ -13,7 +17,11 @@ def test_signup_flow(client, fake_provider):
 def test_verification_and_login(client, fake_provider):
     client.post(
         "/api/v1/auth/signup",
-        json={"email": "verify@example.com", "password": "Password123!"},
+        json={
+            "email": "verify@example.com",
+            "password": "Password123!",
+            "confirmPassword": "Password123!",
+        },
     )
     confirm = client.post(
         "/api/v1/auth/email-verification/confirm",
@@ -173,14 +181,35 @@ def test_me_and_delete_account(client, fake_provider):
 def test_signup_duplicate_email(client, fake_provider):
     client.post(
         "/api/v1/auth/signup",
-        json={"email": "dup@example.com", "password": "Password123!"},
+        json={
+            "email": "dup@example.com",
+            "password": "Password123!",
+            "confirmPassword": "Password123!",
+        },
     )
     again = client.post(
         "/api/v1/auth/signup",
-        json={"email": "dup@example.com", "password": "Password123!"},
+        json={
+            "email": "dup@example.com",
+            "password": "Password123!",
+            "confirmPassword": "Password123!",
+        },
     )
     assert again.status_code == 409
     assert again.json()["error"]["code"] == "EMAIL_ALREADY_IN_USE"
+
+
+def test_signup_password_mismatch(client):
+    response = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "email": "mismatch@example.com",
+            "password": "Password123!",
+            "confirmPassword": "Password123?",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 def test_resend_verification(client):

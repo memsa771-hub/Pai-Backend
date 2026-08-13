@@ -27,17 +27,20 @@ class AuthService:
     async def signup(
         self, email: str, password: str, full_name: str = ""
     ) -> dict:
-        result = await self._provider.signup(email.strip().lower(), password, full_name)
+        normalized = email.strip().lower()
+        result = await self._provider.signup(normalized, password, full_name)
         if result.session:
             return {
                 "message": "Account created successfully.",
+                "email": normalized,
                 "session": self._public_session(result.session, include_refresh=False),
             }
         return {
             "message": (
-                f"Account created. Verification link has been sent to {email}, "
+                "Account created. Verification link has been sent to your email, "
                 "verify to continue."
-            )
+            ),
+            "email": normalized,
         }
 
     async def login(self, email: str, password: str) -> SessionBundle:

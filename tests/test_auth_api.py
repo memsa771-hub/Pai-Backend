@@ -18,9 +18,10 @@ def test_signup_flow(client, fake_provider):
     body = response.json()
     assert body["success"] is True
     assert body["data"]["message"] == (
-        "Account created. Verification link has been sent to new@example.com, "
+        "Account created. Verification link has been sent to your email, "
         "verify to continue."
     )
+    assert body["data"]["email"] == "new@example.com"
     assert body["data"].get("session") is None
     assert "emailRedirectTo" not in body["data"]
     assert "nextPath" not in body["data"]

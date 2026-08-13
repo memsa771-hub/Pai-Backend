@@ -174,6 +174,7 @@ class AuthSessionPublic(BaseModel):
 
 class SignupResponseData(BaseModel):
     message: str
+    email: str | None = None
     session: AuthSessionPublic | None = None
 
 

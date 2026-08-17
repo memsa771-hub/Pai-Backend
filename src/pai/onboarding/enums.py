@@ -225,9 +225,17 @@ def _options(values: list[str], labels: dict[str, str]) -> list[dict[str, str]]:
     ]
 
 
+# nationality, currentCountry, studyCountry, targetCountries all bind to enums.countries.
+COUNTRY_FIELDS = (
+    "nationality",
+    "currentCountry",
+    "studyCountry",
+    "targetCountries",
+)
+
+
 @lru_cache(maxsize=1)
 def field_enum_catalog() -> dict[str, list[dict[str, str]]]:
-    countries = list(country_options())
     return {
         "path": _options([m.value for m in OnboardingPath], ENUM_LABELS["path"]),
         "gender": _options([m.value for m in Gender], ENUM_LABELS["gender"]),
@@ -248,8 +256,5 @@ def field_enum_catalog() -> dict[str, list[dict[str, str]]]:
             [m.value for m in EmploymentType], ENUM_LABELS["employmentType"]
         ),
         "testName": _options([m.value for m in StandardizedTest], ENUM_LABELS["testName"]),
-        "nationality": countries,
-        "currentCountry": countries,
-        "studyCountry": countries,
-        "targetCountries": countries,
+        "countries": list(country_options()),
     }

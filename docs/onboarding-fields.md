@@ -4,7 +4,7 @@
 
 The **CV path** is `POST /api/v1/onboarding/cv` only. A successful extract marks onboarding complete. Do not send this form after a CV upload.
 
-Use ids from `GET /api/v1/onboarding` → `data.enums`. Do not send display labels like `"Bachelor's"` or `"University admission"`.
+Use ids from `GET /api/v1/onboarding` → `data.enums` **before** submit. Do not send display labels like `"Bachelor's"` or `"University admission"`. `POST /onboarding` and `POST /onboarding/cv` return compact status (`onboardingCompleted`, `nextPath`, `identity`) — not the form catalog.
 
 Countries may be sent as ISO alpha-2 (`PK`), alpha-3 (`DEU`), or English name (`Pakistan`). PAI stores alpha-2.
 
@@ -169,7 +169,7 @@ Bare strings are also accepted: `"skills": ["Python", "SQL"]`.
 ## Frontend hints
 
 1. Enum dropdowns: bind to `GET /onboarding` `enums.<field>` (`id` + `label`).
-2. Country dropdowns: `enums.nationality` / `currentCountry` / `studyCountry` / `targetCountries` (ISO `id`, English `label`).
+2. Country dropdowns: `enums.countries` (ISO `id`, English `label`) for nationality, current country, study country, and target countries.
 3. Show `otherLevelLabel` only if `educationLevel === "other"`.
 4. Show `goalDetail` as an optional text box under `primaryGoal`.
 5. `institution`, `degree`, and `major` are not required to complete onboarding.

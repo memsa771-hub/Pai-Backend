@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pai.config import Settings, get_settings
 from pai.core.errors import AuthError, ValidationFailedError
 from pai.onboarding.enums import (
+    COUNTRY_FIELDS,
     GOAL_TYPE_FOR_PRIMARY,
     PRIMARY_GOAL_TITLES,
     PrimaryGoal,
@@ -28,18 +29,6 @@ from pai.person.models import Education, Goal, Person, Skill, WorkExperience
 from pai.vault.catalog import CATALOG_VERSION, get_catalog_field
 from pai.vault.completion import apply_completion_to_vault
 from pai.vault.service import VaultService
-
-_REQUIRED_LABELS = {
-    "phone": "phone number",
-    "dateOfBirth": "date of birth",
-    "nationality": "nationality",
-    "currentCountry": "current country",
-    "currentCity": "current city",
-    "currentStatus": "current status",
-    "educationLevel": "education level",
-    "gender": "gender",
-    "primaryGoal": "primary goal",
-}
 
 
 def _sparse_get(sparse: dict[str, Any], key: str) -> Any:
@@ -73,8 +62,23 @@ class OnboardingService:
         self._settings = settings or get_settings()
         self._vault = VaultService(self._settings)
 
+    def _result(self, person: Person) -> dict[str, Any]:
+        payload = onboarding_public_status(person, self._settings)
+        payload["completed"] = payload["onboardingCompleted"]
+        payload["path"] = payload["onboardingPath"]
+        if "onboardingCompletedAt" in payload:
+            payload["completedAt"] = payload["onboardingCompletedAt"]
+        payload["identity"] = {
+            "fullName": person.full_name,
+            "email": person.email,
+            "phone": person.phone,
+        }
+        return payload
+
     async def status(self, session: AsyncSession, person: Person) -> dict[str, Any]:
         self._require_vault(person)
+        if person.onboarding_completed_at is not None:
+            return self._result(person)
         unified = await self._vault.get_unified_vault(session, person, include_sensitive=True)
         sparse = unified.get("sparseFields") or {}
         education = await self._first_education(session, person)
@@ -82,24 +86,21 @@ class OnboardingService:
         values = self._current_values(person, sparse, education, goal)
         values["skills"] = await self._skill_values(session, person)
         values["workExperience"] = await self._work_values(session, person)
-        completed = person.onboarding_completed_at is not None
-        cv_path = person.onboarding_path == "cv"
-        missing = [] if completed or cv_path else self._missing_required(values)
-        extracted = await self._cv_candidates(session, person) if cv_path else []
+        missing = self._missing_required(values)
         public = onboarding_public_status(person, self._settings)
         return {
             **public,
-            "completed": completed,
-            "completedAt": public.get("onboardingCompletedAt"),
+            "completed": False,
             "path": person.onboarding_path,
-            "choices": PATH_CHOICES if not completed and not person.onboarding_path else [],
+            "choices": PATH_CHOICES if not person.onboarding_path else [],
             "purpose": ONBOARDING_PURPOSE,
             "vaultEnrichment": "chat_and_documents",
-            "canComplete": (not completed) and (not cv_path) and (not missing),
+            "canComplete": not missing,
             "missingRequired": missing,
-            "requiredFields": [] if completed or cv_path else REQUIRED_FIELDS,
-            "conditionalFields": [] if cv_path else CONDITIONAL_FIELDS,
-            "optionalFields": [] if cv_path else OPTIONAL_FIELDS,
+            "requiredFields": REQUIRED_FIELDS,
+            "conditionalFields": CONDITIONAL_FIELDS,
+            "optionalFields": OPTIONAL_FIELDS,
+            "countryFields": list(COUNTRY_FIELDS),
             "enums": field_enum_catalog(),
             "identity": {
                 "fullName": person.full_name,
@@ -107,7 +108,6 @@ class OnboardingService:
                 "phone": person.phone,
             },
             "values": values,
-            "extractedFacts": extracted,
         }
 
     async def submit(
@@ -118,24 +118,11 @@ class OnboardingService:
         person.onboarding_path = body.path or person.onboarding_path or "manual"
         await self._apply_submit(session, person, body)
         await self._touch_vault(session, person)
-        await session.flush()
-        unified = await self._vault.get_unified_vault(session, person, include_sensitive=True)
-        sparse = unified.get("sparseFields") or {}
-        education = await self._first_education(session, person)
-        goal = await self._first_goal(session, person)
-        values = self._current_values(person, sparse, education, goal)
-        missing = self._missing_required(values)
-        if missing:
-            await session.rollback()
-            labels = [_REQUIRED_LABELS.get(name, name) for name in missing]
-            raise ValidationFailedError(
-                "Onboarding is incomplete. Still needed: " + ", ".join(labels) + "."
-            )
         if person.onboarding_completed_at is None:
             person.onboarding_completed_at = datetime.now(UTC)
         await session.commit()
         await session.refresh(person)
-        return await self.status(session, person)
+        return self._result(person)
 
     async def ingest_cv(
         self,
@@ -206,7 +193,7 @@ class OnboardingService:
         await self._touch_vault(session, person)
         await session.commit()
         await session.refresh(person)
-        return await self.status(session, person)
+        return self._result(person)
 
     def _require_vault(self, person: Person) -> None:
         if person.vault is None:
@@ -526,25 +513,3 @@ class OnboardingService:
             }
             for row in result.scalars()
         ]
-
-    async def _cv_candidates(self, session: AsyncSession, person: Person) -> list[dict[str, Any]]:
-        from pai.documents.models import DocumentCandidate
-
-        result = await session.execute(
-            select(DocumentCandidate)
-            .where(DocumentCandidate.person_id == person.id)
-            .order_by(DocumentCandidate.created_at.desc())
-        )
-        out = []
-        for row in result.scalars():
-            out.append(
-                {
-                    "id": str(row.id),
-                    "fieldKey": row.field_key,
-                    "value": row.value,
-                    "confidence": row.confidence,
-                    "reviewStatus": row.review_status,
-                    "evidence": row.evidence_text,
-                }
-            )
-        return out[:40]

@@ -361,7 +361,6 @@ def complete_onboarding(client, headers: dict[str, str]) -> None:
     done = client.post("/api/v1/onboarding", headers=headers, json=ONBOARDING_PAYLOAD)
     assert done.status_code == 200, done.text
     data = done.json()["data"]
-    assert data["completed"] is True
     assert data["onboardingCompleted"] is True
 
 

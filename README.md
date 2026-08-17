@@ -168,7 +168,7 @@ Conditional (send if known): institution, degree, field of study (`major` enum).
 
 Optional: goal detail (free-text note), LinkedIn, GPA, graduation year, skills, work experience, target countries (ISO), study country (ISO), intake season + year, budget band, test scores, scholarships.
 
-`GET /api/v1/onboarding` returns `enums` — use those ids in the submit payload, not free-text labels.
+`GET /api/v1/onboarding` (before complete) returns `enums` — use those ids in the submit payload, not free-text labels. Country dropdowns bind to `enums.countries`. `POST` returns compact status only.
 
 Field-by-field reference (including `otherLevelLabel`): [docs/onboarding-fields.md](docs/onboarding-fields.md).
 
@@ -176,9 +176,9 @@ National ID is **not** part of general onboarding. Name and email come from sign
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/onboarding` | Status, path choices, required/optional/conditional fields, `purpose`, `nextPath` |
-| POST | `/api/v1/onboarding` | Form path: submit the starting profile; validates criticals; marks complete. Idempotent. |
-| POST | `/api/v1/onboarding/cv` | CV path: extract into the Vault and mark onboarding complete. No follow-up form. |
+| GET | `/api/v1/onboarding` | Incomplete: form catalog. Complete: compact status. |
+| POST | `/api/v1/onboarding` | Form path: submit starting profile; compact status. Idempotent. |
+| POST | `/api/v1/onboarding/cv` | CV path: extract, mark complete, compact status. |
 
 ### Person & Vault (Phase 2)
 

@@ -32,8 +32,9 @@ def _svc(settings: Settings) -> OnboardingService:
     responses=_ONBOARDING_ERRORS,
     summary="Get onboarding status",
     description=(
-        "Returns path choices. Form path includes required/optional fields and `enums`. "
-        "CV path is upload-only: no extra form after extract. "
+        "Incomplete: form catalog (`choices`, `requiredFields`, `enums`). "
+        "Country dropdowns use `enums.countries` once. "
+        "Complete: compact status only (`onboardingCompleted`, `nextPath`, `identity`). "
         "Signup and login never mark onboarding complete."
     ),
 )
@@ -51,11 +52,10 @@ async def get_onboarding(
     responses=_ONBOARDING_ERRORS,
     summary="Submit starting onboarding profile",
     description=(
-        "Accepts a small starting profile in one request (the UI may still show steps). "
-        "Only critical identity fields are required. Optional extras are stored if sent. "
-        "Deeper Vault facts come from chat extraction and documents. "
-        "Sets `onboardingCompleted` only on success. Idempotent. "
-        "CV users should POST /onboarding/cv instead — they do not need this form."
+        "Accepts a small starting profile in one request. "
+        "Returns compact status (`onboardingCompleted`, `nextPath`, `identity`) — "
+        "not the form catalog. Dropdowns come from GET /onboarding. "
+        "Idempotent. CV users should POST /onboarding/cv instead."
     ),
 )
 async def submit_onboarding(
@@ -74,7 +74,7 @@ async def submit_onboarding(
     summary="Upload CV/PDF for profile extraction",
     description=(
         "Extracts the CV into the Person Vault and **marks onboarding complete**. "
-        "No follow-up form. Chat unlocks immediately. "
+        "Returns compact status, not the form catalog. Chat unlocks immediately. "
         "Upload a text-based PDF or DOCX (not a scanned image)."
     ),
 )

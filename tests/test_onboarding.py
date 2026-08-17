@@ -17,8 +17,9 @@ def test_enum_catalog_exposes_dropdown_ids():
         "professional",
         "journey_tracker",
     }
-    assert any(item["id"] == "PK" for item in catalog["currentCountry"])
-    assert len(catalog["currentCountry"]) > 200
+    assert any(item["id"] == "PK" for item in catalog["countries"])
+    assert len(catalog["countries"]) > 200
+    assert "currentCountry" not in catalog
     assert "phd" in {item["id"] for item in catalog["educationLevel"]}
     assert "fully_funded" in {item["id"] for item in catalog["budget"]}
 
@@ -159,7 +160,14 @@ def test_onboarding_offers_manual_or_cv_choice(verified_user):
         "professional",
         "journey_tracker",
     }
-    assert any(item["id"] == "PK" for item in body["enums"]["currentCountry"])
+    assert any(item["id"] == "PK" for item in body["enums"]["countries"])
+    assert "currentCountry" not in body["enums"]
+    assert body["countryFields"] == [
+        "nationality",
+        "currentCountry",
+        "studyCountry",
+        "targetCountries",
+    ]
     assert {item["id"] for item in body["enums"]["educationLevel"]} >= {
         "high_school",
         "diploma",
@@ -192,11 +200,15 @@ def test_manual_onboarding_unlocks_pai(verified_user):
     done = client.post("/api/v1/onboarding", headers=headers, json=ONBOARDING_PAYLOAD)
     assert done.status_code == 200, done.text
     data = done.json()["data"]
-    assert data["completed"] is True
     assert data["onboardingCompleted"] is True
     assert data["nextPath"] != "/onboarding"
-    assert data["path"] == "manual"
-    assert "nationalId" not in (data.get("values") or {})
+    assert data["onboardingPath"] == "manual"
+    assert "enums" not in data
+    assert "values" not in data
+    assert "requiredFields" not in data
+    after = client.get("/api/v1/onboarding", headers=headers).json()["data"]
+    assert after["onboardingCompleted"] is True
+    assert "enums" not in after
 
     me = client.get("/api/v1/person/me", headers=headers).json()["data"]
     assert me["onboardingCompleted"] is True
@@ -215,7 +227,7 @@ def test_onboarding_submit_is_idempotent(verified_user):
     again = client.post("/api/v1/onboarding", headers=headers, json=ONBOARDING_PAYLOAD)
     assert again.status_code == 200, again.text
     data = again.json()["data"]
-    assert data["completed"] is True
+    assert data["onboardingCompleted"] is True
     assert data["onboardingCompletedAt"] == completed_at
     educations = client.get("/api/v1/person/educations", headers=headers).json()["data"]["items"]
     assert len(educations) == 1
@@ -272,11 +284,10 @@ def test_cv_upload_completes_onboarding_without_form(verified_user, monkeypatch)
     )
     assert res.status_code == 200, res.text
     data = res.json()["data"]
-    assert data["completed"] is True
     assert data["onboardingCompleted"] is True
-    assert data["path"] == "cv"
-    assert data["missingRequired"] == []
-    assert data["requiredFields"] == []
+    assert data["onboardingPath"] == "cv"
+    assert "enums" not in data
+    assert "requiredFields" not in data
 
     blocked = client.post("/api/v1/chat", headers=headers, json={"message": "Hello"})
     assert blocked.json().get("error", {}).get("code") != "ONBOARDING_INCOMPLETE"
@@ -294,6 +305,6 @@ def test_form_submit_with_cv_path_tag_still_allowed(verified_user):
     done = client.post("/api/v1/onboarding", headers=headers, json=payload)
     assert done.status_code == 200, done.text
     data = done.json()["data"]
-    assert data["completed"] is True
-    assert data["path"] == "cv"
     assert data["onboardingCompleted"] is True
+    assert data["onboardingPath"] == "cv"
+    assert "enums" not in data

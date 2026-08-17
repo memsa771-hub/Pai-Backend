@@ -23,6 +23,7 @@ from pai.orchestration.context import (
     build_student_context_pack,
     context_pack_to_json,
 )
+from pai.orchestration.counselor_graph import public_reply
 from pai.orchestration.graph import build_pai_graph
 from pai.orchestration.routing import counselor_web_search_enabled, should_extract_facts
 from pai.orchestration.schemas import (
@@ -177,15 +178,37 @@ class PAIOrchestrator:
                 await self._inject_goal_facts(state)
         return state
 
-    async def node_extract_facts(self, state: PAIState) -> PAIState:
-        if (state.get("orchestration_llm_calls") or 0) >= MAX_LLM_CALLS_PER_TURN:
-            state.setdefault("errors", []).append(
-                RunError(code="LLM_LIMIT", message="LLM call limit reached", step="extract_facts")
-            )
-            updated = await self._capture_goal(state["user_message"], llm_goal=None)
-            if updated:
-                state["goal_updated"] = True
+    async def node_serve_turn(self, state: PAIState) -> PAIState:
+        """Reply immediately; overlap extraction so it does not add a serial LLM hop."""
+        if self._run:
+            self._run.current_step = "serve_turn"
+        extract_task = None
+        if state.get("extraction_required"):
+            extract_task = asyncio.create_task(self._extract_llm_only(state))
+        try:
+            state = await self.node_run_conversation_agent(state)
+        except BaseException:
+            if extract_task is not None:
+                extract_task.cancel()
+            raise
+        if extract_task is None:
             return state
+        try:
+            patch = await extract_task
+        except Exception:
+            logger.exception("Extraction failed; counselor reply still sent")
+            return state
+        self._apply_extract_patch(state, patch)
+        updated = await self._capture_goal(
+            state["user_message"], llm_goal=patch.get("llm_goal")
+        )
+        if updated:
+            state["goal_updated"] = True
+        state = await self.node_validate_candidates(state)
+        state = await self.node_apply_vault_changes(state)
+        return await self.node_refresh_student_context(state)
+
+    async def _extract_llm_only(self, state: PAIState) -> dict:
         pack = state.get("student_context")
         known_facts = list(getattr(pack, "known_facts", None) or [])
         candidates = await self._fact_agent.extract_from_chat(
@@ -196,26 +219,47 @@ class PAIOrchestrator:
             memory=self._memory,
         )
         vault, observed = partition_candidates(candidates)
-        state["fact_candidates"] = vault
-        state["observed_candidates"] = observed
         bundle = getattr(self._fact_agent, "last_bundle", None)
-        if bundle is not None:
-            state.setdefault("tool_trace", []).append(
-                {
-                    "service": "vault_intelligence",
-                    "source": bundle.source.value if hasattr(bundle.source, "value") else str(bundle.source),
-                    "domains": bundle.domains_fired,
-                    "boosterHits": bundle.booster_hits,
-                    "candidateCount": len(bundle.candidates),
-                    "providerCalls": bundle.provider_calls,
-                    "coverage": bundle.coverage_notes,
-                }
-            )
-        if bundle is not None and int(getattr(bundle, "provider_calls", 0) or 0) > 0:
+        return {
+            "fact_candidates": vault,
+            "observed_candidates": observed,
+            "bundle": bundle,
+            "llm_goal": getattr(bundle, "current_goal", None) if bundle is not None else None,
+        }
+
+    def _apply_extract_patch(self, state: PAIState, patch: dict) -> None:
+        state["fact_candidates"] = patch.get("fact_candidates") or []
+        state["observed_candidates"] = patch.get("observed_candidates") or []
+        bundle = patch.get("bundle")
+        if bundle is None:
+            return
+        state.setdefault("tool_trace", []).append(
+            {
+                "service": "vault_intelligence",
+                "source": bundle.source.value if hasattr(bundle.source, "value") else str(bundle.source),
+                "domains": bundle.domains_fired,
+                "boosterHits": bundle.booster_hits,
+                "candidateCount": len(bundle.candidates),
+                "providerCalls": bundle.provider_calls,
+                "coverage": bundle.coverage_notes,
+            }
+        )
+        if int(getattr(bundle, "provider_calls", 0) or 0) > 0:
             state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
+
+    async def node_extract_facts(self, state: PAIState) -> PAIState:
+        if (state.get("orchestration_llm_calls") or 0) >= MAX_LLM_CALLS_PER_TURN:
+            state.setdefault("errors", []).append(
+                RunError(code="LLM_LIMIT", message="LLM call limit reached", step="extract_facts")
+            )
+            updated = await self._capture_goal(state["user_message"], llm_goal=None)
+            if updated:
+                state["goal_updated"] = True
+            return state
+        patch = await self._extract_llm_only(state)
+        self._apply_extract_patch(state, patch)
         updated = await self._capture_goal(
-            state["user_message"],
-            llm_goal=getattr(bundle, "current_goal", None) if bundle is not None else None,
+            state["user_message"], llm_goal=patch.get("llm_goal")
         )
         if updated:
             state["goal_updated"] = True
@@ -359,7 +403,7 @@ class PAIOrchestrator:
             web_search_available=allow_web,
         )
         state["assistant_result"] = result
-        state["assistant_reply"] = result.reply
+        state["assistant_reply"] = public_reply(result.reply) or (result.reply or "")
         state["task_proposals"] = result.task_proposals
         prior_trace = list(state.get("tool_trace") or [])
         prior_trace.extend(self._conversation_agent.last_tool_trace or [])

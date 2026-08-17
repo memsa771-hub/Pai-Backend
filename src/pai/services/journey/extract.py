@@ -1,40 +1,18 @@
-"""Capture the student's current goal in their own words. No country/uni taxonomy."""
+"""Accept a living goal only when extraction classified a grounded life aim.
+
+Meaning (life aim vs this-turn action) is the model's job — any language,
+including Roman Urdu. Code does not keep verb lists. It only refuses writes
+that are not classified as life_aim or whose evidence is not in the message.
+"""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 _GOAL_NOW = "goal:now"
-
-# Last matching clause is the live brief (pivots overwrite earlier wants).
-_CLAUSE = re.compile(
-    r"(?P<lead>"
-    r"i\s+(?:want(?:\s+to)?|wanna|decided\s+to|need\s+to|would\s+like\s+to)|"
-    r"my\s+goal\s+is|"
-    r"i(?:'m| am)\s+(?:planning\s+to|looking\s+to|aiming\s+to|going\s+to|"
-    r"considering|thinking\s+about)"
-    r")\s+(?P<body>[^?!.]{3,220})",
-    re.I,
-)
-_PIVOT = re.compile(
-    r"\b(changed my mind|not local(?:ly)?|no longer|instead(?: of)?|"
-    r"rather than|switch(?:ing)? to|forget that|not anymore)\b",
-    re.I,
-)
-_META = re.compile(
-    r"^(help|you to|you|advice|a question|to ask|your help|know|understand)\b",
-    re.I,
-)
-_EXPLORING = re.compile(r"\b(considering|thinking about|maybe|might)\b", re.I)
-_FILLER = re.compile(
-    r"^(?:i\s+(?:want(?:\s+to)?|wanna|decided\s+to|need\s+to|would\s+like\s+to)|"
-    r"my\s+goal\s+is|"
-    r"i(?:'m| am)\s+(?:planning\s+to|looking\s+to|aiming\s+to|going\s+to|"
-    r"considering|thinking\s+about))\s+",
-    re.I,
-)
-_COST = re.compile(r"too\s+expensive|can'?t\s+afford|cannot\s+afford|\btuition\b", re.I)
+_LIFE_AIM = "life_aim"
 
 
 @dataclass(frozen=True)
@@ -46,47 +24,54 @@ class GoalHit:
     evidence: str
 
 
-def extract_goal(text: str) -> GoalHit | None:
-    raw = re.sub(r"\s+", " ", (text or "")).strip()
-    if len(raw) < 10:
+def resolve_goal_hit(text: str, llm_goal: Any | None = None) -> GoalHit | None:
+    """LLM current_goal is a classification. Missing kind fails closed."""
+    if llm_goal is None:
         return None
-    clause = _last_clause(raw)
-    if clause is None and _PIVOT.search(raw):
-        clause = raw
-    if clause is None:
+    if (getattr(llm_goal, "kind", None) or "none") != _LIFE_AIM:
         return None
-    intent = _clean_intent(clause)
-    if len(intent) < 4 or _META.match(intent):
+    evidence = (getattr(llm_goal, "evidence_text", None) or "").strip()
+    intent = (getattr(llm_goal, "intent", None) or "").strip() or evidence
+    if len(intent) < 4:
         return None
+    span = evidence or intent
+    if not _grounded(span, text):
+        return None
+    mode = getattr(llm_goal, "mode", None)
+    if mode not in ("pursuing", "exploring"):
+        mode = "pursuing"
     return GoalHit(
         object_key=_GOAL_NOW,
         object_label=intent[:240],
-        stance="exploring" if _EXPLORING.search(clause) else "pursuing",
-        reason=_reason(raw),
-        evidence=raw[:240],
+        stance=mode,
+        reason="pivot" if getattr(llm_goal, "supersedes_previous", False) else None,
+        evidence=span[:240],
     )
 
 
 def normalize_intent(text: str) -> str:
-    return _FILLER.sub("", re.sub(r"\s+", " ", text or "").strip(" .")).casefold()
+    return re.sub(r"\s+", " ", text or "").strip(" .").casefold()
 
 
-def _last_clause(text: str) -> str | None:
-    matches = list(_CLAUSE.finditer(text))
-    if not matches:
-        return None
-    match = matches[-1]
-    return f"{match.group('lead')} {match.group('body')}".strip()
+def _grounded(span: str, source: str) -> bool:
+    """Evidence must be a span of the student message, not a model rewrite."""
+    ev = _fold(span)
+    src = _fold(source)
+    if len(ev) < 4 or not src:
+        return False
+    if ev in src:
+        return True
+    tokens = [tok for tok in re.findall(r"\w+", ev, flags=re.UNICODE) if len(tok) >= 2]
+    if len(tokens) < 2:
+        return False
+    pos = 0
+    for tok in tokens:
+        found = src.find(tok, pos)
+        if found < 0:
+            return False
+        pos = found + len(tok)
+    return True
 
 
-def _clean_intent(clause: str) -> str:
-    body = _FILLER.sub("", clause).strip(" .,")
-    return re.sub(r"\s+", " ", body)
-
-
-def _reason(text: str) -> str | None:
-    if _PIVOT.search(text):
-        return "pivot"
-    if _COST.search(text):
-        return "cost"
-    return None
+def _fold(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip().casefold()

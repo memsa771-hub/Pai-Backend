@@ -79,15 +79,26 @@ Hard rules — never invent:
 - explicitness: explicit | strongly_implied | uncertain (keep in sync with assertion_status).
 - Return empty fact_candidates only when the source has no potentially persistent information.
 
-Living goal (current_goal) — counselor brief, not a catalog:
-- If the STUDENT states or revises what they are trying to do (study locally, go abroad,
-  a job, a test, a business, switch plans), set current_goal.stated=true.
-- Do NOT set stated=true for hypotheticals, other people's opinions, or negated aims.
-- intent: their aim in THEIR words (not a country code, not an enum). Keep it short.
-- mode: pursuing (decided / I want / I will) or exploring (considering / maybe).
-- supersedes_previous=true when they pivot away from an earlier plan (not local anymore,
-  changed my mind, instead, rather than).
-- If this text is only a question or greeting, stated=false and intent=null.
+Living goal (current_goal) — classify meaning, not keywords. Any language
+(English, Urdu, Roman Urdu, mixed). Do not translate the student's words.
+
+kind:
+- life_aim: they state a durable first-person life direction (study, work, move,
+  program, destination). Shape, not a closed list:
+  "I want to study locally in FAST" / "mujhe Germany jana hai" /
+  "main FAST mein parhna chahta hoon" / "internship karna hai Dubai mein".
+- turn_action: this-chat logistics or a request to you — attach/send/upload,
+  find/look up, wait, lock a shortlist, "yeh attach karunga", "yeh dhoond do",
+  "baad mein bhejta hoon", "I'll send it".
+- none: greeting, question, acknowledgement, or no new direction.
+
+A message can mix both. Then kind=life_aim and evidence_text is ONLY the aim
+clause, never the attach/find/send clause.
+stated=true only when kind is life_aim; otherwise stated=false and intent=null.
+intent: the aim in THEIR words (keep Roman Urdu). evidence_text: verbatim
+substring of the source. mode: pursuing | exploring.
+supersedes_previous=true when they pivot (changed my mind / ab local nahi).
+Hypotheticals, other people's aims, and negated aims → kind=none.
 
 Source text:
 {{ text }}
@@ -96,4 +107,4 @@ Return JSON: { "fact_candidates": [ ... ], "current_goal": { ... } }
 Each candidate: candidate_id, field_key, value, confidence, explicitness, assertion_status,
 attributed_to, fact_type, source_type, source_reference, evidence_text, is_correction,
 requires_confirmation, rationale_summary
-current_goal: stated, intent, mode, supersedes_previous, evidence_text
+current_goal: kind, stated, intent, mode, supersedes_previous, evidence_text

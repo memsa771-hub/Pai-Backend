@@ -64,6 +64,32 @@ def test_opening_uses_vault_facts_not_country_lists():
     assert "NUST" not in text
 
 
+def test_opening_keeps_facts_without_duplicate_goal():
+    from pai.orchestration.context import compose_opening
+
+    text = compose_opening(
+        {
+            "identity": {"preferredName": "Musawir"},
+            "known_facts": [
+                "Student name: Musawir",
+                "Current goal (pursuing): MS Computer Science, MS AI in Germany or CHINA",
+                "Education: BSCS / computer_science / Bahria University, GPA/CGPA 3.35/4.0",
+                "Career/study goal: MS Computer Science, MS AI in Germany or CHINA",
+                "Skill: Python",
+                "Target study country/countries: CN",
+                "Test scores: [{'name': 'ielts', 'score': '7.5'}]",
+                "Admission cycle: fall 2027",
+            ],
+        }
+    )
+    assert "Musawir" in text
+    assert "3.35" in text
+    assert "CN" in text
+    assert "7.5" in text
+    assert text.lower().count("career/study goal") == 0
+    assert "FAST" not in text
+
+
 def test_opening_without_profile_still_introduces_pai():
     from pai.orchestration.context import compose_opening
 

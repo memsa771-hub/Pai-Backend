@@ -103,8 +103,16 @@ class ConversationResult(BaseModel):
 
 
 class GoalExtract(BaseModel):
-    """Living brief in the student's words — not a country/uni enum."""
+    """Living brief in the student's words — language-agnostic, not an enum."""
 
+    kind: Literal["life_aim", "turn_action", "none"] = Field(
+        default="none",
+        description=(
+            "life_aim = durable first-person life direction in any language; "
+            "turn_action = this-chat task or a request to the counselor; "
+            "none = greeting, question, or no new direction"
+        ),
+    )
     stated: bool = False
     intent: str | None = None
     mode: Literal["pursuing", "exploring"] | None = None

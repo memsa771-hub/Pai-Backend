@@ -56,7 +56,7 @@ def test_greetings_skip_extraction():
     assert should_extract_facts("Please continue") is False
 
 
-def test_web_search_only_for_live_questions(test_settings):
+def test_web_search_offered_except_greetings(test_settings):
     off = test_settings.model_copy(update={"tavily_api_key": "", "enable_counselor_tools": True})
     assert counselor_web_search_enabled(off) is False
     on = test_settings.model_copy(
@@ -64,9 +64,13 @@ def test_web_search_only_for_live_questions(test_settings):
     )
     assert counselor_web_search_enabled(on) is True
     assert counselor_web_search_enabled(on, "Hello") is False
-    assert counselor_web_search_enabled(on, "I live in Berlin") is False
+    assert counselor_web_search_enabled(on, "I live in Berlin") is True
     assert counselor_web_search_enabled(on, "What IELTS score do I need?") is True
-    assert counselor_web_search_enabled(on, "What should I do next?") is False
+    assert counselor_web_search_enabled(on, "What should I do next?") is True
+    assert counselor_web_search_enabled(
+        on, "Yes find the deadline for me through web search"
+    ) is True
+    assert counselor_web_search_enabled(on, "Cant you do that for me?") is True
     killed = test_settings.model_copy(
         update={"tavily_api_key": "tvly-test", "enable_counselor_tools": False}
     )
@@ -87,6 +91,7 @@ def test_substantive_messages_trigger_extraction():
     assert should_extract_facts("Hello") is False
     assert should_extract_facts("help me") is False
     assert should_extract_facts("ok go") is False
+    assert should_extract_facts("COkay lock in USTC and STJU") is True
 
 
 def test_agents_do_not_call_each_other():
@@ -231,10 +236,43 @@ def test_tool_loop_reuses_plain_reply_without_second_llm():
     assert out.task_proposals == []
 
 
+def test_counselor_json_preamble_does_not_leak_into_reply():
+    from pai.orchestration.counselor_graph import _result_from_text
+
+    leaked = """Based on the search results, I can now give Musawir a grounded comparison. Let me craft the response.
+
+```json
+{
+  "reply": "Locked in USTC and SJTU. Next I will pull the official program pages.",
+  "known_facts_used": ["Target study country/countries: CN"],
+  "observations": ["Student asked for a comparison"],
+  "suggested_next_step": "Open the USTC CS admissions page",
+  "next_question": "Want the CSC Type B route next?",
+  "task_proposals": []
+}
+```"""
+    out = _result_from_text(leaked)
+    assert out is not None
+    assert out.reply.startswith("Locked in USTC")
+    assert "known_facts_used" not in out.reply
+    assert "```" not in out.reply
+    assert out.known_facts_used == ["Target study country/countries: CN"]
+    assert out.suggested_next_step == "Open the USTC CS admissions page"
+
+
 def test_llm_call_budget_constants():
     from pai.orchestration.orchestrator import MAX_LLM_CALLS_PER_TURN
 
     assert MAX_LLM_CALLS_PER_TURN == 2
+
+
+def test_chat_graph_replies_without_waiting_on_extract_chain():
+    from pai.orchestration.graph import build_pai_graph
+
+    graph = build_pai_graph(MagicMock())
+    assert "serve_turn" in graph.nodes
+    assert "extract_facts" not in graph.nodes
+    assert "run_conversation_agent" not in graph.nodes
 
 
 def test_chat_message_id_used_as_evidence(test_settings):

@@ -393,11 +393,11 @@ def chat_stay_payload(
 
 
 def compose_opening(pack: Any) -> str:
-    """Vault-grounded first message. Interpolates known facts; no country lists."""
+    """Vault-grounded first message. Unique facts, goal/education first."""
     identity = _pack_get(pack, "identity", {}) or {}
     name = identity.get("preferredName") or identity.get("fullName")
     facts = [str(item) for item in (_pack_get(pack, "known_facts", []) or [])]
-    profile = [item for item in facts if not item.lower().startswith("student name:")][:8]
+    profile = _opening_facts(facts)
     greeting = f"Hi {name} — I'm PAI." if name else "Hi — I'm PAI, your counselor."
     if not profile:
         return (
@@ -410,3 +410,35 @@ def compose_opening(pack: Any) -> str:
         "Ask me about tests, universities, deadlines, scholarships, or what to do this week. "
         "I'll keep building on this — you don't need to repeat it."
     )
+
+
+def _opening_facts(facts: list[str]) -> list[str]:
+    """Dedupe by label and by value; rank by known-fact kind, not a country list."""
+    rank = {
+        "current goal": 0,
+        "education": 1,
+        "test scores": 2,
+        "target study country/countries": 3,
+        "target universities": 4,
+        "admission cycle": 5,
+    }
+    by_key: dict[str, str] = {}
+    seen_value: set[str] = set()
+    for item in facts:
+        key, _, rest = item.partition(":")
+        label = key.strip().casefold()
+        if label == "student name":
+            continue
+        value = rest.strip().casefold()
+        if label in by_key:
+            continue
+        if value and value in seen_value:
+            continue
+        by_key[label] = item
+        if value:
+            seen_value.add(value)
+    ordered = sorted(
+        by_key.items(),
+        key=lambda kv: (rank.get(kv[0].split("(")[0].strip(), 80), kv[0]),
+    )
+    return [item for _label, item in ordered][:8]

@@ -5,7 +5,6 @@ from pai.tools.extraction.llm_extractor import OmnibusLLMExtractor
 from pai.tools.extraction.merge import merge_candidates
 from pai.tools.extraction.normalize import normalize_candidates
 from pai.tools.extraction.types import ExtractionBundle, ExtractionRequest, SourceKind
-from pai.services.journey.extract import extract_goal
 from pai.llm.gateway import LLMGateway
 
 
@@ -22,14 +21,13 @@ class ChatSourceDomain:
             source_reference=request.source_reference,
             source_type="chat",
         )
-        # Short explicit statements (city, GPA, marks) are already caught by boosters.
-        # Skip the extract LLM so a simple chat turn is one counselor call, not two.
+        # Short booster-only stats (GPA, marks) skip the extract LLM.
+        # Goal classification needs the model — do not gate it on English regex.
         words = len((request.text or "").split())
         llm_cands: list = []
         provider_calls = 0
         goal = None
-        goalish = extract_goal(request.text or "") is not None
-        if not (boosters and words <= 12 and not goalish):
+        if not (boosters and words <= 6):
             llm = OmnibusLLMExtractor(gateway)
             llm_cands = await llm.extract(request)
             provider_calls = 1

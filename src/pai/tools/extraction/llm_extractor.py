@@ -75,8 +75,10 @@ class OmnibusLLMExtractor:
                                 "memory.observed. For CVs extract every distinct school, job, "
                                 "skill, project, certification, test score, and location named. "
                                 "PAI is global: copy names the student used; do not assume "
-                                "Pakistan or any default university list. Never write counselor "
-                                "replies. Return JSON only."
+                                "Pakistan or any default university list. Classify current_goal.kind "
+                                "as life_aim, turn_action, or none (any language, including Roman "
+                                "Urdu). evidence_text must be a verbatim span of the source. "
+                                "Never write counselor replies. Return JSON only."
                             ),
                         ),
                         LLMMessage(role="user", content=user_prompt),

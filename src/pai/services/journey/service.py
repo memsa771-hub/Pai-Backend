@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.services.journey.extract import GoalHit, extract_goal, normalize_intent
+from pai.services.journey.extract import GoalHit, normalize_intent, resolve_goal_hit
 from pai.services.journey.models import PersonDecision, PersonEvent
 
 _SUMMARY_MAX = 240
@@ -94,22 +94,7 @@ async def apply_goal_from_message(
     llm_goal: Any | None = None,
     event_id: uuid.UUID | None = None,
 ) -> bool:
-    hit: GoalHit | None = None
-    if llm_goal is not None and getattr(llm_goal, "stated", False):
-        intent = (getattr(llm_goal, "intent", None) or "").strip()
-        if intent:
-            mode = getattr(llm_goal, "mode", None)
-            if mode not in ("pursuing", "exploring"):
-                mode = "pursuing"
-            hit = GoalHit(
-                object_key=_GOAL_NOW,
-                object_label=intent[:240],
-                stance=mode,
-                reason="pivot" if getattr(llm_goal, "supersedes_previous", False) else None,
-                evidence=(getattr(llm_goal, "evidence_text", None) or text)[:240],
-            )
-    if hit is None:
-        hit = extract_goal(text)
+    hit = resolve_goal_hit(text, llm_goal)
     if hit is None:
         return False
     return await apply_goal_hit(session, person_id, hit, event_id=event_id)

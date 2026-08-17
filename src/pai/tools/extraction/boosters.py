@@ -245,9 +245,9 @@ def run_deterministic_boosters(
 
     unis = []
     for m in _UNI.finditer(raw):
-        name = m.group(1).upper().replace(" ", "")
+        name = m.group(1).strip()
         if name not in unis:
-            unis.append(m.group(1).strip())
+            unis.append(name)
     if unis:
         out.append(
             _cand(

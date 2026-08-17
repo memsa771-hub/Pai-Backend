@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Literal, TypedDict
@@ -43,7 +44,9 @@ def build_counselor_tool_graph(
         messages = [_dict_to_llm_message(m) for m in raw_messages]
 
         if round_n >= max_rounds:
-            result = await _finalize_structured(gateway, messages)
+            result = await _coerce_or_finalize(
+                gateway, messages, messages[-1].content if messages else ""
+            )
             return {"final": result, "round": round_n + 1, "pending_tool_calls": []}
 
         response = await gateway.run(
@@ -80,7 +83,7 @@ def build_counselor_tool_graph(
 
         result = await _coerce_or_finalize(gateway, messages, response.content)
         return {
-            "messages": raw_messages + [{"role": "assistant", "content": response.content or ""}],
+            "messages": raw_messages + [{"role": "assistant", "content": result.reply}],
             "final": result,
             "round": round_n + 1,
             "pending_tool_calls": [],
@@ -89,25 +92,26 @@ def build_counselor_tool_graph(
     async def tools_node(state: CounselorToolState) -> dict[str, Any]:
         pending = list(state.get("pending_tool_calls") or [])
         raw_messages = list(state.get("messages") or [])
-        tool_messages: list[dict[str, Any]] = []
         trace: list[dict[str, Any]] = list(state.get("tool_trace") or [])
 
-        for raw_tc in pending:
+        async def _run_one(raw_tc: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             tc = _normalize_tool_call(raw_tc)
             result = await registry.execute(tc.function.name, tc.function.arguments, tool_ctx)
-            trace.append(
-                {"tool": tc.function.name, "ok": result.ok, "preview": result.content[:240]}
-            )
-            tool_messages.append(
+            return (
                 {
                     "role": "tool",
                     "tool_call_id": tc.id,
                     "name": tc.function.name,
                     "content": result.content,
-                }
+                },
+                {"tool": tc.function.name, "ok": result.ok, "preview": result.content[:240]},
             )
+
+        pairs = await asyncio.gather(*[_run_one(raw_tc) for raw_tc in pending]) if pending else []
+        tool_messages = [item[0] for item in pairs]
+        trace.extend(item[1] for item in pairs)
         return {
-            "messages": raw_messages + tool_messages,
+            "messages": raw_messages + list(tool_messages),
             "tool_trace": trace,
             "pending_tool_calls": [],
         }
@@ -231,23 +235,88 @@ async def _finalize_structured(
     return out
 
 
+def _first_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i, char in enumerate(text[start:], start):
+        if in_str:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_str = False
+            continue
+        if char == '"':
+            in_str = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def _parse_conversation_json(text: str) -> ConversationResult | None:
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+    blob = _first_json_object(raw)
+    if not blob:
+        return None
+    try:
+        parsed = ConversationResult.model_validate(json.loads(blob))
+    except Exception:
+        return None
+    reply = (parsed.reply or "").strip()
+    if not reply or reply.startswith("{") or "```" in reply:
+        return None
+    parsed.reply = reply
+    return parsed
+
+
+def public_reply(text: str | None) -> str:
+    """Student-visible channel: prose only. Envelope JSON is never the message."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("{") or "```" in raw:
+        parsed = _parse_conversation_json(raw)
+        if parsed is not None:
+            return parsed.reply
+        blob = _first_json_object(raw)
+        if blob:
+            try:
+                data = json.loads(blob)
+            except Exception:
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("reply"), str):
+                inner = data["reply"].strip()
+                if inner and not inner.startswith("{") and "```" not in inner:
+                    return inner
+        return ""
+    return raw
+
+
 def _result_from_text(content: str) -> ConversationResult | None:
-    """Reuse the model's prose instead of a second structured LLM round."""
+    """Reuse model output only when it is already a valid student reply or schema JSON."""
     text = (content or "").strip()
     if not text:
         return None
-    if text.startswith("{"):
-        try:
-            return ConversationResult.model_validate(json.loads(text))
-        except Exception:
-            pass
-    if text.startswith("```"):
-        body = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        try:
-            return ConversationResult.model_validate(json.loads(body))
-        except Exception:
-            pass
-    return ConversationResult(reply=text)
+    parsed = _parse_conversation_json(text)
+    if parsed is not None:
+        return parsed
+    reply = public_reply(text)
+    if not reply:
+        return None
+    return ConversationResult(reply=reply)
 
 
 async def _coerce_or_finalize(

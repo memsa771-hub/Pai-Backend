@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pai.config import Settings
 from pai.core.errors import AuthError
 from pai.documents.models import Document, DocumentCandidate, DocumentJob
+from pai.documents.text import extract_text_from_bytes
 from pai.ingestion.vault_apply import process_candidates
 from pai.llm.gateway import LLMGateway
 from pai.orchestration.agents import FactExtractionAgent
@@ -111,10 +112,30 @@ async def get_document_owned(
     return doc
 
 
-def extract_text_from_bytes(data: bytes, mime_type: str, filename: str) -> str:
-    if mime_type.startswith("text/"):
-        return data.decode("utf-8", errors="replace")[:12000]
-    return f"[binary document: {filename}, type {mime_type}]"[:12000]
+def _fail_job(job: DocumentJob, doc: Document | None, message: str) -> None:
+    job.status = "failed"
+    job.last_error = message[:500]
+    if doc is not None:
+        doc.status = "failed"
+
+
+async def _known_facts_for(session: AsyncSession, person: Person) -> list[str]:
+    from pai.orchestration.context import build_known_facts
+    from pai.person.profile_snapshot import load_typed_profile_records
+    from pai.vault.service import VaultService
+
+    sparse: dict = {}
+    if person.vault is not None:
+        unified = await VaultService().get_unified_vault(
+            session, person, include_sensitive=False
+        )
+        sparse = unified.get("sparseFields") or {}
+    typed = await load_typed_profile_records(session, person.id)
+    return build_known_facts(
+        identity={"preferredName": person.preferred_name, "fullName": person.full_name},
+        sparse=sparse,
+        typed=typed,
+    )
 
 
 async def process_document_job(
@@ -125,54 +146,61 @@ async def process_document_job(
     storage: SupabaseStorageProvider,
     gateway: LLMGateway,
 ) -> None:
+    _ = settings
     doc = await session.get(Document, job.document_id)
     if doc is None:
         job.status = "failed"
         job.last_error = "document missing"
         return
+    person = await session.get(Person, doc.person_id)
+    if person is None:
+        _fail_job(job, doc, "person missing")
+        return
     doc.status = "processing"
     await session.flush()
     raw = await storage.download_bytes(doc.storage_path)
     text_content = extract_text_from_bytes(raw, doc.mime_type, doc.original_filename)
+    if len(text_content.strip()) < 40:
+        _fail_job(
+            job,
+            doc,
+            "Could not read text from this file. Upload a text-based PDF or DOCX, not a scan.",
+        )
+        return
+    hint = doc.document_type or "generic"
+    known = await _known_facts_for(session, person)
     fact_agent = FactExtractionAgent(gateway)
     orch_candidates = await fact_agent.extract_from_document(
         document_id=str(doc.id),
         document_text=text_content,
-        document_type_hint=doc.document_type or "generic",
+        document_type_hint=hint,
+        known_facts=known,
         person_id=str(doc.person_id),
     )
-    doc.document_type = doc.document_type or "generic"
-    person = await session.get(Person, doc.person_id)
-    if person is None:
-        job.status = "failed"
-        return
-    await session.execute(
-        select(DocumentCandidate).where(DocumentCandidate.document_id == doc.id)
-    )
-    candidates_for_review: list[DocumentCandidate] = []
+    doc.document_type = hint
+    applied_keys: set[str] = set()
+    if orch_candidates:
+        accepted, _pending = await process_candidates(
+            session, person, orch_candidates, from_document=True
+        )
+        applied_keys = {row.field_key for row in accepted if row.status != "pending"}
     for c in orch_candidates:
         c.source_type = "document"
         c.source_reference = str(doc.id)
-        row = DocumentCandidate(
-            document_id=doc.id,
-            person_id=person.id,
-            field_key=c.field_key,
-            value=c.value if isinstance(c.value, dict) else c.value,
-            confidence=c.confidence,
-            evidence_text=c.evidence_text,
-            review_status="pending",
-            reasoning_summary=c.rationale_summary,
+        session.add(
+            DocumentCandidate(
+                document_id=doc.id,
+                person_id=person.id,
+                field_key=c.field_key,
+                value=c.value if isinstance(c.value, dict) else c.value,
+                confidence=c.confidence,
+                evidence_text=c.evidence_text,
+                review_status="accepted" if c.field_key in applied_keys else "pending",
+                reasoning_summary=c.rationale_summary,
+            )
         )
-        session.add(row)
-        candidates_for_review.append(row)
-    needs_review = any(
-        c.confidence < 0.9 or c.requires_confirmation for c in orch_candidates
-    )
-    if needs_review:
-        doc.status = "awaiting_review"
-    else:
-        await process_candidates(session, person, orch_candidates, from_document=True)
-        doc.status = "processed"
+    pending_left = any(c.field_key not in applied_keys for c in orch_candidates)
+    doc.status = "awaiting_review" if pending_left else "processed"
     job.status = "completed"
 
 

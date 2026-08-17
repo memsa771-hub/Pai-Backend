@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pai.dependencies import get_db, resolve_person_from_token
 from pai.schemas import success
 from pai.vault.catalog import CATALOG_VERSION, VAULT_CATALOG
-from pai.vault.completion import build_vault_status, compute_completion
+from pai.vault.completion import build_vault_status
 from pai.vault.service import VaultService
 
 router = APIRouter(prefix="/api/v1/vault", tags=["vault"])
@@ -21,27 +21,15 @@ class VaultFieldPatch(BaseModel):
     version: int | None = Field(default=None, ge=1)
 
 
-@router.get("")
-async def get_vault(
-    session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
-    includeSensitive: bool = Query(False, alias="includeSensitive"),
-) -> JSONResponse:
-    data = await VaultService().get_unified_vault(
-        session, person, include_sensitive=includeSensitive
-    )
-    return JSONResponse(content=success(data))
-
-
 @router.get(
-    "/status",
-    summary="Vault filled vs missing (simple)",
+    "",
+    summary="Whole Person Vault",
     description=(
-        "One endpoint for after-chat UX: completion %, every filled field (with values), "
-        "and every missing field. Existing vault endpoints are unchanged."
+        "Filled fields, empty optional gaps, still-required criticals, "
+        "typed records, and completion %. Query includeSensitive=true to unmask."
     ),
 )
-async def vault_status(
+async def get_vault(
     session: Annotated[AsyncSession, Depends(get_db)],
     person=Depends(resolve_person_from_token),
     includeSensitive: bool = Query(False, alias="includeSensitive"),
@@ -72,42 +60,6 @@ async def get_catalog(
         for f in VAULT_CATALOG.values()
     ]
     return JSONResponse(content=success({"catalogVersion": CATALOG_VERSION, "fields": fields}))
-
-
-@router.get("/completion")
-async def get_completion(
-    session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
-) -> JSONResponse:
-    if person.vault is None:
-        return JSONResponse(content=success({}))
-    result = await compute_completion(session, person, person.vault)
-    return JSONResponse(content=success(result))
-
-
-@router.get("/missing")
-async def get_missing(
-    session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
-) -> JSONResponse:
-    if person.vault is None:
-        return JSONResponse(content=success({"missing": []}))
-    result = await compute_completion(session, person, person.vault)
-    missing = result.get("missingCriticalFields", [])
-    return JSONResponse(content=success({"missingCriticalFields": missing, "nextRecommendedField": result.get("nextRecommendedField", {})}))
-
-
-@router.get("/fields/{field_key}")
-async def get_field(
-    field_key: str,
-    session: Annotated[AsyncSession, Depends(get_db)],
-    person=Depends(resolve_person_from_token),
-    includeSensitive: bool = Query(False, alias="includeSensitive"),
-) -> JSONResponse:
-    data = await VaultService().get_field(
-        session, person, field_key, include_sensitive=includeSensitive
-    )
-    return JSONResponse(content=success(data))
 
 
 @router.patch("/fields/{field_key}")

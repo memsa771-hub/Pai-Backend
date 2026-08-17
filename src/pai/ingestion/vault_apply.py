@@ -127,7 +127,7 @@ async def process_candidates(
         field = get_catalog_field(candidate.field_key)
         if field is None:
             continue
-        decision = policy_decision(candidate)
+        decision = policy_decision(candidate, from_document=from_document)
         if decision == "reject":
             continue
         vlevel = verification_level_for(

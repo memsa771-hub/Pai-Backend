@@ -29,8 +29,6 @@ from pai.vault.catalog import CATALOG_VERSION, get_catalog_field
 from pai.vault.completion import apply_completion_to_vault
 from pai.vault.service import VaultService
 
-CV_AUTO_APPLY_CONFIDENCE = 0.8
-
 _REQUIRED_LABELS = {
     "phone": "phone number",
     "dateOfBirth": "date of birth",
@@ -82,11 +80,12 @@ class OnboardingService:
         education = await self._first_education(session, person)
         goal = await self._first_goal(session, person)
         values = self._current_values(person, sparse, education, goal)
-        missing = self._missing_required(values)
+        values["skills"] = await self._skill_values(session, person)
+        values["workExperience"] = await self._work_values(session, person)
         completed = person.onboarding_completed_at is not None
-        extracted = (
-            await self._cv_candidates(session, person) if person.onboarding_path == "cv" else []
-        )
+        cv_path = person.onboarding_path == "cv"
+        missing = [] if completed or cv_path else self._missing_required(values)
+        extracted = await self._cv_candidates(session, person) if cv_path else []
         public = onboarding_public_status(person, self._settings)
         return {
             **public,
@@ -96,11 +95,11 @@ class OnboardingService:
             "choices": PATH_CHOICES if not completed and not person.onboarding_path else [],
             "purpose": ONBOARDING_PURPOSE,
             "vaultEnrichment": "chat_and_documents",
-            "canComplete": not completed and not missing,
-            "missingRequired": [] if completed else missing,
-            "requiredFields": REQUIRED_FIELDS,
-            "conditionalFields": CONDITIONAL_FIELDS,
-            "optionalFields": OPTIONAL_FIELDS,
+            "canComplete": (not completed) and (not cv_path) and (not missing),
+            "missingRequired": missing,
+            "requiredFields": [] if completed or cv_path else REQUIRED_FIELDS,
+            "conditionalFields": [] if cv_path else CONDITIONAL_FIELDS,
+            "optionalFields": [] if cv_path else OPTIONAL_FIELDS,
             "enums": field_enum_catalog(),
             "identity": {
                 "fullName": person.full_name,
@@ -149,13 +148,11 @@ class OnboardingService:
         storage: Any,
         gateway: Any,
     ) -> dict[str, Any]:
-        """Extract CV facts into the vault. Never marks onboarding complete."""
+        """Extract CV facts into the vault and mark onboarding complete."""
         self._require_vault(person)
         person.onboarding_path = "cv"
-        from pai.documents.models import DocumentCandidate, DocumentJob
+        from pai.documents.models import DocumentJob
         from pai.documents.service import create_document_upload, process_document_job
-        from pai.ingestion.vault_apply import process_candidates
-        from pai.orchestration.schemas import VaultCandidate
 
         doc = await create_document_upload(
             session,
@@ -174,40 +171,40 @@ class OnboardingService:
             .order_by(DocumentJob.created_at.desc())
         )
         job = result.scalars().first()
-        if job is not None:
-            try:
-                await process_document_job(
-                    session, self._settings, job, storage=storage, gateway=gateway
-                )
-                await session.commit()
-            except Exception:
-                job.status = "failed"
-                await session.commit()
-        pending = await session.execute(
-            select(DocumentCandidate).where(
-                DocumentCandidate.document_id == doc.id,
-                DocumentCandidate.review_status == "pending",
+        if job is None:
+            raise AuthError(
+                code="CV_EXTRACT_FAILED",
+                message="CV upload was saved but no extraction job was created.",
+                status_code=502,
             )
-        )
-        to_apply: list[VaultCandidate] = []
-        for row in pending.scalars():
-            if (row.confidence or 0) < CV_AUTO_APPLY_CONFIDENCE:
-                continue
-            row.review_status = "accepted"
-            to_apply.append(
-                VaultCandidate(
-                    field_key=row.field_key,
-                    value=row.value,
-                    confidence=row.confidence,
-                    evidence_text=row.evidence_text or "",
-                    source_type="document",
-                    source_reference=str(doc.id),
-                    rationale_summary=row.reasoning_summary or "",
-                )
+        try:
+            await process_document_job(
+                session, self._settings, job, storage=storage, gateway=gateway
             )
-        if to_apply:
-            await process_candidates(session, person, to_apply, from_document=True)
             await session.commit()
+        except AuthError:
+            raise
+        except Exception as exc:
+            job.status = "failed"
+            job.last_error = str(exc)[:500]
+            await session.commit()
+            raise AuthError(
+                code="CV_EXTRACT_FAILED",
+                message="Could not extract your CV. Try a text-based PDF or DOCX.",
+                status_code=502,
+            ) from exc
+        if job.status == "failed":
+            raise ValidationFailedError(
+                job.last_error
+                or (
+                    "Could not read text from this file. "
+                    "Upload a text-based PDF or DOCX, not a scan."
+                )
+            )
+        if person.onboarding_completed_at is None:
+            person.onboarding_completed_at = datetime.now(UTC)
+        await self._touch_vault(session, person)
+        await session.commit()
         await session.refresh(person)
         return await self.status(session, person)
 
@@ -288,6 +285,13 @@ class OnboardingService:
             )
         await self._upsert_skills(session, person, body)
         await self._upsert_work(session, person, body)
+        if body.testScores:
+            await self._upsert_vault(
+                session,
+                person,
+                "application.test_scores",
+                [{"name": item.name.value, "score": item.score} for item in body.testScores],
+            )
 
     async def _upsert_vault(
         self,
@@ -499,6 +503,29 @@ class OnboardingService:
             .order_by(Goal.created_at.asc())
         )
         return result.scalars().first()
+
+    async def _skill_values(self, session: AsyncSession, person: Person) -> list[dict[str, Any]]:
+        result = await session.execute(select(Skill).where(Skill.person_id == person.id))
+        return [
+            {"name": row.name, "proficiency": row.proficiency}
+            for row in result.scalars()
+            if row.name
+        ]
+
+    async def _work_values(self, session: AsyncSession, person: Person) -> list[dict[str, Any]]:
+        result = await session.execute(
+            select(WorkExperience).where(WorkExperience.person_id == person.id)
+        )
+        return [
+            {
+                "organization": row.organization,
+                "title": row.title,
+                "employmentType": row.employment_type,
+                "isCurrent": row.is_current,
+                "description": row.description,
+            }
+            for row in result.scalars()
+        ]
 
     async def _cv_candidates(self, session: AsyncSession, person: Person) -> list[dict[str, Any]]:
         from pai.documents.models import DocumentCandidate

@@ -16,6 +16,7 @@ from pai.person.models import (
     VaultValue,
     WorkExperience,
 )
+from pai.person.profile_snapshot import load_typed_profile_records
 from pai.vault.catalog import VAULT_CATALOG, CatalogField, Priority
 
 # (storage_key used by catalog, ORM model, API camelCase for typedResources)
@@ -158,80 +159,167 @@ async def compute_completion(
     return result
 
 
+def _field_label(field: CatalogField) -> str:
+    return field.key.replace(".", " · ").replace("_", " ")
+
+
+def _field_value(
+    person: Person,
+    field: CatalogField,
+    sparse: dict[str, Any],
+    typed: dict[str, Any],
+    *,
+    include_sensitive: bool,
+) -> Any:
+    if field.storage == "vault_value" and field.key in sparse:
+        entry = sparse[field.key]
+        if isinstance(entry, dict) and "value" in entry:
+            return entry["value"]
+        return entry
+    if field.storage == "person" and field.person_column:
+        raw = getattr(person, field.person_column, None)
+        if field.sensitive and not include_sensitive and raw not in (None, ""):
+            return "[sensitive]"
+        return raw
+    storage_to_typed = {
+        "educations": "educations",
+        "work_experiences": "workExperiences",
+        "projects": "projects",
+        "skills": "skills",
+        "certifications": "certifications",
+        "goals": "goals",
+    }
+    api_name = storage_to_typed.get(field.storage)
+    if api_name:
+        return typed.get(api_name) or []
+    return None
+
+
 async def build_vault_status(
     session: AsyncSession,
     person: Person,
     *,
     include_sensitive: bool = False,
 ) -> dict[str, Any]:
-    """Simple filled/missing overview for after-chat UX."""
+    """Whole-student picture: filled, empty, and still required."""
     vault = person.vault
     if vault is None:
         return {
+            "person": {
+                "id": str(person.id),
+                "fullName": person.full_name,
+                "email": person.email,
+                "onboardingCompleted": False,
+            },
             "completion": {"critical": 0, "important": 0, "enrichment": 0, "overall": 0},
             "filled": [],
-            "missing": [],
-            "nextRecommendedField": {},
+            "empty": [],
+            "required": [],
             "filledCount": 0,
-            "missingCount": 0,
+            "emptyCount": 0,
+            "requiredCount": 0,
+            "sections": {},
+            "typed": {},
+            "nextRecommendedField": {},
+            "memory": {
+                "engine": "agentspan",
+                "role": "Unstructured counseling insights. Structured facts live in this Vault.",
+            },
         }
 
-    from pai.vault.service import VaultService
+    from pai.vault.service import VaultService, grow_vault_schema
+
+    if grow_vault_schema(vault):
+        await apply_completion_to_vault(session, person, vault)
+        await session.commit()
 
     unified = await VaultService().get_unified_vault(
         session, person, include_sensitive=include_sensitive
     )
     sparse = unified.get("sparseFields") or {}
     completion = unified.get("completion") or {}
-    typed = unified.get("typedResources") or {}
+    typed = await load_typed_profile_records(session, person.id)
     typed_present = {
-        "educations": int(typed.get("educations") or 0) > 0,
-        "work_experiences": int(typed.get("workExperiences") or 0) > 0,
-        "projects": int(typed.get("projects") or 0) > 0,
-        "skills": int(typed.get("skills") or 0) > 0,
-        "certifications": int(typed.get("certifications") or 0) > 0,
-        "goals": int(typed.get("goals") or 0) > 0,
+        "educations": bool(typed.get("educations")),
+        "work_experiences": bool(typed.get("workExperiences")),
+        "projects": bool(typed.get("projects")),
+        "skills": bool(typed.get("skills")),
+        "certifications": bool(typed.get("certifications")),
+        "goals": bool(typed.get("goals")),
     }
     snapshot = {"active_keys": set(sparse.keys()), "typed_present": typed_present}
     scopes: list[str] = list(vault.applicable_scopes or ["universal"])
-    fields = _scope_fields(scopes)
+    fields = [f for f in _scope_fields(scopes) if not f.derived]
 
     filled: list[dict[str, Any]] = []
-    missing: list[dict[str, Any]] = []
-    for field in sorted(fields, key=lambda f: (f.priority, f.key)):
+    empty: list[dict[str, Any]] = []
+    required: list[dict[str, Any]] = []
+    sections: dict[str, dict[str, int]] = {}
+
+    for field in sorted(fields, key=lambda f: (f.priority, f.section, f.key)):
         present = field_is_present_in_snapshot(person, field, snapshot)
         item = {
             "key": field.key,
+            "label": _field_label(field),
             "section": field.section,
             "priority": field.priority,
             "priorityLabel": priority_name(field.priority),
             "sensitive": field.sensitive,
         }
+        bucket = sections.setdefault(
+            field.section, {"filled": 0, "empty": 0, "required": 0}
+        )
         if present:
-            if field.storage == "vault_value" and field.key in sparse:
-                entry = sparse[field.key]
-                item["value"] = entry["value"] if isinstance(entry, dict) and "value" in entry else entry
-            elif field.storage == "person" and field.person_column:
-                raw = getattr(person, field.person_column, None)
-                item["value"] = "[sensitive]" if field.sensitive and not include_sensitive else raw
-            else:
-                item["value"] = True
+            item["value"] = _field_value(
+                person, field, sparse, typed, include_sensitive=include_sensitive
+            )
             filled.append(item)
+            bucket["filled"] += 1
+        elif field.priority == "C":
+            required.append(item)
+            bucket["required"] += 1
         else:
-            missing.append(item)
+            empty.append(item)
+            bucket["empty"] += 1
+
+    next_field = required[0] if required else (empty[0] if empty else {})
 
     return {
+        "vaultId": unified.get("vaultId"),
+        "catalogVersion": unified.get("catalogVersion"),
+        "applicableScopes": scopes,
+        "version": unified.get("version"),
+        "person": {
+            "id": str(person.id),
+            "fullName": person.full_name,
+            "email": person.email,
+            "phone": person.phone,
+            "onboardingCompleted": person.onboarding_completed_at is not None,
+            "onboardingPath": person.onboarding_path,
+        },
         "completion": {
             "critical": completion.get("critical", 0),
             "important": completion.get("important", 0),
             "enrichment": completion.get("enrichment", 0),
             "overall": completion.get("overall", 0),
         },
-        "filledCount": len(filled),
-        "missingCount": len(missing),
         "filled": filled,
-        "missing": missing,
-        "nextRecommendedField": completion.get("nextRecommendedField") or {},
+        "required": required,
+        "empty": empty,
+        "missing": required + empty,
+        "filledCount": len(filled),
+        "emptyCount": len(empty),
+        "requiredCount": len(required),
+        "missingCount": len(required) + len(empty),
+        "sections": sections,
+        "typed": typed,
+        "sparseFields": sparse,
+        "typedResources": unified.get("typedResources") or typed.get("counts") or {},
+        "nextRecommendedField": next_field,
+        "memory": {
+            "engine": "agentspan",
+            "role": "Unstructured counseling insights. Structured facts live in this Vault.",
+        },
     }
 
 

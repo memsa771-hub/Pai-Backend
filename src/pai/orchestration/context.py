@@ -91,6 +91,7 @@ def build_known_facts(
         ("application.career_interest", "Career interest"),
         ("application.target_universities", "Target universities"),
         ("application.admission_cycle", "Admission cycle"),
+        ("application.test_scores", "Test scores"),
         ("mobility.preferred_regions", "Preferred regions"),
         ("education.stream", "Education stream"),
         ("education.marks", "Marks"),

@@ -62,6 +62,7 @@ def test_substantive_messages_trigger_extraction():
     assert should_extract_facts("My budget is approximately 20,000 euros.") is True
     assert should_extract_facts("PRE MEDICAL 877/1100") is True
     assert should_extract_facts("I want FAST or NUST in Islamabad") is True
+    assert should_extract_facts("I live in Dubai and want NYU Abu Dhabi") is True
 
 
 def test_agents_do_not_call_each_other():

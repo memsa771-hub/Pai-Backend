@@ -37,7 +37,9 @@ PATH_CHOICES = [
     {
         "id": OnboardingPath.cv.value,
         "label": ENUM_LABELS["path"][OnboardingPath.cv.value],
-        "description": "PAI reads your CV/PDF, then you confirm only missing critical fields.",
+        "description": (
+            "Upload your CV. PAI extracts your profile and unlocks chat — no extra form."
+        ),
     },
 ]
 
@@ -166,7 +168,7 @@ class OnboardingSubmit(BaseModel):
     currentStatus: CurrentStatus
     educationLevel: EducationLevel
     institution: str | None = Field(
-        default=None, max_length=256, examples=["Bahria University"]
+        default=None, max_length=256, examples=["University of Toronto"]
     )
     degree: str | None = Field(default=None, max_length=128, examples=["BSCS"])
     major: FieldOfStudy | None = None

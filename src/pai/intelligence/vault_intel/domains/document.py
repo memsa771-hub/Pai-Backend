@@ -19,7 +19,7 @@ class DocumentSourceDomain:
         # Documents: truncate for LLM but run boosters on a larger window
         text = request.text or ""
         booster_text = text[:50000]
-        llm_text = text[:14000]
+        llm_text = text[:24000]
         boosters, hits = run_deterministic_boosters(
             booster_text,
             source_reference=request.source_reference,

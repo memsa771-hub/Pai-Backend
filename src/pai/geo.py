@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from functools import lru_cache
 
 import pycountry
@@ -95,33 +94,57 @@ def country_codes_from_value(value: object) -> list[str]:
 
 
 @lru_cache(maxsize=1)
-def _country_name_pattern() -> re.Pattern[str]:
-    names: set[str] = set(_EXONYMS)
-    names.update({"usa", "united states", "united states of america", "united kingdom"})
+def _country_names() -> tuple[tuple[str, str], ...]:
+    """(casefolded name, alpha_2), longest first — no giant regex compile."""
+    pairs: dict[str, str] = dict(_EXONYMS)
+    pairs.update(
+        {
+            "usa": "US",
+            "united states": "US",
+            "united states of america": "US",
+            "united kingdom": "GB",
+        }
+    )
     for country in pycountry.countries:
+        code = getattr(country, "alpha_2", None)
+        if not code:
+            continue
         for attr in ("name", "official_name", "common_name"):
             raw = getattr(country, attr, None)
             if not isinstance(raw, str) or len(raw) < 4:
                 continue
-            names.add(raw)
+            pairs[raw.casefold()] = code
             stem = raw.split(",", 1)[0].strip()
             if len(stem) >= 4 and stem.casefold() not in _AMBIGUOUS_STEMS:
-                names.add(stem)
-    ordered = sorted(names, key=len, reverse=True)
-    escaped = [re.escape(name) for name in ordered]
-    return re.compile(r"\b(?:" + "|".join(escaped) + r")\b", re.I)
+                pairs[stem.casefold()] = code
+    return tuple(sorted(pairs.items(), key=lambda item: len(item[0]), reverse=True))
 
 
 def extract_countries_from_text(text: str) -> list[str]:
     """High-recall ISO alpha-2 codes mentioned in free text (names, not 2-letter codes)."""
     if not text:
         return []
+    blob = text.casefold()
+    hits: list[tuple[int, str]] = []
+    occupied: list[tuple[int, int]] = []
+    for name, code in _country_names():
+        start = 0
+        while True:
+            idx = blob.find(name, start)
+            if idx < 0:
+                break
+            end = idx + len(name)
+            left_ok = idx == 0 or not blob[idx - 1].isalnum()
+            right_ok = end >= len(blob) or not blob[end].isalnum()
+            overlap = any(idx < span[1] and end > span[0] for span in occupied)
+            if left_ok and right_ok and not overlap:
+                hits.append((idx, code))
+                occupied.append((idx, end))
+                break
+            start = idx + 1
+    hits.sort(key=lambda item: item[0])
     codes: list[str] = []
-    for match in _country_name_pattern().finditer(text):
-        try:
-            code = coerce_country(match.group(0))
-        except ValueError:
-            continue
-        if isinstance(code, str) and code not in codes:
+    for _, code in hits:
+        if code not in codes:
             codes.append(code)
     return codes

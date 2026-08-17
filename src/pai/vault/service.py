@@ -21,7 +21,7 @@ from pai.person.models import (
     VaultHistory,
     VaultValue,
 )
-from pai.vault.catalog import get_catalog_field
+from pai.vault.catalog import CATALOG_VERSION, GUIDANCE_SCOPES, get_catalog_field
 from pai.vault.completion import apply_completion_to_vault, compute_completion
 from pai.vault.security import SensitiveValueCodec, mask_value
 
@@ -428,6 +428,20 @@ class VaultService:
         if scope not in scopes:
             scopes.append(scope)
             vault.applicable_scopes = scopes
+
+
+def grow_vault_schema(vault: PersonVault) -> bool:
+    """Attach new catalog version + guidance scopes. New fields stay empty until filled."""
+    dirty = False
+    if vault.catalog_version != CATALOG_VERSION:
+        vault.catalog_version = CATALOG_VERSION
+        dirty = True
+    scopes = list(vault.applicable_scopes or [])
+    extra = [scope for scope in GUIDANCE_SCOPES if scope not in scopes]
+    if extra:
+        vault.applicable_scopes = scopes + extra
+        dirty = True
+    return dirty
 
 
 async def expand_scope_for_person(

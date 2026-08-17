@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from functools import lru_cache
 
 from pai.geo import country_options
 
@@ -224,6 +225,7 @@ def _options(values: list[str], labels: dict[str, str]) -> list[dict[str, str]]:
     ]
 
 
+@lru_cache(maxsize=1)
 def field_enum_catalog() -> dict[str, list[dict[str, str]]]:
     countries = list(country_options())
     return {

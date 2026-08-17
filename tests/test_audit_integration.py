@@ -124,11 +124,8 @@ def test_vault_supersede_preserves_history(vault_client, verified_user):
         headers=headers,
     ).json()["data"]["history"]
     assert len(hist) >= 2
-    field = client.get(
-        "/api/v1/vault/fields/preferences.preferred_language",
-        headers=headers,
-    ).json()["data"]
-    assert field["value"] == "ur"
+    vault3 = client.get("/api/v1/vault", headers=headers).json()["data"]
+    assert vault3["sparseFields"]["preferences.preferred_language"] == "ur"
 
 
 def test_live_deepseek_structured_smoke():

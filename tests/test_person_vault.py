@@ -124,8 +124,8 @@ def test_completion_scopes_after_education(verified_user):
         headers=headers,
         json={"institution": "Scope U"},
     )
-    completion = client.get("/api/v1/vault/completion", headers=headers).json()["data"]
-    assert "education" in completion["applicableScopes"]
+    vault = client.get("/api/v1/vault", headers=headers).json()["data"]
+    assert "education" in vault["applicableScopes"]
 
 
 def test_cross_user_access_blocked(vault_client, fake_provider):
@@ -190,3 +190,20 @@ def test_catalog_endpoint(verified_user):
     catalog = client.get("/api/v1/vault/catalog", headers=headers).json()["data"]
     assert catalog["catalogVersion"]
     assert any(f["key"] == "auth.email" for f in catalog["fields"])
+    assert any(f["key"] == "application.test_scores" for f in catalog["fields"])
+
+
+def test_vault_overview_filled_empty_required(verified_user):
+    client, headers, _ = verified_user
+    client.post("/api/v1/person/bootstrap", headers=headers)
+    data = client.get("/api/v1/vault", headers=headers).json()["data"]
+    assert "education" in data["applicableScopes"]
+    assert "application" in data["applicableScopes"]
+    filled_keys = {item["key"] for item in data["filled"]}
+    required_keys = {item["key"] for item in data["required"]}
+    empty_keys = {item["key"] for item in data["empty"]}
+    assert "auth.email" in filled_keys
+    assert "application.study_country" in required_keys
+    assert "application.test_scores" in empty_keys
+    assert data["requiredCount"] == len(data["required"])
+    assert data["memory"]["engine"] == "agentspan"

@@ -23,17 +23,22 @@ _CGPA_BARE = re.compile(
 )
 _STREAM = re.compile(
     r"\b(pre[\s-]?medical|pre[\s-]?engineering|fsc|fa\b|ics|bscs|bcss|bsc|bs\s*cs|"
-    r"computer\s+science|software\s+engineering)\b",
+    r"computer\s+science|software\s+engineering|"
+    r"a[\s-]?levels?|igcse|gcse|cbse|international\s+baccalaureate|ib\s*(?:dp|diploma))\b",
     re.I,
 )
 _CITY = re.compile(
     r"\b(islamabad|lahore|karachi|peshawar|rawalpindi|multan|faisalabad|"
-    r"berlin|munich|shanghai|beijing|toronto|london)\b",
+    r"dubai|sharjah|abu\s+dhabi|doha|riyadh|jeddah|"
+    r"berlin|munich|shanghai|beijing|toronto|london|"
+    r"new\s+york|singapore|sydney|melbourne|paris|amsterdam)\b",
     re.I,
 )
+# ponytail: high-precision aliases when the student names them — not a world catalog.
 _UNI = re.compile(
-    r"\b(FAST|NUST|GIKI|UET|LUMS|IBA|COMSATS|Bahria|PIEAS|TU\s*Munich|TUM|"
-    r"RWTH|Tsinghua|Peking)\b",
+    r"\b(FAST|NUST|GIKI|UET|LUMS|IBA|COMSATS|Bahria|PIEAS|"
+    r"NYUAD|NYU\s*Abu\s*Dhabi|Khalifa|"
+    r"TU\s*Munich|TUM|RWTH|Tsinghua|Peking|Oxford|Cambridge|MIT|Stanford|ETH|NUS)\b",
     re.I,
 )
 _FUNDED = re.compile(r"\b(fully\s+funded|scholarship|daad|csc|limited\s+budget|low\s+budget)\b", re.I)
@@ -340,5 +345,14 @@ def _normalize_stream(raw: str) -> str:
         "bs cs": "BSCS",
         "computer science": "Computer Science",
         "software engineering": "Software Engineering",
+        "a levels": "A-Levels",
+        "a level": "A-Levels",
+        "alevels": "A-Levels",
+        "igcse": "IGCSE",
+        "gcse": "GCSE",
+        "cbse": "CBSE",
+        "international baccalaureate": "IB",
+        "ib dp": "IB DP",
+        "ib diploma": "IB Diploma",
     }
     return mapping.get(low, t)

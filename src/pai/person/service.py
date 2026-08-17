@@ -31,9 +31,10 @@ from pai.person.models import (
     VaultValue,
     WorkExperience,
 )
-from pai.vault.catalog import AUTH_PROVIDER_NAME, CATALOG_VERSION
+from pai.vault.catalog import AUTH_PROVIDER_NAME, CATALOG_VERSION, GUIDANCE_SCOPES
 from pai.vault.completion import apply_completion_to_vault
 from pai.vault.security import SensitiveValueCodec
+from pai.vault.service import grow_vault_schema
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class PersonBootstrapService:
                     vault = PersonVault(
                         person_id=person.id,
                         catalog_version=CATALOG_VERSION,
-                        applicable_scopes=["universal"],
+                        applicable_scopes=list(GUIDANCE_SCOPES),
                     )
                     session.add(vault)
                     await session.flush()
@@ -126,7 +127,12 @@ class PersonBootstrapService:
         external_id = str(provider_user.id)
         person = await self._find_person(session, AUTH_PROVIDER_NAME, external_id)
         if person is not None:
-            if self._sync_identity(person, provider_user):
+            dirty = self._sync_identity(person, provider_user)
+            vault = person.vault
+            if vault is not None and grow_vault_schema(vault):
+                await apply_completion_to_vault(session, person, vault)
+                dirty = True
+            if dirty:
                 await session.commit()
             return person
         if session.in_transaction():
@@ -157,10 +163,14 @@ class PersonBootstrapService:
     async def _find_person(
         self, session: AsyncSession, provider: str, external_id: str
     ) -> Person | None:
-        stmt = select(Person).where(
-            Person.auth_provider == provider,
-            Person.external_auth_id == external_id,
-            Person.deleted_at.is_(None),
+        stmt = (
+            select(Person)
+            .where(
+                Person.auth_provider == provider,
+                Person.external_auth_id == external_id,
+                Person.deleted_at.is_(None),
+            )
+            .options(selectinload(Person.vault))
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()

@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-CATALOG_VERSION = "1.2.0"
+CATALOG_VERSION = "1.4.0"
 AUTH_PROVIDER_NAME = "supabase"
+# Always-on scopes so PAI can see what a student still needs for guidance.
+GUIDANCE_SCOPES = ("universal", "education", "application", "career")
 
 Priority = Literal["C", "I", "E"]
 Scope = Literal[
@@ -130,7 +132,7 @@ def _fields() -> tuple[CatalogField, ...]:
         CatalogField(
             key="identity.phone",
             section="identity",
-            priority="I",
+            priority="C",
             sensitive=False,
             derived=False,
             storage="person",
@@ -292,11 +294,11 @@ def _fields() -> tuple[CatalogField, ...]:
             section="career",
             priority="C",
             sensitive=False,
-            derived=True,
+            derived=False,
             storage="work_experiences",
             applicable_scope="career",
             value_type="json",
-            editable=False,
+            editable=True,
             repeatable=True,
         ),
         CatalogField(
@@ -304,11 +306,11 @@ def _fields() -> tuple[CatalogField, ...]:
             section="career",
             priority="I",
             sensitive=False,
-            derived=True,
+            derived=False,
             storage="projects",
             applicable_scope="career",
             value_type="json",
-            editable=False,
+            editable=True,
             repeatable=True,
         ),
         CatalogField(
@@ -316,11 +318,11 @@ def _fields() -> tuple[CatalogField, ...]:
             section="career",
             priority="C",
             sensitive=False,
-            derived=True,
+            derived=False,
             storage="skills",
             applicable_scope="career",
             value_type="json",
-            editable=False,
+            editable=True,
             repeatable=True,
         ),
         CatalogField(
@@ -328,11 +330,11 @@ def _fields() -> tuple[CatalogField, ...]:
             section="career",
             priority="I",
             sensitive=False,
-            derived=True,
+            derived=False,
             storage="certifications",
             applicable_scope="career",
             value_type="json",
-            editable=False,
+            editable=True,
             repeatable=True,
         ),
         CatalogField(
@@ -453,6 +455,18 @@ def _fields() -> tuple[CatalogField, ...]:
             storage="vault_value",
             applicable_scope="application",
             value_type="string",
+            editable=True,
+            repeatable=False,
+        ),
+        CatalogField(
+            key="application.test_scores",
+            section="application",
+            priority="I",
+            sensitive=False,
+            derived=False,
+            storage="vault_value",
+            applicable_scope="application",
+            value_type="array",
             editable=True,
             repeatable=False,
         ),
@@ -590,23 +604,32 @@ def extraction_catalog_hint() -> str:
         '  education.program → {"institution"?, "degree", "major"/"stream", "gpa"?, '
         '"percentage"?, "marks_obtained"?, "marks_total"?, "graduation_year"?}',
         "  education.gpa → same JSON shape when updating GPA/marks on an education row",
-        "  education.stream → string e.g. Pre-Medical | Pre-Engineering | ICS",
+        "  education.stream → string as named (IB, A-Levels, FSc Pre-Medical, AP, …)",
         '  education.marks → {"obtained": 877, "total": 1100} or "877/1100"',
         "  education.additional_maths → true|false",
-        "  education.highest_level → high_school | bachelor | master | other",
+        "  education.highest_level → high_school | diploma | bachelor | master | phd | other",
+        "",
+        "Career typed JSON (one candidate per item, or a list):",
+        '  career.work_history → {"organization","title","employment_type"?,'
+        '"is_current"?,"description"?,"start_date"?,"end_date"?}',
+        '  career.skills → {"name","proficiency"?} or a skill name string',
+        '  career.projects → {"name","role"?,"description"?,"url"?}',
+        '  career.certifications → {"name","issuer"?}',
         "",
         "Goals / admissions:",
-        "  application.career_interest → string program goal e.g. BSCS in Pakistan",
-        "  application.study_country → string",
-        "  application.target_universities → [\"FAST\",\"NUST\",...]",
+        "  application.career_interest → string program/goal as stated (e.g. MS AI in Germany)",
+        "  application.study_country → string (ISO name or code as given)",
+        "  application.target_universities → institution names the student named",
         "  application.admission_cycle → string",
+        '  application.test_scores → [{"name":"ielts","score":"7.5"}, ...]',
         "",
         "Identity / location / other writable keys:",
     ]
+    skip_prefix = ("education.", "application.", "career.")
     for f in sorted(VAULT_CATALOG.values(), key=lambda x: x.key):
         if f.derived or not f.editable:
             continue
-        if f.key.startswith("education.") or f.key.startswith("application."):
+        if f.key.startswith(skip_prefix):
             continue
         lines.append(f"  {f.key} ({f.value_type})")
     return "\n".join(lines)

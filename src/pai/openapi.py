@@ -30,16 +30,18 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "onboarding",
         "description": (
-            "Lightweight starting profile only — not the main Person Vault fill. "
-            "Required: a few identity fields. Chat, CV/documents, and later updates "
-            "enrich the same Vault. Signup and login never mark onboarding complete."
+            "Choose the form (`POST /onboarding`) or upload a CV (`POST /onboarding/cv`). "
+            "CV upload extracts the profile and marks onboarding complete — no extra fields. "
+            "Chat, later documents, and updates enrich the same Vault. "
+            "Signup and login never mark onboarding complete."
         ),
     },
     {
         "name": "vault",
         "description": (
-            "Person Vault. Prefer **`GET /api/v1/vault/status`** for a simple filled/missing view "
-            "after chat. Other vault routes remain for advanced field CRUD."
+            "Person Vault — PAI's structured memory of the student. "
+            "**`GET /api/v1/vault`** returns filled, empty, and still-required fields. "
+            "Chat/CV extraction writes here; AgentSpan holds unstructured insights only."
         ),
     },
     {
@@ -79,7 +81,7 @@ Onboarding seeds a **small starting profile**. The Vault grows from **chat extra
 3. Click **Authorize** (top right) → paste the token **without** the word `Bearer`.
 4. Swagger adds `Bearer` for you. Adding it twice causes `401`.
 5. Call **`GET /api/v1/auth/me`** — must return 200 before chat.
-6. If `data.onboardingCompleted` is false, `GET /api/v1/onboarding` then `POST /api/v1/onboarding` with the **required starting fields** (or upload a CV and confirm missing criticals). Deeper profile facts come from chat.
+6. If `data.onboardingCompleted` is false, `GET /api/v1/onboarding` then either `POST /api/v1/onboarding` (form) or `POST /api/v1/onboarding/cv` (CV unlocks chat immediately). Deeper profile facts come from chat.
 7. Call **`POST /api/v1/chat`** with a message.
 
 Login auto-bootstraps the Person Vault for verified users. New users must finish onboarding before counselor chat.

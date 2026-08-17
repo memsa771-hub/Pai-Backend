@@ -46,10 +46,13 @@ class OmnibusLLMExtractor:
             text=request.text,
         )
         result = await self._run(prompt, task=_task_for(request.source))
+        snippet = (request.text or "").strip()[:240]
         for c in result.fact_candidates:
             c.source_type = _schema_source(request.source)  # type: ignore[assignment]
             if not c.source_reference:
                 c.source_reference = request.source_reference
+            if not (c.evidence_text or "").strip():
+                c.evidence_text = snippet or c.field_key
         return list(result.fact_candidates)
 
     async def _run(self, user_prompt: str, *, task: str) -> FactExtractionResult:
@@ -63,8 +66,12 @@ class OmnibusLLMExtractor:
                             role="system",
                             content=(
                                 "You are PAI Vault Intelligence. Extract structured Person Vault "
-                                "facts across education, admissions, identity, and finance/prefs. "
-                                "Never write counselor replies. Return JSON only."
+                                "facts across education, career, admissions, identity, and "
+                                "finance/prefs. For CVs extract every distinct school, job, "
+                                "skill, project, certification, test score, and location named. "
+                                "PAI is global: copy names the student used; do not assume "
+                                "Pakistan or any default university list. Never write counselor "
+                                "replies. Return JSON only."
                             ),
                         ),
                         LLMMessage(role="user", content=user_prompt),

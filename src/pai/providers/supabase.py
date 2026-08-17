@@ -47,13 +47,15 @@ class SupabaseAuthProvider:
         self._settings = settings
         self._owns_client = client is None
         timeout = httpx.Timeout(
-            connect=5.0,
+            connect=3.0,
             read=settings.auth_http_timeout_seconds,
             write=settings.auth_http_timeout_seconds,
-            pool=5.0,
+            pool=3.0,
         )
+        # ponytail: bind IPv4 so Windows doesn't wait ~5s on a dead IPv6 route to Supabase.
         self._client = client or httpx.AsyncClient(
             timeout=timeout,
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
             limits=httpx.Limits(
                 max_keepalive_connections=20,
                 max_connections=40,
@@ -237,7 +239,7 @@ class SupabaseAuthProvider:
         data = await self._request_json(
             "GET",
             "/admin/users",
-            params={"page": "1", "per_page": "50", "email": email},
+            params={"page": "1", "per_page": "1", "email": email},
             use_service_role=True,
         )
         needle = email.lower()

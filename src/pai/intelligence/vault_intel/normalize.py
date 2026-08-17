@@ -32,6 +32,13 @@ _ALIASES: dict[str, str] = {
     "education.level": "education.highest_level",
     "finance.budget": "finance.funding_status",
     "mobility.countries": "mobility.preferred_regions",
+    "career.job": "career.work_history",
+    "career.jobs": "career.work_history",
+    "career.experience": "career.work_history",
+    "career.skill": "career.skills",
+    "career.project": "career.projects",
+    "career.certification": "career.certifications",
+    "career.certs": "career.certifications",
 }
 
 
@@ -101,6 +108,28 @@ def _normalize_value(field_key: str, value: Any) -> Any:
         return value.strip().lower() in ("true", "yes", "y", "1")
     if field_key == "finance.scholarship_interest" and isinstance(value, str):
         return value.strip().lower() in ("true", "yes", "y", "1")
+    if field_key == "education.highest_level" and isinstance(value, str):
+        token = value.strip().lower().replace(" ", "_").replace("'", "")
+        aliases = {
+            "bachelors": "bachelor",
+            "bachelor_of": "bachelor",
+            "bs": "bachelor",
+            "ba": "bachelor",
+            "undergraduate": "bachelor",
+            "masters": "master",
+            "msc": "master",
+            "ms": "master",
+            "graduate": "master",
+            "doctorate": "phd",
+            "highschool": "high_school",
+            "secondary": "high_school",
+            "a_levels": "other",
+            "alevels": "other",
+            "ib": "other",
+        }
+        token = aliases.get(token, token)
+        allowed = {"high_school", "diploma", "bachelor", "master", "phd", "other"}
+        return token if token in allowed else value
     return value
 
 

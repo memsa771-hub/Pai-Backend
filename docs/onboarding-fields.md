@@ -1,6 +1,8 @@
 # Onboarding fields
 
-`POST /api/v1/onboarding` accepts one JSON body. Onboarding is a **starting seed**, not the full Person Vault. Chat and documents fill in the rest.
+`POST /api/v1/onboarding` accepts one JSON body for the **form path**. Onboarding is a **starting seed**, not the full Person Vault. Chat and documents fill in the rest.
+
+The **CV path** is `POST /api/v1/onboarding/cv` only. A successful extract marks onboarding complete. Do not send this form after a CV upload.
 
 Use ids from `GET /api/v1/onboarding` → `data.enums`. Do not send display labels like `"Bachelor's"` or `"University admission"`.
 

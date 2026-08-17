@@ -21,7 +21,10 @@ class SupabaseStorageProvider:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._base = f"{settings.supabase_url.rstrip('/')}/storage/v1"
-        self._client = httpx.AsyncClient(timeout=60.0)
+        self._client = httpx.AsyncClient(
+            timeout=60.0,
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

@@ -1,5 +1,7 @@
+import socket
 import ssl
 from collections.abc import AsyncIterator
+from urllib.parse import urlparse
 
 import certifi
 from sqlalchemy import text
@@ -15,14 +17,32 @@ def _is_remote_postgres(database_url: str) -> bool:
     return "supabase.co" in database_url or "pooler.supabase.com" in database_url
 
 
+def _ipv4_for_host(host: str) -> str | None:
+    """A-record only. Windows often stalls ~5s on a dead AAAA before falling back."""
+    try:
+        infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return None
+    if not infos:
+        return None
+    return infos[0][4][0]
+
+
 def _engine_connect_args(database_url: str, *, ssl_verify: bool = True) -> dict:
-    if _is_remote_postgres(database_url):
-        ctx = ssl.create_default_context(cafile=certifi.where())
-        if not ssl_verify:
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-        return {"ssl": ctx}
-    return {}
+    if not _is_remote_postgres(database_url):
+        return {}
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    args: dict = {"ssl": ctx, "timeout": 8}
+    host = urlparse(database_url).hostname
+    ipv4 = _ipv4_for_host(host) if host else None
+    if ipv4:
+        args["host"] = ipv4
+        # ponytail: TCP to A-record IP (skip AAAA stall); hostname check can't use an IP.
+        ctx.check_hostname = False
+    if not ssl_verify:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return args
 
 
 def get_engine(settings: Settings | None = None):

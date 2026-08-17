@@ -5,7 +5,7 @@ from conftest import ONBOARDING_PAYLOAD
 from pydantic import ValidationError
 
 from pai.onboarding.enums import field_enum_catalog
-from pai.onboarding.schema import OnboardingSubmit
+from pai.onboarding.schema import PATH_CHOICES, OnboardingSubmit
 
 
 def test_enum_catalog_exposes_dropdown_ids():
@@ -221,7 +221,68 @@ def test_onboarding_submit_is_idempotent(verified_user):
     assert len(educations) == 1
 
 
-def test_cv_path_completes_only_after_confirmed_payload(verified_user):
+def test_cv_choice_does_not_require_form_fields():
+    cv = next(item for item in PATH_CHOICES if item["id"] == "cv")
+    assert "no extra form" in cv["description"].lower()
+
+
+def test_cv_upload_completes_onboarding_without_form(verified_user, monkeypatch):
+    import uuid
+
+    from pai.documents.models import Document, DocumentJob
+
+    client, headers, _ = verified_user
+
+    async def fake_upload(session, settings, person, *, filename, content_type, data, storage):
+        del settings, storage
+        doc = Document(
+            id=uuid.uuid4(),
+            person_id=person.id,
+            storage_path=f"{person.id}/cv.txt",
+            original_filename=filename,
+            mime_type=content_type,
+            size_bytes=len(data),
+            status="uploaded",
+            document_type="resume",
+        )
+        session.add(doc)
+        session.add(
+            DocumentJob(
+                document_id=doc.id,
+                person_id=person.id,
+                idempotency_key=f"extract-{doc.id}",
+                status="pending",
+            )
+        )
+        await session.commit()
+        await session.refresh(doc)
+        return doc
+
+    async def fake_process(session, settings, job, *, storage, gateway):
+        del session, settings, storage, gateway
+        job.status = "completed"
+
+    monkeypatch.setattr("pai.documents.service.create_document_upload", fake_upload)
+    monkeypatch.setattr("pai.documents.service.process_document_job", fake_process)
+
+    res = client.post(
+        "/api/v1/onboarding/cv",
+        headers=headers,
+        files={"file": ("cv.txt", b"Aisha Khan intern Python SQL NYU Abu Dhabi", "text/plain")},
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()["data"]
+    assert data["completed"] is True
+    assert data["onboardingCompleted"] is True
+    assert data["path"] == "cv"
+    assert data["missingRequired"] == []
+    assert data["requiredFields"] == []
+
+    blocked = client.post("/api/v1/chat", headers=headers, json={"message": "Hello"})
+    assert blocked.json().get("error", {}).get("code") != "ONBOARDING_INCOMPLETE"
+
+
+def test_form_submit_with_cv_path_tag_still_allowed(verified_user):
     client, headers, _ = verified_user
     payload = {**ONBOARDING_PAYLOAD, "path": "cv"}
     status = client.get("/api/v1/onboarding", headers=headers).json()["data"]

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from pai.orchestration.schemas import VaultCandidate
 from pai.vault.catalog import get_catalog_field
 
@@ -18,10 +16,18 @@ def validate_candidate(candidate: VaultCandidate) -> VaultCandidate | None:
         if not _value_matches_type(field.value_type, candidate.value):
             return None
         return candidate
-    if field.storage in ("educations", "goals", "person"):
+    if field.storage in (
+        "educations",
+        "goals",
+        "person",
+        "work_experiences",
+        "skills",
+        "projects",
+        "certifications",
+    ):
         if field.key == "education.gpa" and isinstance(candidate.value, (int, float)):
             return candidate
-        if field.value_type == "json" and isinstance(candidate.value, dict):
+        if field.value_type == "json" and isinstance(candidate.value, (dict, list, str)):
             return candidate
         if field.value_type == "string" and isinstance(candidate.value, str):
             return candidate
@@ -45,7 +51,7 @@ def _value_matches_type(value_type: str, value: object) -> bool:
     return True
 
 
-def policy_decision(candidate: VaultCandidate) -> str:
+def policy_decision(candidate: VaultCandidate, *, from_document: bool = False) -> str:
     """Returns: accept | pending | reject"""
     field = get_catalog_field(candidate.field_key)
     if field is None:
@@ -54,7 +60,8 @@ def policy_decision(candidate: VaultCandidate) -> str:
         return "pending"
     if field.sensitive and candidate.confidence < 0.95:
         return "pending"
-    if candidate.confidence >= 0.85 and not field.sensitive:
+    accept_at = 0.80 if from_document and not field.sensitive else 0.85
+    if candidate.confidence >= accept_at and not field.sensitive:
         return "accept"
     if candidate.confidence >= 0.7:
         return "pending"

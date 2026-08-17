@@ -32,6 +32,17 @@ def test_extraction_catalog_lists_admissions_keys():
     assert "application.career_interest" in hint
     assert "application.target_universities" in hint
     assert "location.current_city" in hint
+    assert "career.work_history" in hint
+    assert "career.skills" in hint
+    assert "FAST" not in hint
+    assert "NUST" not in hint
+    assert "GIKI" not in hint
+
+
+def test_global_admissions_messages_trigger_extraction():
+    assert should_extract_facts("I live in Dubai and want NYU Abu Dhabi") is True
+    assert should_extract_facts("I am doing A-Levels in Sharjah") is True
+    assert should_extract_facts("My EmSAT score is 1600") is True
 
 
 def test_fact_recording_tasks_are_rejected():

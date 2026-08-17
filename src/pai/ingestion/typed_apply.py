@@ -2,14 +2,25 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.orchestration.schemas import VaultCandidate
-from pai.person.models import Education, Goal, Person, VaultHistory
+from pai.person.models import (
+    Certification,
+    Education,
+    Goal,
+    Person,
+    Project,
+    Skill,
+    VaultHistory,
+    WorkExperience,
+)
 from pai.person.typed_resources import SCOPE_BY_RESOURCE
+from pai.phone import normalize_phone
 from pai.vault.catalog import CatalogField
 from pai.vault.completion import apply_completion_to_vault
 from pai.vault.service import expand_scope_for_person
@@ -247,8 +258,315 @@ async def _upsert_career_goal(
     return goal, "accepted", None
 
 
+def _as_items(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if item not in (None, "", [], {})]
+    return [value]
+
+
+def _parse_date(value: Any) -> date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if len(text) == 7 and text[4] == "-":
+        text = f"{text}-01"
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
 def _goal_snap(row: Goal) -> dict[str, Any]:
     return {"id": str(row.id), "title": row.title, "status": row.status}
+
+
+async def _apply_education_one(
+    session: AsyncSession,
+    person: Person,
+    candidate: VaultCandidate,
+    field: CatalogField,
+    *,
+    vault_status: str,
+    recompute_completion: bool,
+) -> TypedApplyResult:
+    payload = _education_payload(candidate.value)
+    if payload is None and field.key in ("education.gpa", "education.program"):
+        if isinstance(candidate.value, (int, float)):
+            existing = await _find_education_match(
+                session, person.id, {"gpa": float(candidate.value)}
+            )
+            if existing is None:
+                return TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
+            payload = {"institution": existing.institution, "gpa": float(candidate.value)}
+        elif isinstance(candidate.value, str) and _MARKS_RE.match(candidate.value):
+            m = _MARKS_RE.match(candidate.value)
+            assert m
+            obtained, total = float(m.group(1)), float(m.group(2))
+            pct = round(100.0 * obtained / total, 2) if total else None
+            existing = await _find_education_match(
+                session, person.id, {"percentage": pct or 0}
+            )
+            if existing is None:
+                return TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
+            payload = {"institution": existing.institution, "percentage": pct}
+
+    if payload is None:
+        return TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
+
+    existing = await _find_education_match(session, person.id, payload)
+    old_snapshot = _education_snapshot(existing) if existing else None
+    if existing:
+        _apply_education_fields(existing, payload)
+        row = existing
+        status = "updated"
+    else:
+        row = Education(
+            person_id=person.id,
+            institution=payload["institution"],
+            degree=payload.get("degree"),
+            major=payload.get("major"),
+            gpa=payload.get("gpa"),
+            gpa_scale=payload.get("gpa_scale"),
+            percentage=payload.get("percentage"),
+            graduation_year=payload.get("graduation_year"),
+            status=payload.get("status") or "completed",
+        )
+        session.add(row)
+        await session.flush()
+        status = "accepted"
+    await expand_scope_for_person(session, person, SCOPE_BY_RESOURCE["educations"])
+    await _log_typed_history(
+        session,
+        person,
+        candidate.field_key,
+        old_value=old_snapshot,
+        new_value=_education_snapshot(row),
+        candidate=candidate,
+    )
+    if recompute_completion and person.vault:
+        await apply_completion_to_vault(session, person, person.vault)
+    out = "pending" if vault_status == "pending" else status
+    return TypedApplyResult(candidate.field_key, out, candidate.confidence)
+
+
+async def _upsert_skills(
+    session: AsyncSession, person: Person, items: list[Any], candidate: VaultCandidate
+) -> str:
+    existing = await session.execute(select(Skill).where(Skill.person_id == person.id))
+    known = {row.name.strip().lower(): row for row in existing.scalars() if row.name}
+    status = "reinforced"
+    added: list[str] = []
+    for raw in items:
+        if isinstance(raw, str):
+            name, proficiency = raw.strip(), None
+        elif isinstance(raw, dict):
+            name = str(raw.get("name") or raw.get("skill") or "").strip()
+            proficiency = raw.get("proficiency")
+            proficiency = str(proficiency).strip() if proficiency else None
+        else:
+            continue
+        if not name:
+            continue
+        key = name.lower()
+        if key in known:
+            if proficiency and not known[key].proficiency:
+                known[key].proficiency = proficiency[:64]
+                status = "updated"
+            continue
+        row = Skill(person_id=person.id, name=name[:128], proficiency=proficiency)
+        session.add(row)
+        known[key] = row
+        added.append(name)
+        status = "accepted"
+    if added or status != "reinforced":
+        await expand_scope_for_person(session, person, SCOPE_BY_RESOURCE["skills"])
+        await _log_typed_history(
+            session,
+            person,
+            candidate.field_key,
+            old_value=None,
+            new_value=added or "updated",
+            candidate=candidate,
+        )
+    return status if (added or status != "reinforced") else "rejected"
+
+
+async def _upsert_work(
+    session: AsyncSession, person: Person, items: list[Any], candidate: VaultCandidate
+) -> str:
+    existing = await session.execute(
+        select(WorkExperience).where(WorkExperience.person_id == person.id)
+    )
+    known = {
+        (row.organization.strip().lower(), row.title.strip().lower()): row
+        for row in existing.scalars()
+        if row.organization and row.title
+    }
+    status = "rejected"
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        org = str(raw.get("organization") or raw.get("company") or "").strip()
+        title = str(raw.get("title") or raw.get("role") or "").strip()
+        if not org or not title:
+            continue
+        key = (org.lower(), title.lower())
+        desc = raw.get("description")
+        emp = raw.get("employment_type") or raw.get("employmentType")
+        current = bool(raw.get("is_current") or raw.get("isCurrent") or raw.get("current"))
+        start = _parse_date(raw.get("start_date") or raw.get("startDate"))
+        end = _parse_date(raw.get("end_date") or raw.get("endDate"))
+        if key in known:
+            row = known[key]
+            if desc and not row.description:
+                row.description = str(desc)
+            if emp and not row.employment_type:
+                row.employment_type = str(emp)[:64]
+            row.is_current = current or row.is_current
+            if start and not row.start_date:
+                row.start_date = start
+            if end and not row.end_date:
+                row.end_date = end
+            status = "updated" if status != "accepted" else status
+            continue
+        row = WorkExperience(
+            person_id=person.id,
+            organization=org[:256],
+            title=title[:256],
+            employment_type=str(emp)[:64] if emp else None,
+            is_current=current,
+            description=str(desc) if desc else None,
+            start_date=start,
+            end_date=end,
+        )
+        session.add(row)
+        known[key] = row
+        status = "accepted"
+    if status != "rejected":
+        await expand_scope_for_person(session, person, SCOPE_BY_RESOURCE["work_experiences"])
+        await _log_typed_history(
+            session,
+            person,
+            candidate.field_key,
+            old_value=None,
+            new_value=status,
+            candidate=candidate,
+        )
+    return status
+
+
+async def _upsert_projects(
+    session: AsyncSession, person: Person, items: list[Any], candidate: VaultCandidate
+) -> str:
+    existing = await session.execute(select(Project).where(Project.person_id == person.id))
+    known = {row.name.strip().lower(): row for row in existing.scalars() if row.name}
+    status = "rejected"
+    for raw in items:
+        if isinstance(raw, str):
+            name, role, desc, url = raw.strip(), None, None, None
+        elif isinstance(raw, dict):
+            name = str(raw.get("name") or raw.get("title") or "").strip()
+            role = raw.get("role")
+            desc = raw.get("description")
+            url = raw.get("url")
+        else:
+            continue
+        if not name:
+            continue
+        key = name.lower()
+        if key in known:
+            row = known[key]
+            if role and not row.role:
+                row.role = str(role)[:128]
+            if desc and not row.description:
+                row.description = str(desc)
+            if url and not row.url:
+                row.url = str(url)[:512]
+            status = "updated" if status != "accepted" else status
+            continue
+        row = Project(
+            person_id=person.id,
+            name=name[:256],
+            role=str(role)[:128] if role else None,
+            description=str(desc) if desc else None,
+            url=str(url)[:512] if url else None,
+        )
+        session.add(row)
+        known[key] = row
+        status = "accepted"
+    if status != "rejected":
+        await expand_scope_for_person(session, person, SCOPE_BY_RESOURCE["projects"])
+        await _log_typed_history(
+            session,
+            person,
+            candidate.field_key,
+            old_value=None,
+            new_value=status,
+            candidate=candidate,
+        )
+    return status
+
+
+async def _upsert_certs(
+    session: AsyncSession, person: Person, items: list[Any], candidate: VaultCandidate
+) -> str:
+    existing = await session.execute(
+        select(Certification).where(Certification.person_id == person.id)
+    )
+    known = {row.name.strip().lower(): row for row in existing.scalars() if row.name}
+    status = "rejected"
+    for raw in items:
+        if isinstance(raw, str):
+            name, issuer = raw.strip(), None
+        elif isinstance(raw, dict):
+            name = str(raw.get("name") or raw.get("title") or "").strip()
+            issuer = raw.get("issuer")
+        else:
+            continue
+        if not name:
+            continue
+        key = name.lower()
+        if key in known:
+            if issuer and not known[key].issuer:
+                known[key].issuer = str(issuer)[:256]
+                status = "updated" if status != "accepted" else status
+            continue
+        row = Certification(
+            person_id=person.id,
+            name=name[:256],
+            issuer=str(issuer)[:256] if issuer else None,
+        )
+        session.add(row)
+        known[key] = row
+        status = "accepted"
+    if status != "rejected":
+        await expand_scope_for_person(session, person, SCOPE_BY_RESOURCE["certifications"])
+        await _log_typed_history(
+            session,
+            person,
+            candidate.field_key,
+            old_value=None,
+            new_value=status,
+            candidate=candidate,
+        )
+    return status
+
+
+def _person_value(field_key: str, value: Any) -> Any:
+    if field_key == "identity.phone" and isinstance(value, str):
+        try:
+            return normalize_phone(value)
+        except ValueError:
+            return value.strip()
+    if field_key in {"identity.full_name", "identity.preferred_name"} and isinstance(value, str):
+        return value.strip()[:256]
+    return value
 
 
 async def apply_typed_candidate(
@@ -261,71 +579,30 @@ async def apply_typed_candidate(
     recompute_completion: bool = True,
 ) -> TypedApplyResult:
     if field.storage == "educations":
-        payload = _education_payload(candidate.value)
-        # Bare numeric GPA/percentage: merge into most recent education if one exists
-        if payload is None and field.key in ("education.gpa", "education.program"):
-            if isinstance(candidate.value, (int, float)):
-                existing = await _find_education_match(
-                    session, person.id, {"gpa": float(candidate.value)}
+        items = _as_items(candidate.value) if isinstance(candidate.value, list) else None
+        if items:
+            last = TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
+            for item in items:
+                piece = candidate.model_copy(update={"value": item})
+                last = await _apply_education_one(
+                    session,
+                    person,
+                    piece,
+                    field,
+                    vault_status=vault_status,
+                    recompute_completion=False,
                 )
-                if existing is None:
-                    return TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
-                payload = {"institution": existing.institution, "gpa": float(candidate.value)}
-            elif isinstance(candidate.value, str) and _MARKS_RE.match(candidate.value):
-                m = _MARKS_RE.match(candidate.value)
-                assert m
-                obtained, total = float(m.group(1)), float(m.group(2))
-                pct = round(100.0 * obtained / total, 2) if total else None
-                existing = await _find_education_match(
-                    session, person.id, {"percentage": pct or 0}
-                )
-                if existing is None:
-                    # Do not invent institutions for orphan mark strings.
-                    return TypedApplyResult(
-                        candidate.field_key, "rejected", candidate.confidence
-                    )
-                payload = {
-                    "institution": existing.institution,
-                    "percentage": pct,
-                }
-
-        if payload is None:
-            return TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
-
-        existing = await _find_education_match(session, person.id, payload)
-        old_snapshot = _education_snapshot(existing) if existing else None
-        if existing:
-            _apply_education_fields(existing, payload)
-            row = existing
-            status = "updated"
-        else:
-            row = Education(
-                person_id=person.id,
-                institution=payload["institution"],
-                degree=payload.get("degree"),
-                major=payload.get("major"),
-                gpa=payload.get("gpa"),
-                gpa_scale=payload.get("gpa_scale"),
-                percentage=payload.get("percentage"),
-                graduation_year=payload.get("graduation_year"),
-                status=payload.get("status") or "completed",
-            )
-            session.add(row)
-            await session.flush()
-            status = "accepted"
-        await expand_scope_for_person(session, person, SCOPE_BY_RESOURCE["educations"])
-        await _log_typed_history(
+            if recompute_completion and person.vault:
+                await apply_completion_to_vault(session, person, person.vault)
+            return last
+        return await _apply_education_one(
             session,
             person,
-            candidate.field_key,
-            old_value=old_snapshot,
-            new_value=_education_snapshot(row),
-            candidate=candidate,
+            candidate,
+            field,
+            vault_status=vault_status,
+            recompute_completion=recompute_completion,
         )
-        if recompute_completion and person.vault:
-            await apply_completion_to_vault(session, person, person.vault)
-        out = "pending" if vault_status == "pending" else status
-        return TypedApplyResult(candidate.field_key, out, candidate.confidence)
 
     if field.storage == "goals" and field.key == "application.career_interest":
         title = candidate.value if isinstance(candidate.value, str) else str(candidate.value)
@@ -346,15 +623,44 @@ async def apply_typed_candidate(
         out = "pending" if vault_status == "pending" else status
         return TypedApplyResult(candidate.field_key, out, candidate.confidence)
 
+    if field.storage == "skills":
+        status = await _upsert_skills(session, person, _as_items(candidate.value), candidate)
+        if recompute_completion and person.vault and status != "rejected":
+            await apply_completion_to_vault(session, person, person.vault)
+        out = "pending" if vault_status == "pending" and status != "rejected" else status
+        return TypedApplyResult(candidate.field_key, out, candidate.confidence)
+
+    if field.storage == "work_experiences":
+        status = await _upsert_work(session, person, _as_items(candidate.value), candidate)
+        if recompute_completion and person.vault and status != "rejected":
+            await apply_completion_to_vault(session, person, person.vault)
+        out = "pending" if vault_status == "pending" and status != "rejected" else status
+        return TypedApplyResult(candidate.field_key, out, candidate.confidence)
+
+    if field.storage == "projects":
+        status = await _upsert_projects(session, person, _as_items(candidate.value), candidate)
+        if recompute_completion and person.vault and status != "rejected":
+            await apply_completion_to_vault(session, person, person.vault)
+        out = "pending" if vault_status == "pending" and status != "rejected" else status
+        return TypedApplyResult(candidate.field_key, out, candidate.confidence)
+
+    if field.storage == "certifications":
+        status = await _upsert_certs(session, person, _as_items(candidate.value), candidate)
+        if recompute_completion and person.vault and status != "rejected":
+            await apply_completion_to_vault(session, person, person.vault)
+        out = "pending" if vault_status == "pending" and status != "rejected" else status
+        return TypedApplyResult(candidate.field_key, out, candidate.confidence)
+
     if field.storage == "person" and field.person_column:
+        value = _person_value(candidate.field_key, candidate.value)
         old = getattr(person, field.person_column, None)
-        setattr(person, field.person_column, candidate.value)
+        setattr(person, field.person_column, value)
         await _log_typed_history(
             session,
             person,
             candidate.field_key,
             old_value=old,
-            new_value=candidate.value,
+            new_value=value,
             candidate=candidate,
         )
         if recompute_completion and person.vault:

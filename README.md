@@ -156,11 +156,13 @@ Apply the SQL from `alembic/versions/001_phase2_person_vault.py` (`upgrade()`) i
 
 Onboarding is **not** the main way to fill the Person Vault. It collects a small reliable starting profile so PAI can advise from the first chat. Deeper student intelligence is built over time from **chat fact extraction**, **CV/document extraction**, and later updates to the same Vault.
 
-After verified login, the user chooses **Complete Onboarding** (form) or **Upload My CV**. The frontend may collect the form across screens; the backend accepts one `POST /api/v1/onboarding`. Chat stays locked until that submit succeeds (`onboardingCompleted`).
+After verified login, the user chooses **Complete Onboarding** (form) or **Upload My CV**. The form is one `POST /api/v1/onboarding`. The CV path is one `POST /api/v1/onboarding/cv` — extract fills the Vault and **marks onboarding complete**. Chat stays locked until one of those succeeds (`onboardingCompleted`).
 
 Signup and login **never** mark onboarding complete.
 
-Required: phone (E.164 via `phonenumbers` — send `+923001234567` or a national number with `currentCountry`), date of birth, nationality and current country (ISO 3166-1 via `pycountry` — send `PK` or `Pakistan`), gender, current city, current status, education level, primary goal (`exploring` | `placement` | `admission` | `professional` | `journey_tracker`).
+**Form path required fields:** phone (E.164 via `phonenumbers` — send `+923001234567` or a national number with `currentCountry`), date of birth, nationality and current country (ISO 3166-1 via `pycountry` — send `PK` or `Pakistan`), gender, current city, current status, education level, primary goal (`exploring` | `placement` | `admission` | `professional` | `journey_tracker`).
+
+The **CV path does not require those fields.** Anything the CV omitted is filled later in chat.
 
 Conditional (send if known): institution, degree, field of study (`major` enum).
 
@@ -175,8 +177,8 @@ National ID is **not** part of general onboarding. Name and email come from sign
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/onboarding` | Status, path choices, required/optional/conditional fields, `purpose`, `nextPath` |
-| POST | `/api/v1/onboarding` | Submit the starting profile; validates criticals, maps to the Vault, marks complete. Idempotent. |
-| POST | `/api/v1/onboarding/cv` | Upload CV/PDF; extract into the Vault — does **not** mark complete. Then POST `/onboarding` to confirm missing criticals. |
+| POST | `/api/v1/onboarding` | Form path: submit the starting profile; validates criticals; marks complete. Idempotent. |
+| POST | `/api/v1/onboarding/cv` | CV path: extract into the Vault and mark onboarding complete. No follow-up form. |
 
 ### Person & Vault (Phase 2)
 
@@ -185,8 +187,10 @@ National ID is **not** part of general onboarding. Name and email come from sign
 | POST | `/api/v1/person/bootstrap` | Idempotent Person + Vault setup |
 | GET/PATCH | `/api/v1/person/me` | Profile |
 | CRUD | `/api/v1/person/educations`, `work-experiences`, … | Typed profile |
-| GET | `/api/v1/vault`, `/catalog`, `/completion`, `/missing` | Vault |
-| PATCH/DELETE | `/api/v1/vault/fields/{field_key}` | Sparse vault fields |
+| GET | `/api/v1/vault` | Whole vault: filled + empty + still required, typed records, completion |
+| GET | `/api/v1/vault/catalog` | Field schema (not this student's values) |
+| PATCH/DELETE | `/api/v1/vault/fields/{field_key}` | Set or clear one sparse field |
+| GET | `/api/v1/vault/fields/{field_key}/history` | Change log for that field |
 
 ### Counselor & documents (PAI)
 

@@ -24,6 +24,15 @@ def _jwks_url(settings: Settings) -> str:
     return f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
 
 
+def _supabase_http_get(url: str, headers: dict[str, str]) -> httpx.Response:
+    # ponytail: IPv4 bind — same Windows AAAA stall as login (~5s).
+    with httpx.Client(
+        timeout=httpx.Timeout(connect=3.0, read=5.0, write=5.0, pool=3.0),
+        transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+    ) as client:
+        return client.get(url, headers=headers)
+
+
 def _fetch_jwks(settings: Settings) -> list[dict[str, Any]]:
     global _jwks_cache
     now = time.time()
@@ -32,10 +41,9 @@ def _fetch_jwks(settings: Settings) -> list[dict[str, Any]]:
             return list(_jwks_cache["keys"])
 
     try:
-        response = httpx.get(
+        response = _supabase_http_get(
             _jwks_url(settings),
-            headers={"apikey": settings.supabase_anon_key},
-            timeout=10.0,
+            {"apikey": settings.supabase_anon_key},
         )
         response.raise_for_status()
         keys = list((response.json() or {}).get("keys") or [])
@@ -134,13 +142,12 @@ def validate_access_token(token: str, settings: Settings) -> dict[str, Any]:
 def _verify_via_supabase_user(token: str, settings: Settings) -> dict[str, Any] | None:
     """Network verification fallback for asymmetric JWTs."""
     try:
-        response = httpx.get(
+        response = _supabase_http_get(
             f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
-            headers={
+            {
                 "apikey": settings.supabase_anon_key,
                 "Authorization": f"Bearer {token}",
             },
-            timeout=10.0,
         )
         if response.status_code >= 400:
             return None

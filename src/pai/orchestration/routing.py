@@ -11,18 +11,21 @@ _EXPLAIN_ONLY = re.compile(
     re.I,
 )
 
-# Broad student/admissions profile signals (PK + international counseling).
+# Broad student/admissions profile signals (any country; PK names kept as extractors).
 _PROFILE_SIGNALS = re.compile(
     r"("
     r"\b("
     r"gpa|cgpa|grade|marks?|percentage|score|"
-    r"ielts|toefl|gre|sat|net|ecat|mdcat|"
+    r"ielts|toefl|gre|sat|act|emsat|net|ecat|mdcat|"
     r"degree|bachelor|master|phd|bscs|bcss|bsc|bs\b|msc|mbbs|fsc|fa\b|ics|"
     r"pre[\s-]?medical|pre[\s-]?engineering|additional\s+maths?|"
+    r"a[\s-]?levels?|igcse|gcse|cbse|\bib\b|international\s+baccalaureate|"
     r"university|college|school|board|graduat|major|program|stream|"
     r"pakistan|islamabad|lahore|karachi|peshawar|rawalpindi|"
+    r"dubai|sharjah|abu\s+dhabi|uae|emirates|"
     r"china|germany|canada|usa|uk|australia|study abroad|visa|passport|"
     r"fast|nust|giki|uet|lums|iba|comsats|bahria|pieas|"
+    r"nyuad|nyu|khalifa|oxford|cambridge|"
     r"budget|euro|usd|\$|scholarship|funded|fully\s+funded|"
     r"internship|experience|project|skill|python|java|"
     r"apply|application|deadline|intake|admission|semester|"

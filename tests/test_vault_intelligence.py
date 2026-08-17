@@ -30,6 +30,16 @@ def test_boosters_catch_marks_stream_countries_and_cgpa():
     assert "education.marks" in hits
 
 
+def test_boosters_extract_global_local_signals():
+    text = "I live in Dubai, finishing A-Levels, targeting NYU Abu Dhabi."
+    cands, _hits = run_deterministic_boosters(text, source_reference="m1")
+    by_key = {c.field_key: c.value for c in cands}
+    assert by_key["location.current_city"] == "Dubai"
+    assert by_key["education.stream"] == "A-Levels"
+    unis = by_key["application.target_universities"]
+    assert any("NYU" in str(u).upper() for u in unis)
+
+
 def test_boosters_funding_uses_budget_enum():
     cands, hits = run_deterministic_boosters("I have a limited budget", source_reference="m1")
     funding = next(c for c in cands if c.field_key == "finance.funding_status")

@@ -22,7 +22,10 @@ class WebSearchTool:
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Focused search query (include country/program when relevant).",
+                "description": (
+                    "Focused search query. Include the student's current country "
+                    "and study destination; do not assume Pakistan."
+                ),
             },
             "topic": {
                 "type": "string",

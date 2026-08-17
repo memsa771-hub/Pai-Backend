@@ -61,6 +61,7 @@ def test_prompt_render_student_conversation():
         task_results="[]",
     )
     assert "PAI" in text or "student" in text.lower()
+    assert "missing_critical_fields" in text
     from pai.intelligence.vault_intel.llm_extractor import _render as render_intel
 
     extract = render_intel(
@@ -74,6 +75,23 @@ def test_prompt_render_student_conversation():
     )
     assert "msg-1" in extract
     assert "3.9" in extract
+    system = render_template("system.v1.jinja2")
+    assert "Do not assume Pakistan" in system
+    assert "missing_critical_fields" in system
+    from pai.vault.catalog import extraction_catalog_hint
+
+    full = render_intel(
+        "omnibus.v1.jinja2",
+        source="chat",
+        source_reference="msg-1",
+        document_type_hint="",
+        known_facts=["Current country: AE"],
+        catalog_hint=extraction_catalog_hint(),
+        text="I live in Dubai",
+    )
+    assert "Do not assume Pakistan" in full
+    assert '["FAST"' not in full
+    assert "BSCS in Pakistan" not in full
 
 
 def test_gateway_uses_registered_mock_provider(test_settings):

@@ -32,9 +32,8 @@ def _svc(settings: Settings) -> OnboardingService:
     responses=_ONBOARDING_ERRORS,
     summary="Get onboarding status",
     description=(
-        "Returns path choices, required/optional/conditional fields, and `enums` "
-        "(closed lists for goal, education, gender, countries, budget, intake, …). "
-        "Onboarding is only a starting seed; chat and documents enrich the Vault. "
+        "Returns path choices. Form path includes required/optional fields and `enums`. "
+        "CV path is upload-only: no extra form after extract. "
         "Signup and login never mark onboarding complete."
     ),
 )
@@ -55,8 +54,8 @@ async def get_onboarding(
         "Accepts a small starting profile in one request (the UI may still show steps). "
         "Only critical identity fields are required. Optional extras are stored if sent. "
         "Deeper Vault facts come from chat extraction and documents. "
-        "Sets `onboardingCompleted` only on success. Idempotent. After a CV upload, "
-        "POST the same payload with any missing critical fields to confirm."
+        "Sets `onboardingCompleted` only on success. Idempotent. "
+        "CV users should POST /onboarding/cv instead — they do not need this form."
     ),
 )
 async def submit_onboarding(
@@ -74,10 +73,9 @@ async def submit_onboarding(
     responses=_ONBOARDING_ERRORS,
     summary="Upload CV/PDF for profile extraction",
     description=(
-        "Extracts profile facts from a CV/PDF into the Vault. Does **not** mark "
-        "onboarding complete. Confirm missing *critical* fields with POST /onboarding. "
-        "Skills, work history, and other details can stay in the Vault from extraction "
-        "and later chat — they are not required to finish onboarding."
+        "Extracts the CV into the Person Vault and **marks onboarding complete**. "
+        "No follow-up form. Chat unlocks immediately. "
+        "Upload a text-based PDF or DOCX (not a scanned image)."
     ),
 )
 async def upload_onboarding_cv(
@@ -102,4 +100,4 @@ async def upload_onboarding_cv(
         )
     finally:
         await storage.aclose()
-    return JSONResponse(status_code=202, content=success(result))
+    return JSONResponse(content=success(result))

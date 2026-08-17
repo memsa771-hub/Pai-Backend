@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from pai.ingestion.vault_apply import process_candidates
 from pai.orchestration.schemas import VaultCandidate
-from pai.person.models import Education, Person, VaultValue
+from pai.person.models import Education, Person, Skill, VaultValue, WorkExperience
 
 
 @pytest.mark.asyncio
@@ -116,3 +116,72 @@ async def test_passport_pending_sensitive(postgres_ready):
         row = result.scalar_one()
         assert row.value_encrypted is not None
         assert row.value is None
+
+
+@pytest.mark.asyncio
+async def test_cv_skills_and_work_fill_typed_vault(postgres_ready):
+    from pai.core.provider import ProviderUser
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.person.service import PersonBootstrapService
+
+    reset_engine_for_tests()
+    factory = get_session_factory(postgres_ready)
+    user = ProviderUser(
+        id=f"cv-{uuid.uuid4()}",
+        email="cvfill@example.com",
+        email_verified=True,
+        display_name=None,
+        roles=["user"],
+        created_at="2026-01-01T00:00:00Z",
+    )
+    async with factory() as session:
+        boot = await PersonBootstrapService(postgres_ready).bootstrap(session, user)
+        person = await session.get(Person, uuid.UUID(boot["person"]["id"]))
+        assert person is not None
+        await session.refresh(person, attribute_names=["vault"])
+        candidates = [
+            VaultCandidate(
+                field_key="career.skills",
+                value=["Python", {"name": "SQL", "proficiency": "intermediate"}],
+                confidence=0.93,
+                evidence_text="Skills: Python, SQL",
+                source_reference="cv-1",
+                source_type="document",
+            ),
+            VaultCandidate(
+                field_key="career.work_history",
+                value={"organization": "Acme Labs", "title": "Research Intern"},
+                confidence=0.91,
+                evidence_text="Research Intern, Acme Labs",
+                source_reference="cv-1",
+                source_type="document",
+            ),
+            VaultCandidate(
+                field_key="education.program",
+                value={"institution": "NYU Abu Dhabi", "degree": "A-Levels", "major": "Science"},
+                confidence=0.9,
+                evidence_text="A-Levels, NYU Abu Dhabi",
+                source_reference="cv-1",
+                source_type="document",
+            ),
+        ]
+        outcomes, _pending = await process_candidates(
+            session, person, candidates, from_document=True
+        )
+        await session.commit()
+        assert all(o.status in ("accepted", "updated") for o in outcomes)
+        skills = (
+            await session.execute(select(Skill).where(Skill.person_id == person.id))
+        ).scalars().all()
+        names = {row.name for row in skills}
+        assert "Python" in names
+        assert "SQL" in names
+        work = (
+            await session.execute(
+                select(WorkExperience).where(WorkExperience.person_id == person.id)
+            )
+        ).scalars().all()
+        assert any(
+            row.organization == "Acme Labs" and row.title == "Research Intern"
+            for row in work
+        )

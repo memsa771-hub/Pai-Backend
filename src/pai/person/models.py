@@ -40,8 +40,8 @@ class Person(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Null for every new user. Set only after a successful onboarding submit
-    # (form or CV extract + confirmed critical fields). Login/signup never set this.
+    # Null for every new user. Set after a successful form submit or CV extract.
+    # Login/signup never set this.
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarding_path: Mapped[str | None] = mapped_column(String(32))
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

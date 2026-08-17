@@ -99,6 +99,7 @@ class StudentConversationAgent:
         conversation_id: str = "",
         tool_registry: ToolRegistry | None = None,
         enable_tools: bool | None = None,
+        web_search_available: bool = False,
         # Backward-compatible unused kwargs from older callers/tests
         recent_messages_json: str = "[]",
         known_facts_json: str = "{}",
@@ -123,6 +124,7 @@ class StudentConversationAgent:
             "pending_confirmations": pending_confirmations_json,
             "applied_vault_changes": applied_vault_changes_json,
             "task_results": task_results_json,
+            "web_search_available": web_search_available,
         }
 
         use_tools = (

@@ -12,6 +12,7 @@ from pai.config import Settings, get_settings
 from pai.conversations import service as conv_svc
 from pai.dependencies import get_db, require_onboarding_complete
 from pai.ingestion.chat import handle_user_message
+from pai.orchestration.context import build_student_context_pack, chat_stay_payload
 from pai.schemas import ApiErrorResponse, success
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
@@ -124,10 +125,12 @@ _AUTH_ERRORS = {
     description=(
         "Primary PAI turn. Requires `Authorization: Bearer <accessToken>`.\n\n"
         "**Product model:** PAI is **one persistent counselor per Person**. "
-        "A conversation is only a topic thread. New chat = new topic, not amnesia.\n\n"
+        "A conversation is only a topic thread. New chat = new topic, not amnesia. "
+        "An empty thread is opened with a Vault-grounded greeting so PAI speaks first.\n\n"
         "Every turn reconstructs counselor knowledge from:\n"
         "- Person Vault + typed profile (education, goals, skills)\n"
         "- Long-term semantic memory (preferences, constraints, insights)\n"
+        "- Live web search (Tavily) when the counselor needs current external facts\n"
         "- Tasks, documents, current-thread messages, and recent other-thread snippets\n\n"
         "**Thread routing:**\n"
         "- Send `conversationId` to continue the same topic.\n"
@@ -150,14 +153,49 @@ async def chat(
         conversation_id=body.conversation_id,
         new_conversation=body.new_conversation,
         title=body.title,
+        settings=settings,
     )
     conversation_id = conv.id
+    await conv_svc.ensure_thread_opening(session, person, conversation_id, settings=settings)
 
     user_msg = await conv_svc.save_user_message(session, person, conversation_id, body.message)
     gateway = getattr(request.app.state, "llm_gateway", None)
     data = await handle_user_message(
         session, settings, person, conversation_id, user_msg, gateway=gateway
     )
+    return JSONResponse(content=success(data))
+
+
+@chat_router.get(
+    "/chat/home",
+    summary="Open the counselor with what PAI already knows",
+    description=(
+        "Call after onboarding. Returns known facts, one gap question, and tap-to-send "
+        "starters so the student has a next message instead of a blank chat."
+    ),
+    responses=_AUTH_ERRORS,
+)
+async def chat_home(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    person=Depends(require_onboarding_complete),
+) -> JSONResponse:
+    latest = await conv_svc.get_latest_active_conversation(session, person.id)
+    if latest is None:
+        latest = await conv_svc.create_conversation(session, person, settings=settings)
+    else:
+        await conv_svc.ensure_thread_opening(
+            session, person, latest.id, settings=settings
+        )
+    pack = await build_student_context_pack(
+        session,
+        person,
+        conversation_id=latest.id,
+        settings=settings,
+    )
+    data = chat_stay_payload(pack)
+    data["conversationId"] = str(latest.id)
+    data["identity"] = pack.identity
     return JSONResponse(content=success(data))
 
 
@@ -170,9 +208,12 @@ async def chat(
 async def create_conversation(
     body: ConversationCreate,
     session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    conv = await conv_svc.create_conversation(session, person, title=body.title)
+    conv = await conv_svc.create_conversation(
+        session, person, title=body.title, settings=settings
+    )
     return JSONResponse(
         status_code=201,
         content=success({"id": str(conv.id), "title": conv.title, "status": conv.status}),
@@ -219,12 +260,13 @@ async def list_conversations(
 )
 async def list_conversation_threads(
     session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
     items = await conv_svc.list_conversation_threads(
-        session, person.id, limit=limit, offset=offset
+        session, person.id, limit=limit, offset=offset, settings=settings
     )
     return JSONResponse(content=success({"items": items}))
 
@@ -261,9 +303,12 @@ async def get_conversation(
 async def get_conversation_flow(
     conversation_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    data = await conv_svc.get_conversation_flow(session, person.id, conversation_id)
+    data = await conv_svc.get_conversation_flow(
+        session, person.id, conversation_id, settings=settings
+    )
     return JSONResponse(content=success(data))
 
 
@@ -289,9 +334,12 @@ async def delete_conversation(
 async def get_messages(
     conversation_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    rows = await conv_svc.list_messages(session, person.id, conversation_id)
+    rows = await conv_svc.list_messages(
+        session, person.id, conversation_id, settings=settings
+    )
     return JSONResponse(
         content=success(
             {
@@ -326,6 +374,7 @@ async def post_message(
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
+    await conv_svc.ensure_thread_opening(session, person, conversation_id, settings=settings)
     user_msg = await conv_svc.save_user_message(session, person, conversation_id, body.content)
     gateway = getattr(request.app.state, "llm_gateway", None)
     data = await handle_user_message(

@@ -177,7 +177,7 @@ async def run_counselor_with_tools(
         {
             "messages": seed_messages,
             "round": 0,
-            "max_rounds": min(settings.counselor_max_tool_rounds, 2),
+            "max_rounds": max(1, int(settings.counselor_max_tool_rounds)),
             "final": None,
             "tool_trace": [],
             "pending_tool_calls": [],

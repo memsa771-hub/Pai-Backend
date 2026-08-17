@@ -59,6 +59,7 @@ def test_prompt_render_student_conversation():
         active_tasks="[]",
         applied_vault_changes="[]",
         task_results="[]",
+        web_search_available=False,
     )
     assert "PAI" in text or "student" in text.lower()
     assert "missing_critical_fields" in text
@@ -241,7 +242,9 @@ def test_chat_message_with_mock_counselor(onboarded_user, test_settings, monkeyp
     body = resp.json()["data"]
     assert body["reply"]
     assert body.get("conversationId") == conv_id
-    assert "nextQuestion" not in body
+    assert body.get("nextQuestion") == "What field are you targeting?"
+    assert "starters" in body
+    assert "knownFacts" in body
     assert "vaultCompletion" not in body
     field = client.get(
         "/api/v1/vault/fields/preferences.preferred_language",
@@ -287,6 +290,25 @@ def test_conversation_create_and_ownership(onboarded_user, test_settings):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert forbidden.status_code in (403, 404)
+
+
+def test_new_conversation_opens_with_vault_greeting(onboarded_user):
+    client, headers, _ = onboarded_user
+    created = client.post("/api/v1/conversations", headers=headers, json={})
+    assert created.status_code == 201
+    conv_id = created.json()["data"]["id"]
+    msgs = client.get(f"/api/v1/conversations/{conv_id}/messages", headers=headers)
+    assert msgs.status_code == 200
+    items = msgs.json()["data"]["items"]
+    assert items
+    assert items[0]["role"] == "assistant"
+    assert "PAI" in items[0]["content"]
+    joined = items[0]["content"]
+    assert any(token in joined for token in ("BSCS", "Germany", "Lahore", "DE"))
+    home = client.get("/api/v1/chat/home", headers=headers)
+    assert home.status_code == 200
+    assert home.json()["data"]["conversationId"] == conv_id
+    assert home.json()["data"]["knownFacts"]
 
 
 def test_document_upload_validation_rejects_executable(onboarded_user):

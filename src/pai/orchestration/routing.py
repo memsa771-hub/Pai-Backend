@@ -11,48 +11,19 @@ _EXPLAIN_ONLY = re.compile(
     re.I,
 )
 
-# Broad student/admissions profile signals (any country; PK names kept as extractors).
-_PROFILE_SIGNALS = re.compile(
-    r"("
-    r"\b("
-    r"gpa|cgpa|grade|marks?|percentage|score|"
-    r"ielts|toefl|gre|sat|act|emsat|net|ecat|mdcat|"
-    r"degree|bachelor|master|phd|bscs|bcss|bsc|bs\b|msc|mbbs|fsc|fa\b|ics|"
-    r"pre[\s-]?medical|pre[\s-]?engineering|additional\s+maths?|"
-    r"a[\s-]?levels?|igcse|gcse|cbse|\bib\b|international\s+baccalaureate|"
-    r"university|college|school|board|graduat|major|program|stream|"
-    r"pakistan|islamabad|lahore|karachi|peshawar|rawalpindi|"
-    r"dubai|sharjah|abu\s+dhabi|uae|emirates|"
-    r"china|germany|canada|usa|uk|australia|study abroad|visa|passport|"
-    r"fast|nust|giki|uet|lums|iba|comsats|bahria|pieas|"
-    r"nyuad|nyu|khalifa|oxford|cambridge|"
-    r"budget|euro|usd|\$|scholarship|funded|fully\s+funded|"
-    r"internship|experience|project|skill|python|java|"
-    r"apply|application|deadline|intake|admission|semester|"
-    r"want to|i want|i completed|i finished|i got|i scored|"
-    r"actually|correct|instead|not taken|completed|finished|"
-    r"already told|i told you"
-    r")\b"
-    r"|"
-    r"\d{2,4}\s*/\s*\d{2,4}"  # e.g. 877/1100
-    r")",
-    re.I,
-)
-
 
 def should_extract_facts(message: str) -> bool:
+    """Run Vault Intelligence unless this turn cannot contain new personal facts.
+
+    Country/university/test keyword lists are not used — the extraction agent
+    returns [] when there is nothing to write. Greetings and pure clarify
+    turns skip the extra LLM call.
+    """
     text = (message or "").strip()
     if len(text) < 2:
         return False
     if _GREETING.match(text):
         return False
-    if _EXPLAIN_ONLY.match(text) and not _PROFILE_SIGNALS.search(text):
+    if _EXPLAIN_ONLY.match(text):
         return False
-    if _PROFILE_SIGNALS.search(text):
-        return True
-    # Short mark/score statements: "PRE MEDICAL 877/1100" or "3.4"
-    if re.search(r"\d+(\.\d+)?", text) and len(text.split()) >= 2:
-        return True
-    if len(text.split()) >= 8:
-        return True
-    return False
+    return True

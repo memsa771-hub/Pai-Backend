@@ -48,7 +48,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "chat",
         "description": (
             "Primary PAI counselor entrypoint. "
-            "`POST /api/v1/chat` creates or continues a conversation in one call."
+            "`POST /api/v1/chat` creates or continues a conversation in one call. "
+            "Empty threads open with a Vault-grounded greeting; live facts use Tavily."
         ),
     },
     {

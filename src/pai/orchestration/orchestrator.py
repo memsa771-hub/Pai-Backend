@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import uuid
 from datetime import UTC, datetime
 
@@ -38,11 +37,10 @@ logger = logging.getLogger(__name__)
 
 MAX_LLM_CALLS_PER_TURN = 2
 
-_WEB_SEARCH_HINT = re.compile(
-    r"\b(deadline|scholarship|university|admission|visa|ielts|toefl|gre|ranking|"
-    r"tuition|application fee|current|latest|202[4-9]|2030)\b",
-    re.IGNORECASE,
-)
+
+def counselor_web_search_enabled(settings: Settings) -> bool:
+    """Offer Tavily when configured. The counselor model chooses when to call it."""
+    return bool(settings.enable_counselor_tools and (settings.tavily_api_key or "").strip())
 
 
 class PAIOrchestrator:
@@ -325,11 +323,7 @@ class PAIOrchestrator:
         known_facts_lines: list[str] = []
         if pack is not None and getattr(pack, "known_facts", None):
             known_facts_lines = list(pack.known_facts)
-        allow_web = bool(
-            self._settings.enable_counselor_tools
-            and self._settings.tavily_api_key
-            and _WEB_SEARCH_HINT.search(state["user_message"] or "")
-        )
+        allow_web = counselor_web_search_enabled(self._settings)
         registry = build_turn_registry(
             enable_web_search=allow_web,
             enable_semantic_recall=False,  # already prefetched into semantic_ctx
@@ -352,6 +346,7 @@ class PAIOrchestrator:
             conversation_id=state["conversation_id"],
             tool_registry=registry,
             enable_tools=allow_web,
+            web_search_available=allow_web,
         )
         state["assistant_result"] = result
         state["assistant_reply"] = result.reply

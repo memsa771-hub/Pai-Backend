@@ -15,6 +15,7 @@ REQUIRED_VARS: dict[str, set[str]] = {
         "pending_confirmations",
         "applied_vault_changes",
         "task_results",
+        "web_search_available",
     },
     "system.v1.jinja2": set(),
 }

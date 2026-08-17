@@ -263,3 +263,122 @@ async def build_student_context_pack(
 
 def context_pack_to_json(pack: PersonContextPack | StudentContextPack) -> str:
     return json.dumps(pack.model_dump(), default=str)
+
+
+def _pack_get(pack: Any, key: str, default: Any = None) -> Any:
+    if pack is None:
+        return default
+    if isinstance(pack, dict):
+        return pack.get(key, default)
+    return getattr(pack, key, default)
+
+
+_MISSING_QUESTION = {
+    "location.current_city": "Which city are you in now?",
+    "location.current_country": "Which country do you live in now?",
+    "education.highest_level": "What is your current education level?",
+    "application.study_country": "Which country do you want to study in?",
+    "identity.current_status": "Are you a student, graduate, or working professional?",
+}
+
+
+def one_gap_question(missing: list[str]) -> str | None:
+    for key in missing:
+        if key in _MISSING_QUESTION:
+            return _MISSING_QUESTION[key]
+    return None
+
+
+def build_chat_starters(pack: Any) -> list[dict[str, str]]:
+    """Tap-to-send prompts so the student has a next chat, not a blank box."""
+    facts = [str(item) for item in (_pack_get(pack, "known_facts", []) or [])]
+    dest = None
+    for fact in facts:
+        if fact.lower().startswith("target study country"):
+            dest = fact.split(":", 1)[-1].strip() or None
+            break
+    starters: list[dict[str, str]] = []
+    if dest:
+        starters.append(
+            {
+                "label": f"Tests for {dest}",
+                "message": f"What language or admissions test score should I target for {dest}?",
+            }
+        )
+        starters.append(
+            {
+                "label": "Universities that fit me",
+                "message": f"Which universities in {dest} fit my education, GPA, and budget?",
+            }
+        )
+    else:
+        starters.append(
+            {
+                "label": "Where should I study?",
+                "message": "Based on my profile, which countries and programs should I consider?",
+            }
+        )
+    starters.append(
+        {
+            "label": "Plan this week",
+            "message": "What should I do this week to move my goal forward?",
+        }
+    )
+    typed = _pack_get(pack, "typed_profile_summary", {}) or {}
+    if typed.get("skills"):
+        starters.append(
+            {
+                "label": "Jobs and internships",
+                "message": "What internships or jobs fit my skills right now?",
+            }
+        )
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for item in starters:
+        if item["message"] in seen:
+            continue
+        seen.add(item["message"])
+        out.append(item)
+        if len(out) == 3:
+            break
+    return out
+
+
+def chat_stay_payload(
+    pack: Any,
+    *,
+    next_question: str | None = None,
+    suggested_next_step: str | None = None,
+) -> dict[str, Any]:
+    facts = [str(item) for item in (_pack_get(pack, "known_facts", []) or [])][:16]
+    missing = [str(item) for item in (_pack_get(pack, "missing_critical_fields", []) or [])][:8]
+    tasks = list(_pack_get(pack, "active_tasks", []) or [])[:5]
+    question = next_question or one_gap_question(missing)
+    return {
+        "knownFacts": facts,
+        "missingCriticalFields": missing,
+        "nextQuestion": question,
+        "suggestedNextStep": suggested_next_step,
+        "starters": build_chat_starters(pack),
+        "activeTasks": tasks,
+    }
+
+
+def compose_opening(pack: Any) -> str:
+    """Vault-grounded first message. Interpolates known facts; no country lists."""
+    identity = _pack_get(pack, "identity", {}) or {}
+    name = identity.get("preferredName") or identity.get("fullName")
+    facts = [str(item) for item in (_pack_get(pack, "known_facts", []) or [])]
+    profile = [item for item in facts if not item.lower().startswith("student name:")][:8]
+    greeting = f"Hi {name} — I'm PAI." if name else "Hi — I'm PAI, your counselor."
+    if not profile:
+        return (
+            f"{greeting} Tell me what you're working toward and I'll start from there. "
+            "You don't need to repeat anything once it's in your profile."
+        )
+    bullets = "\n".join(f"• {item}" for item in profile)
+    return (
+        f"{greeting} I already have this from your profile:\n{bullets}\n\n"
+        "Ask me about tests, universities, deadlines, scholarships, or what to do this week. "
+        "I'll keep building on this — you don't need to repeat it."
+    )

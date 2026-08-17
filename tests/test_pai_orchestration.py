@@ -10,7 +10,7 @@ import pytest
 from pai.llm.gateway import LLMGateway
 from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
 from pai.orchestration.agents import FactExtractionAgent, StudentConversationAgent
-from pai.orchestration.orchestrator import PAIOrchestrator
+from pai.orchestration.orchestrator import PAIOrchestrator, counselor_web_search_enabled
 from pai.orchestration.routing import should_extract_facts
 from pai.orchestration.schemas import (
     ConversationResult,
@@ -56,6 +56,19 @@ def test_greetings_skip_extraction():
     assert should_extract_facts("Please continue") is False
 
 
+def test_web_search_follows_tavily_config_not_keywords(test_settings):
+    off = test_settings.model_copy(update={"tavily_api_key": "", "enable_counselor_tools": True})
+    assert counselor_web_search_enabled(off) is False
+    on = test_settings.model_copy(
+        update={"tavily_api_key": "tvly-test", "enable_counselor_tools": True}
+    )
+    assert counselor_web_search_enabled(on) is True
+    killed = test_settings.model_copy(
+        update={"tavily_api_key": "tvly-test", "enable_counselor_tools": False}
+    )
+    assert counselor_web_search_enabled(killed) is False
+
+
 def test_substantive_messages_trigger_extraction():
     assert should_extract_facts("I completed BSCS with a 3.4 GPA.") is True
     assert should_extract_facts("I want to study AI in Germany.") is True
@@ -63,6 +76,9 @@ def test_substantive_messages_trigger_extraction():
     assert should_extract_facts("PRE MEDICAL 877/1100") is True
     assert should_extract_facts("I want FAST or NUST in Islamabad") is True
     assert should_extract_facts("I live in Dubai and want NYU Abu Dhabi") is True
+    assert should_extract_facts("I live in Berlin") is True
+    assert should_extract_facts("I moved last month") is True
+    assert should_extract_facts("Hello") is False
 
 
 def test_agents_do_not_call_each_other():

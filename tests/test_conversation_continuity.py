@@ -42,6 +42,56 @@ def test_known_facts_lists_education_and_country():
     assert "Python" in joined
 
 
+def test_opening_uses_vault_facts_not_country_lists():
+    from pai.orchestration.context import compose_opening
+
+    text = compose_opening(
+        {
+            "identity": {"preferredName": "Sara", "fullName": "Sara Khan"},
+            "known_facts": [
+                "Student name: Sara",
+                "Education: BSCS / Bahria, GPA/CGPA 3.4/4.0",
+                "Target study country/countries: DE",
+                "Career/study goal: MS Computer Science in Germany",
+            ],
+        }
+    )
+    assert "Sara" in text
+    assert "PAI" in text
+    assert "BSCS" in text
+    assert "DE" in text
+    assert "FAST" not in text
+    assert "NUST" not in text
+
+
+def test_opening_without_profile_still_introduces_pai():
+    from pai.orchestration.context import compose_opening
+
+    text = compose_opening({"identity": {}, "known_facts": []})
+    assert "PAI" in text
+    assert "working toward" in text
+
+
+def test_chat_starters_use_study_country():
+    from pai.orchestration.context import build_chat_starters, chat_stay_payload
+
+    pack = {
+        "known_facts": [
+            "Student name: Khan",
+            "Target study country/countries: DE",
+            "Education: BSCS / Bahria",
+        ],
+        "missing_critical_fields": ["location.current_city"],
+        "typed_profile_summary": {"skills": [{"name": "Python"}]},
+        "active_tasks": [],
+    }
+    starters = build_chat_starters(pack)
+    assert any("DE" in item["message"] for item in starters)
+    stay = chat_stay_payload(pack)
+    assert stay["nextQuestion"] == "Which city are you in now?"
+    assert len(stay["starters"]) == 3
+
+
 @pytest.mark.asyncio
 async def test_resolve_chat_continues_latest(postgres_ready):
     from pai.core.provider import ProviderUser

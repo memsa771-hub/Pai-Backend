@@ -30,3 +30,17 @@ def test_messages_to_flow_handles_orphan_user():
     assert len(flow) == 1
     assert flow[0]["user"] == "Hello"
     assert flow[0]["assistant"] is None
+
+
+def test_messages_to_flow_handles_opening_first():
+    flow = messages_to_flow(
+        [
+            _msg("assistant", "Hi — I'm PAI."),
+            _msg("user", "What IELTS should I target?"),
+            _msg("assistant", "6.5 overall is a common bar."),
+        ]
+    )
+    assert flow[0]["user"] is None
+    assert flow[0]["assistant"] == "Hi — I'm PAI."
+    assert flow[1]["user"] == "What IELTS should I target?"
+    assert flow[1]["assistant"] == "6.5 overall is a common bar."

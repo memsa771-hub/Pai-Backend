@@ -9,6 +9,7 @@ from pai.core.errors import AuthError
 from pai.conversations.models import Message
 from pai.conversations.service import save_assistant_message, start_orchestration_run
 from pai.llm.gateway import LLMGateway
+from pai.orchestration.context import chat_stay_payload
 from pai.orchestration.orchestrator import PAIOrchestrator
 from pai.person.models import Person
 
@@ -80,8 +81,21 @@ async def handle_user_message(
         not in ("rejected", "duplicate")
     ]
     tool_trace = list(graph_state.get("tool_trace") or [])
-    # Lean public chat payload: conversation + learning deltas only.
-    # Clients must reuse conversationId on every follow-up message.
+    result = graph_state.get("assistant_result")
+    next_question = None
+    suggested = None
+    if result is not None:
+        if isinstance(result, dict):
+            next_question = result.get("next_question")
+            suggested = result.get("suggested_next_step")
+        else:
+            next_question = getattr(result, "next_question", None)
+            suggested = getattr(result, "suggested_next_step", None)
+    stay = chat_stay_payload(
+        graph_state.get("student_context"),
+        next_question=next_question,
+        suggested_next_step=suggested,
+    )
     return {
         "conversationId": str(conversation_id),
         "messageId": str(assistant.id),
@@ -90,4 +104,5 @@ async def handle_user_message(
         "pendingConfirmations": pending,
         "taskResults": task_results,
         "toolTrace": tool_trace,
+        **stay,
     }

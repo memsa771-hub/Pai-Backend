@@ -365,7 +365,7 @@ def _fields() -> tuple[CatalogField, ...]:
         CatalogField(
             key="education.stream",
             section="education",
-            priority="C",
+            priority="I",
             sensitive=False,
             derived=False,
             storage="vault_value",
@@ -377,7 +377,7 @@ def _fields() -> tuple[CatalogField, ...]:
         CatalogField(
             key="education.marks",
             section="education",
-            priority="C",
+            priority="I",
             sensitive=False,
             derived=False,
             storage="vault_value",

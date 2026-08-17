@@ -230,15 +230,18 @@ async def build_vault_status(
     from pai.vault.service import VaultService, grow_vault_schema
 
     if grow_vault_schema(vault):
-        await apply_completion_to_vault(session, person, vault)
+        # Persist catalog/scopes only — a GET must not bump optimistic-lock version.
         await session.commit()
 
+    typed = await load_typed_profile_records(session, person.id)
     unified = await VaultService().get_unified_vault(
-        session, person, include_sensitive=include_sensitive
+        session,
+        person,
+        include_sensitive=include_sensitive,
+        typed_records=typed,
     )
     sparse = unified.get("sparseFields") or {}
     completion = unified.get("completion") or {}
-    typed = await load_typed_profile_records(session, person.id)
     typed_present = {
         "educations": bool(typed.get("educations")),
         "work_experiences": bool(typed.get("workExperiences")),
@@ -293,7 +296,7 @@ async def build_vault_status(
             "id": str(person.id),
             "fullName": person.full_name,
             "email": person.email,
-            "phone": person.phone,
+            "phone": person.phone if include_sensitive else ("***" if person.phone else None),
             "onboardingCompleted": person.onboarding_completed_at is not None,
             "onboardingPath": person.onboarding_path,
         },

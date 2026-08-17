@@ -10,8 +10,8 @@ import pytest
 from pai.llm.gateway import LLMGateway
 from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
 from pai.orchestration.agents import FactExtractionAgent, StudentConversationAgent
-from pai.orchestration.orchestrator import PAIOrchestrator, counselor_web_search_enabled
-from pai.orchestration.routing import should_extract_facts
+from pai.orchestration.orchestrator import PAIOrchestrator
+from pai.orchestration.routing import counselor_web_search_enabled, should_extract_facts
 from pai.orchestration.schemas import (
     ConversationResult,
     FactExtractionResult,
@@ -56,17 +56,21 @@ def test_greetings_skip_extraction():
     assert should_extract_facts("Please continue") is False
 
 
-def test_web_search_follows_tavily_config_not_keywords(test_settings):
+def test_web_search_only_for_live_questions(test_settings):
     off = test_settings.model_copy(update={"tavily_api_key": "", "enable_counselor_tools": True})
     assert counselor_web_search_enabled(off) is False
     on = test_settings.model_copy(
         update={"tavily_api_key": "tvly-test", "enable_counselor_tools": True}
     )
     assert counselor_web_search_enabled(on) is True
+    assert counselor_web_search_enabled(on, "Hello") is False
+    assert counselor_web_search_enabled(on, "I live in Berlin") is False
+    assert counselor_web_search_enabled(on, "What IELTS score do I need?") is True
+    assert counselor_web_search_enabled(on, "What should I do next?") is False
     killed = test_settings.model_copy(
         update={"tavily_api_key": "tvly-test", "enable_counselor_tools": False}
     )
-    assert counselor_web_search_enabled(killed) is False
+    assert counselor_web_search_enabled(killed, "What IELTS score do I need?") is False
 
 
 def test_substantive_messages_trigger_extraction():
@@ -78,7 +82,11 @@ def test_substantive_messages_trigger_extraction():
     assert should_extract_facts("I live in Dubai and want NYU Abu Dhabi") is True
     assert should_extract_facts("I live in Berlin") is True
     assert should_extract_facts("I moved last month") is True
+    assert should_extract_facts("What should I do next?") is False
+    assert should_extract_facts("What IELTS score do I need?") is False
     assert should_extract_facts("Hello") is False
+    assert should_extract_facts("help me") is False
+    assert should_extract_facts("ok go") is False
 
 
 def test_agents_do_not_call_each_other():
@@ -214,6 +222,15 @@ def test_mock_provider_replace_deepseek(test_settings):
     assert isinstance(out, ConversationResult)
 
 
+def test_tool_loop_reuses_plain_reply_without_second_llm():
+    from pai.orchestration.counselor_graph import _result_from_text
+
+    out = _result_from_text("Here's a simple next step for your applications.")
+    assert out is not None
+    assert out.reply.startswith("Here's a simple")
+    assert out.task_proposals == []
+
+
 def test_llm_call_budget_constants():
     from pai.orchestration.orchestrator import MAX_LLM_CALLS_PER_TURN
 
@@ -316,5 +333,6 @@ def test_substantive_turn_calls_extraction_then_conversation(test_settings):
             task_results_json="[]",
         )
     )
-    assert mock.calls == ["FactExtractionResult", "ConversationResult"]
+    # Short GPA line is booster-only — skip the extract LLM.
+    assert mock.calls == ["ConversationResult"]
 

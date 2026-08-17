@@ -22,8 +22,8 @@ from pai.person.models import (
     VaultHistory,
     VaultValue,
 )
-from pai.vault.catalog import CATALOG_VERSION, GUIDANCE_SCOPES, get_catalog_field
-from pai.vault.completion import apply_completion_to_vault, compute_completion
+from pai.vault.catalog import CATALOG_VERSION, GUIDANCE_SCOPES, CatalogField, get_catalog_field
+from pai.vault.completion import apply_completion_to_vault
 from pai.vault.security import SensitiveValueCodec, mask_value
 
 
@@ -38,20 +38,47 @@ class VaultService:
         person: Person,
         *,
         include_sensitive: bool = False,
+        typed_records: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         vault = person.vault
         if vault is None:
             return {"fields": {}, "typed": {}, "completion": {}}
-        from pai.vault.completion import load_presence_snapshot
+        from pai.vault.completion import compute_completion, compute_completion_from_snapshot
 
         consents = await self._consent_map(session, person.id)
         sparse = await self._load_sparse_fields(session, vault, consents, include_sensitive)
-        # One presence snapshot feeds typed counts + completion (no duplicate N+1).
-        snapshot = await load_presence_snapshot(session, person, vault)
-        typed = snapshot.get("typed_resources") or await self._load_typed_summary(
-            session, person.id
-        )
-        completion = await compute_completion(session, person, vault, snapshot=snapshot)
+        if typed_records is not None:
+            typed_present = {
+                "educations": bool(typed_records.get("educations")),
+                "work_experiences": bool(typed_records.get("workExperiences")),
+                "projects": bool(typed_records.get("projects")),
+                "skills": bool(typed_records.get("skills")),
+                "certifications": bool(typed_records.get("certifications")),
+                "goals": bool(typed_records.get("goals")),
+            }
+            snapshot = {
+                "active_keys": set(sparse.keys()),
+                "typed_present": typed_present,
+            }
+            completion = compute_completion_from_snapshot(person, vault, snapshot)
+            completion.pop("_present_map", None)
+            typed = typed_records.get("counts") or {
+                "educations": str(len(typed_records.get("educations") or [])),
+                "workExperiences": str(len(typed_records.get("workExperiences") or [])),
+                "projects": str(len(typed_records.get("projects") or [])),
+                "skills": str(len(typed_records.get("skills") or [])),
+                "certifications": str(len(typed_records.get("certifications") or [])),
+                "goals": str(len(typed_records.get("goals") or [])),
+            }
+        else:
+            from pai.vault.completion import load_presence_snapshot
+
+            snapshot = await load_presence_snapshot(session, person, vault)
+            snapshot["active_keys"] = set(sparse.keys()) or snapshot.get("active_keys") or set()
+            typed = snapshot.get("typed_resources") or await self._load_typed_summary(
+                session, person.id
+            )
+            completion = await compute_completion(session, person, vault, snapshot=snapshot)
         return {
             "vaultId": str(vault.id),
             "catalogVersion": vault.catalog_version,
@@ -127,8 +154,8 @@ class VaultService:
                     vault_id=vault.id,
                     field_key=field_key,
                     action="updated" if old_val is not None else "created",
-                    old_value=old_val,
-                    new_value=value,
+                    old_value=_history_value(field, old_val),
+                    new_value=_history_value(field, value),
                     actor_type="person",
                     actor_id=str(person.id),
                 )
@@ -173,7 +200,7 @@ class VaultService:
                     vault_id=vault.id,
                     field_key=field_key,
                     action="deleted",
-                    old_value=existing.value,
+                    old_value=_history_value(field, existing.value),
                     new_value=None,
                     actor_type="person",
                     actor_id=str(person.id),
@@ -194,6 +221,13 @@ class VaultService:
             raise UnknownFieldError()
         if field.storage == "person" and field.person_column:
             raw = getattr(person, field.person_column)
+            hide = (field.sensitive or field_key == "identity.phone") and not include_sensitive
+            if hide:
+                return {
+                    "key": field_key,
+                    "value": "***" if raw else None,
+                    "masked": bool(raw),
+                }
             return {"key": field_key, "value": raw, "masked": False}
         vault = person.vault
         if vault is None:
@@ -418,8 +452,8 @@ class VaultService:
                     vault_id=vault.id,
                     field_key=row.field_key,
                     action="updated" if old_val is not None else "created",
-                    old_value=old_val,
-                    new_value=value,
+                    old_value=_history_value(field, old_val),
+                    new_value=_history_value(field, value),
                     actor_type=actor_type,
                     actor_id=str(person.id),
                 )
@@ -497,6 +531,12 @@ def grow_vault_schema(vault: PersonVault) -> bool:
         vault.applicable_scopes = scopes + extra
         dirty = True
     return dirty
+
+
+def _history_value(field: CatalogField, value: Any) -> Any:
+    if field.sensitive:
+        return "***" if value not in (None, "") else None
+    return value
 
 
 async def expand_scope_for_person(

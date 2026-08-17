@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -22,7 +23,7 @@ from pai.orchestration.context import (
     context_pack_to_json,
 )
 from pai.orchestration.graph import build_pai_graph
-from pai.orchestration.routing import should_extract_facts
+from pai.orchestration.routing import counselor_web_search_enabled, should_extract_facts
 from pai.orchestration.schemas import (
     PendingConfirmation,
     RunError,
@@ -36,11 +37,6 @@ from pai.tools.registry import build_turn_registry
 logger = logging.getLogger(__name__)
 
 MAX_LLM_CALLS_PER_TURN = 2
-
-
-def counselor_web_search_enabled(settings: Settings) -> bool:
-    """Offer Tavily when configured. The counselor model chooses when to call it."""
-    return bool(settings.enable_counselor_tools and (settings.tavily_api_key or "").strip())
 
 
 class PAIOrchestrator:
@@ -90,20 +86,6 @@ class PAIOrchestrator:
             person.id,
             session_factory=get_session_factory(self._settings),
         )
-        # Person-level long-term memory (survives new conversation threads).
-        # Reconstruct counselor knowledge every turn from persistent Person state.
-        semantic_parts: list[str] = []
-        query_mem = await self._memory.recall(user_message.content)
-        if query_mem:
-            semantic_parts.append(query_mem)
-        profile_mem = await self._memory.recall(
-            "student profile goals preferences constraints budget learning career "
-            "destination country degree gpa",
-            top_k=min(5, self._settings.semantic_memory_max_results),
-        )
-        if profile_mem and profile_mem != query_mem:
-            semantic_parts.append(profile_mem)
-        semantic_ctx = "\n\n".join(semantic_parts)
         state: PAIState = {
             "person_id": str(person.id),
             "conversation_id": str(conversation_id),
@@ -125,7 +107,7 @@ class PAIOrchestrator:
             "run_status": "running",
             "errors": [],
             "orchestration_llm_calls": 0,
-            "semantic_memory_context": semantic_ctx,
+            "semantic_memory_context": "",
             "tool_trace": [],
         }
         run.current_step = "save_user_message"
@@ -162,14 +144,21 @@ class PAIOrchestrator:
 
     async def node_load_student_context(self, state: PAIState) -> PAIState:
         assert self._session and self._person
-        pack = await build_student_context_pack(
+        pack_task = build_student_context_pack(
             self._session,
             self._person,
             conversation_id=uuid.UUID(state["conversation_id"]),
             settings=self._settings,
         )
+        # Recall uses a separate session — safe to overlap with vault/context reads.
         if self._memory:
+            pack, semantic = await asyncio.gather(
+                pack_task, self._memory.recall(state["user_message"])
+            )
             self._memory.hydrate_conversation(pack.recent_messages)
+            state["semantic_memory_context"] = semantic or ""
+        else:
+            pack = await pack_task
         state["student_context"] = pack
         state["student_context_json"] = context_pack_to_json(pack)
         if self._run:
@@ -209,7 +198,8 @@ class PAIOrchestrator:
                     "coverage": bundle.coverage_notes,
                 }
             )
-        state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
+        if bundle is not None and int(getattr(bundle, "provider_calls", 0) or 0) > 0:
+            state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
         if self._run:
             self._run.current_step = "validate_candidates"
         return state
@@ -323,7 +313,7 @@ class PAIOrchestrator:
         known_facts_lines: list[str] = []
         if pack is not None and getattr(pack, "known_facts", None):
             known_facts_lines = list(pack.known_facts)
-        allow_web = counselor_web_search_enabled(self._settings)
+        allow_web = counselor_web_search_enabled(self._settings, state["user_message"])
         registry = build_turn_registry(
             enable_web_search=allow_web,
             enable_semantic_recall=False,  # already prefetched into semantic_ctx

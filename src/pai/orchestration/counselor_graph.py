@@ -231,10 +231,11 @@ async def _finalize_structured(
     return out
 
 
-async def _coerce_or_finalize(
-    gateway: LLMGateway, messages: list[LLMMessage], content: str
-) -> ConversationResult:
+def _result_from_text(content: str) -> ConversationResult | None:
+    """Reuse the model's prose instead of a second structured LLM round."""
     text = (content or "").strip()
+    if not text:
+        return None
     if text.startswith("{"):
         try:
             return ConversationResult.model_validate(json.loads(text))
@@ -246,18 +247,13 @@ async def _coerce_or_finalize(
             return ConversationResult.model_validate(json.loads(body))
         except Exception:
             pass
-    return await _finalize_structured(
-        gateway,
-        messages
-        + [
-            LLMMessage(role="assistant", content=content or ""),
-            LLMMessage(
-                role="user",
-                content=(
-                    "Convert your last answer into ConversationResult JSON only "
-                    "(reply, known_facts_used, observations, suggested_next_step, "
-                    "next_question, task_proposals)."
-                ),
-            ),
-        ],
-    )
+    return ConversationResult(reply=text)
+
+
+async def _coerce_or_finalize(
+    gateway: LLMGateway, messages: list[LLMMessage], content: str
+) -> ConversationResult:
+    parsed = _result_from_text(content)
+    if parsed is not None:
+        return parsed
+    return await _finalize_structured(gateway, messages)

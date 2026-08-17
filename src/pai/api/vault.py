@@ -62,6 +62,19 @@ async def get_catalog(
     return JSONResponse(content=success({"catalogVersion": CATALOG_VERSION, "fields": fields}))
 
 
+@router.get("/fields/{field_key}")
+async def get_field(
+    field_key: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    person=Depends(resolve_person_from_token),
+    includeSensitive: bool = Query(False, alias="includeSensitive"),
+) -> JSONResponse:
+    data = await VaultService().get_field(
+        session, person, field_key, include_sensitive=includeSensitive
+    )
+    return JSONResponse(content=success(data))
+
+
 @router.patch("/fields/{field_key}")
 async def patch_field(
     field_key: str,

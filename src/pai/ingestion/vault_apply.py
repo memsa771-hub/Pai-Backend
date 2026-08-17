@@ -19,6 +19,7 @@ from pai.person.models import Person, VaultEvidence, VaultHistory, VaultValue
 from pai.vault.catalog import get_catalog_field
 from pai.vault.completion import apply_completion_to_vault
 from pai.vault.security import SensitiveValueCodec
+from pai.vault.service import _history_value
 
 
 class VaultApplyResult(BaseModel):
@@ -95,8 +96,8 @@ async def apply_vault_candidate(
             vault_id=vault.id,
             field_key=candidate.field_key,
             action="updated" if old_val is not None else "created",
-            old_value=old_val,
-            new_value=candidate.value,
+            old_value=_history_value(field, old_val),
+            new_value=_history_value(field, candidate.value),
             actor_type="system",
             actor_id=str(person.id),
             reason=candidate.rationale_summary,

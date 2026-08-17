@@ -39,6 +39,23 @@ class PersonContextPack(BaseModel):
 StudentContextPack = PersonContextPack
 
 
+_ADVICE_GAPS = frozenset(
+    {
+        "location.current_city",
+        "location.current_country",
+        "education.highest_level",
+        "education.records",
+        "application.study_country",
+        "application.goals",
+        "identity.current_status",
+    }
+)
+
+
+def _advice_gaps(missing: list[str]) -> list[str]:
+    return [key for key in missing if key in _ADVICE_GAPS]
+
+
 from pai.tasks.service import list_tasks_for_person
 
 
@@ -112,7 +129,10 @@ def build_known_facts(
         ("mobility.relocation_willingness", "Relocation willingness"),
     ):
         if key in sparse:
-            facts.append(f"{label}: {_sparse_value(sparse[key])}")
+            raw = _sparse_value(sparse[key])
+            if raw in (None, "", "***"):
+                continue
+            facts.append(f"{label}: {raw}")
 
     # Deduplicate while preserving order
     seen: set[str] = set()
@@ -161,7 +181,13 @@ async def build_person_context_pack(
     if person.vault is None:
         await session.refresh(person, attribute_names=["vault"])
     vault_svc = VaultService(settings)
-    unified = await vault_svc.get_unified_vault(session, person, include_sensitive=False)
+    typed_records = await load_typed_profile_records(session, person.id)
+    unified = await vault_svc.get_unified_vault(
+        session,
+        person,
+        include_sensitive=False,
+        typed_records=typed_records,
+    )
     completion = unified.get("completion") or {}
     sparse = unified.get("sparseFields") or {}
     limit = settings.chat_recent_message_limit
@@ -220,7 +246,6 @@ async def build_person_context_pack(
     proposed_tasks = [
         {"id": str(t.id), "title": t.title, "status": t.status} for t in tasks if t.status == "proposed"
     ]
-    typed_records = await load_typed_profile_records(session, person.id)
     identity = {
         "email": person.email,
         "fullName": person.full_name,
@@ -233,7 +258,7 @@ async def build_person_context_pack(
         applicable_vault_fields=sparse,
         typed_profile_summary=typed_records,
         vault_completion=completion,
-        missing_critical_fields=list(completion.get("missingCriticalFields") or []),
+        missing_critical_fields=_advice_gaps(completion.get("missingCriticalFields") or []),
         known_facts=known,
         recent_messages=recent,
         cross_thread_recent=cross,

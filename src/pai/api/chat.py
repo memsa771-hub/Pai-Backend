@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -14,14 +14,11 @@ from pai.config import Settings, get_settings
 from pai.services.conversations import service as conv_svc
 from pai.data.db import get_session_factory
 from pai.dependencies import get_db, require_onboarding_complete
-from pai.ingestion.chat import (
-    handle_user_message,
-    run_intelligence_followup,
-    _payload_from_state,
-)
+from pai.ingestion.chat import handle_user_message, _payload_from_state
 from pai.orchestration.orchestrator import PAIOrchestrator
 from pai.services.conversations.models import OrchestrationRun
 from pai.services.conversations.service import begin_chat_turn, save_assistant_message
+from pai.services.jobs.queue import enqueue_intelligence
 from pai.services.memory.service import PersonMemoryService
 from pai.services.person.models import Person
 from pai.schemas import ApiErrorResponse, success
@@ -75,7 +72,7 @@ def _sse(event: str, data: object) -> str:
     description=(
         "Primary PAI turn. Requires `Authorization: Bearer <accessToken>`.\n\n"
         "Returns the reply as soon as the counselor finishes. Vault/memory "
-        "extraction continues in the background (`intelligencePending`).\n\n"
+        "extraction is queued durably per student (`intelligencePending`).\n\n"
         "Prefer `POST /api/v1/chat/stream` for token-by-token typing.\n\n"
         "**Swagger:** Authorize with `data.accessToken` only (no `Bearer` prefix)."
     ),
@@ -84,7 +81,6 @@ def _sse(event: str, data: object) -> str:
 async def chat(
     body: ChatRequest,
     request: Request,
-    background: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
@@ -102,7 +98,7 @@ async def chat(
         user_msg,
         gateway=gateway,
         run=run,
-        background=background,
+        defer_intelligence=True,
     )
     return JSONResponse(content=success(data))
 
@@ -114,14 +110,13 @@ async def chat(
         "Same turn as `/chat`, but tokens are sent as `event: token` as they "
         "arrive. `event: reply` has the saved message id. `event: done` follows "
         "immediately (`intelligencePending` may be true); Vault extraction "
-        "continues in the background."
+        "is queued durably per student."
     ),
     responses=_AUTH_ERRORS,
 )
 async def chat_stream(
     body: ChatRequest,
     request: Request,
-    background: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
@@ -181,6 +176,16 @@ async def chat_stream(
             async for delta in orch.iter_reply_tokens(state):
                 yield _sse("token", delta)
             reply = state.get("assistant_reply") or ""
+            queued = enqueue_intelligence(
+                stream_session,
+                person_id=person_id,
+                conversation_id=conversation_id,
+                user_message=user_text,
+                user_message_id=user_message_id,
+                extraction_required=bool(state.get("extraction_required")),
+                task_proposals=list(state.get("task_proposals") or []),
+                run_id=str(run_id),
+            )
             assistant = await save_assistant_message(
                 stream_session,
                 stream_person,
@@ -189,7 +194,9 @@ async def chat_stream(
                 provider=settings.llm_default_provider,
                 model=settings.llm_counseling_model,
             )
-            await stream_session.commit()
+            if queued is None and orch._run is not None:
+                orch._run.status = "completed"
+                await stream_session.commit()
             yield _sse(
                 "reply",
                 {
@@ -202,21 +209,9 @@ async def chat_stream(
                 conversation_id=conversation_id,
                 assistant=assistant,
                 graph_state=state,
-                intelligence_pending=True,
+                intelligence_pending=queued is not None,
             )
             yield _sse("done", done)
-            background.add_task(
-                run_intelligence_followup,
-                settings=settings,
-                gateway=gateway,
-                person_id=person_id,
-                conversation_id=conversation_id,
-                user_message=user_text,
-                user_message_id=user_message_id,
-                extraction_required=bool(state.get("extraction_required")),
-                task_proposals=list(state.get("task_proposals") or []),
-                run_id=str(run_id),
-            )
 
     return StreamingResponse(
         events(),

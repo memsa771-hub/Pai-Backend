@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     )
     chat_recent_message_limit: int = Field(default=8, alias="CHAT_RECENT_MESSAGE_LIMIT")
     enable_document_worker: bool = Field(default=True, alias="ENABLE_DOCUMENT_WORKER")
+    enable_intelligence_worker: bool = Field(default=True, alias="ENABLE_INTELLIGENCE_WORKER")
 
     # Web search (Tavily) — leave empty until you add the key; tool degrades gracefully
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")

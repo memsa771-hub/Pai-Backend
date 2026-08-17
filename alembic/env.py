@@ -15,6 +15,7 @@ import pai.services.documents.models  # noqa: F401
 import pai.services.tasks.models  # noqa: F401
 import pai.services.memory.models  # noqa: F401
 import pai.services.journey.models  # noqa: F401
+import pai.services.jobs.models  # noqa: F401
 
 config = context.config
 

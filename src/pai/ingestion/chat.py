@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,6 +15,7 @@ from pai.data.db import get_session_factory
 from pai.llm.gateway import LLMGateway
 from pai.orchestration.context import chat_stay_payload
 from pai.orchestration.orchestrator import PAIOrchestrator
+from pai.services.jobs.queue import enqueue_intelligence
 from pai.services.memory.service import PersonMemoryService
 from pai.services.person.models import Person
 
@@ -122,6 +122,7 @@ async def run_intelligence_followup(
         except Exception:
             logger.exception("Intelligence follow-up failed person=%s", person_id)
             await session.rollback()
+            raise
 
 
 async def handle_user_message(
@@ -134,7 +135,7 @@ async def handle_user_message(
     orchestrator: PAIOrchestrator | None = None,
     gateway: LLMGateway | None = None,
     run: OrchestrationRun | None = None,
-    background: BackgroundTasks | None = None,
+    defer_intelligence: bool = False,
 ) -> dict:
     if person.vault is None:
         raise AuthError(
@@ -173,6 +174,20 @@ async def handle_user_message(
             status_code=502,
         ) from exc
     reply = graph_state.get("assistant_reply") or ""
+    extraction_required = bool(graph_state.get("extraction_required"))
+    task_proposals = list(graph_state.get("task_proposals") or [])
+    queued = None
+    if defer_intelligence:
+        queued = enqueue_intelligence(
+            session,
+            person_id=person.id,
+            conversation_id=conversation_id,
+            user_message=user_message.content,
+            user_message_id=str(user_message.id),
+            extraction_required=extraction_required,
+            task_proposals=task_proposals,
+            run_id=str(run.id),
+        )
     assistant = await save_assistant_message(
         session,
         person,
@@ -181,24 +196,15 @@ async def handle_user_message(
         provider=settings.llm_default_provider,
         model=settings.llm_counseling_model,
     )
-    followup = {
-        "settings": settings,
-        "gateway": gateway,
-        "person_id": person.id,
-        "conversation_id": conversation_id,
-        "user_message": user_message.content,
-        "user_message_id": str(user_message.id),
-        "extraction_required": bool(graph_state.get("extraction_required")),
-        "task_proposals": list(graph_state.get("task_proposals") or []),
-        "run_id": str(run.id),
-    }
-    if background is not None:
-        background.add_task(run_intelligence_followup, **followup)
+    if defer_intelligence:
+        if queued is None:
+            run.status = "completed"
+            await session.commit()
         return _payload_from_state(
             conversation_id=conversation_id,
             assistant=assistant,
             graph_state=graph_state,
-            intelligence_pending=True,
+            intelligence_pending=queued is not None,
         )
     graph_state = await orch.finish_intelligence(graph_state)
     await session.commit()

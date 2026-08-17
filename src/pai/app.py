@@ -24,6 +24,7 @@ from pai.config import Settings, get_settings
 from pai.core.errors import AuthError
 from pai.data.db import warmup_database
 from pai.services.documents.worker import document_worker_loop
+from pai.services.jobs.worker import intelligence_worker_loop
 from pai.llm.gateway import LLMGateway
 from pai.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
 from pai.orchestration.checkpoint import close_graph_checkpointer, init_graph_checkpointer
@@ -72,14 +73,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await asyncio.gather(_warmup_db(), _warmup_auth())
     worker_stop = asyncio.Event()
-    worker_task: asyncio.Task | None = None
+    worker_tasks: list[asyncio.Task] = []
     if settings.enable_document_worker:
-        worker_task = asyncio.create_task(document_worker_loop(settings, worker_stop))
+        worker_tasks.append(asyncio.create_task(document_worker_loop(settings, worker_stop)))
+    if settings.enable_intelligence_worker:
+        worker_tasks.append(asyncio.create_task(intelligence_worker_loop(settings, worker_stop)))
     try:
         yield
     finally:
         worker_stop.set()
-        if worker_task is not None:
+        for worker_task in worker_tasks:
             worker_task.cancel()
             try:
                 await worker_task

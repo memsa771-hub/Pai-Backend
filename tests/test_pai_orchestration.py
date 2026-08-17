@@ -11,7 +11,13 @@ from pai.llm.gateway import LLMGateway
 from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
 from pai.orchestration.agents import FactExtractionAgent, StudentConversationAgent
 from pai.orchestration.orchestrator import PAIOrchestrator
-from pai.orchestration.routing import counselor_web_search_enabled, should_extract_facts
+from pai.orchestration.routing import (
+    classify_turn,
+    counseling_reply_max_tokens,
+    counselor_web_search_enabled,
+    is_greeting,
+    should_extract_facts,
+)
 from pai.orchestration.schemas import (
     ConversationResult,
     FactExtractionResult,
@@ -54,9 +60,14 @@ def test_greetings_skip_extraction():
     assert should_extract_facts("Hello") is False
     assert should_extract_facts("Thanks!") is False
     assert should_extract_facts("Please continue") is False
+    assert is_greeting("hi") is True
+    assert is_greeting("  Hey!  ") is True
+    assert is_greeting("I want MS CS") is False
+    assert counseling_reply_max_tokens("hi", 400) == 96
+    assert counseling_reply_max_tokens("What should I do next?", 400) == 400
 
 
-def test_web_search_offered_except_greetings(test_settings):
+def test_web_search_only_for_live_research(test_settings):
     off = test_settings.model_copy(update={"tavily_api_key": "", "enable_counselor_tools": True})
     assert counselor_web_search_enabled(off) is False
     on = test_settings.model_copy(
@@ -64,17 +75,25 @@ def test_web_search_offered_except_greetings(test_settings):
     )
     assert counselor_web_search_enabled(on) is True
     assert counselor_web_search_enabled(on, "Hello") is False
-    assert counselor_web_search_enabled(on, "I live in Berlin") is True
-    assert counselor_web_search_enabled(on, "What IELTS score do I need?") is True
-    assert counselor_web_search_enabled(on, "What should I do next?") is True
+    assert counselor_web_search_enabled(on, "I live in Berlin") is False
+    assert counselor_web_search_enabled(on, "What should I focus on this week?") is False
+    assert counselor_web_search_enabled(on, "What IELTS score do I need?") is False
     assert counselor_web_search_enabled(
         on, "Yes find the deadline for me through web search"
     ) is True
-    assert counselor_web_search_enabled(on, "Cant you do that for me?") is True
+    assert counselor_web_search_enabled(on, "What is the official Tsinghua ranking?") is True
     killed = test_settings.model_copy(
         update={"tavily_api_key": "tvly-test", "enable_counselor_tools": False}
     )
-    assert counselor_web_search_enabled(killed, "What IELTS score do I need?") is False
+    assert counselor_web_search_enabled(killed, "find the deadline") is False
+
+
+def test_classify_turn_kinds():
+    assert classify_turn("Hi") == "PERSONAL_ADVICE"
+    assert classify_turn("I live in Berlin") == "PROFILE_UPDATE"
+    assert classify_turn("find the deadline for CSC") == "LIVE_RESEARCH"
+    assert classify_turn("yeh dhoond do") == "LIVE_RESEARCH"
+    assert classify_turn("What should I do next?") == "PERSONAL_ADVICE"
 
 
 def test_substantive_messages_trigger_extraction():
@@ -271,8 +290,29 @@ def test_chat_graph_replies_without_waiting_on_extract_chain():
 
     graph = build_pai_graph(MagicMock())
     assert "serve_turn" in graph.nodes
+    assert "load_student_context" in graph.nodes
     assert "extract_facts" not in graph.nodes
-    assert "run_conversation_agent" not in graph.nodes
+
+
+def test_counselor_context_is_compact():
+    from pai.orchestration.context import CounselorContext
+
+    ctx = CounselorContext(
+        person_id="p1",
+        goal="MS CS in Germany",
+        education="BSCS / Bahria 3.35",
+        location="Dubai",
+        known_facts=["Current goal (pursuing): MS CS in Germany"],
+    )
+    block = ctx.profile_block()
+    assert "MS CS in Germany" in block
+    assert "applicable_vault_fields" not in block
+    assert "typed_profile_summary" not in block
+    from pai.llm.stream_parse import delta_from_sse_line
+
+    assert delta_from_sse_line('data: {"choices":[{"delta":{"content":"Based"}}]}') == "Based"
+    assert delta_from_sse_line("data: [DONE]") is None
+    assert delta_from_sse_line("event: token") is None
 
 
 def test_chat_message_id_used_as_evidence(test_settings):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -12,6 +13,7 @@ from pai.llm.gateway import LLMGateway
 from pai.llm.schemas import LLMMessage, LLMResponse, LLMToolCall, LLMToolCallFunction
 from pai.services.memory.service import PersonMemoryService
 from pai.orchestration.prompts import render_template
+from pai.orchestration.routing import counseling_reply_max_tokens
 from pai.orchestration.schemas import ConversationResult
 from pai.tools.base import ToolContext
 from pai.tools.registry import ToolRegistry, build_default_registry
@@ -136,6 +138,119 @@ def build_counselor_tool_graph(
     return graph.compile()
 
 
+def counselor_seed_messages(prompt_vars: dict[str, Any]) -> list[dict[str, Any]]:
+    """Static system + stable profile + real turns. Cache-friendly prefix."""
+    system = render_template("system.v1.jinja2")
+    profile = render_template(
+        "student_conversation.v1.jinja2",
+        profile_block=prompt_vars.get("profile_block") or "(no stored profile yet)",
+    )
+    current = (prompt_vars.get("current_message") or "").strip()
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system},
+        {"role": "system", "content": profile},
+    ]
+    for turn in prompt_vars.get("recent_turns") or []:
+        role = turn.get("role")
+        content = (turn.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        if role == "user" and content == current:
+            continue
+        messages.append({"role": role, "content": content})
+    extra = (prompt_vars.get("web_note") or "").strip()
+    user_text = current if not extra else f"{extra}\n\n{current}"
+    messages.append({"role": "user", "content": user_text})
+    return messages
+
+
+async def iter_counselor_tokens(
+    *,
+    gateway: LLMGateway,
+    settings: Settings,
+    prompt_vars: dict[str, Any],
+    registry: ToolRegistry,
+    tool_ctx: ToolContext,
+    enable_tools: bool,
+) -> AsyncIterator[str]:
+    """Yield student-visible prose tokens. Tools run before the streamed reply."""
+    raw_messages = counselor_seed_messages(prompt_vars)
+    tools = registry.openai_tools() if enable_tools else []
+    max_rounds = max(1, int(settings.counselor_max_tool_rounds))
+    max_tokens = counseling_reply_max_tokens(
+        str(prompt_vars.get("current_message") or ""),
+        settings.llm_counseling_max_tokens,
+    )
+    if not tools:
+        llm = [_dict_to_llm_message(m) for m in raw_messages]
+        async for delta in gateway.stream(
+            task="student_conversation", messages=llm, max_tokens=max_tokens
+        ):
+            if delta:
+                yield delta
+        return
+    for round_n in range(max_rounds):
+        llm = [_dict_to_llm_message(m) for m in raw_messages]
+        response = await gateway.run(
+            task="student_conversation",
+            messages=llm,
+            temperature=0.3,
+            tools=tools,
+            tool_choice="auto",
+            max_tokens=max_tokens,
+        )
+        assert isinstance(response, LLMResponse)
+        if response.has_tool_calls:
+            assistant_msg = {
+                "role": "assistant",
+                "content": response.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in response.tool_calls
+                ],
+            }
+            raw_messages.append(assistant_msg)
+            pairs = await asyncio.gather(
+                *[_run_tool(registry, tool_ctx, tc) for tc in assistant_msg["tool_calls"]]
+            )
+            raw_messages.extend(item[0] for item in pairs)
+            continue
+        parsed = _result_from_text(response.content or "")
+        text = parsed.reply if parsed is not None else public_reply(response.content)
+        if text:
+            yield text
+        return
+    llm = [_dict_to_llm_message(m) for m in raw_messages]
+    async for delta in gateway.stream(
+        task="student_conversation", messages=llm, max_tokens=max_tokens
+    ):
+        if delta:
+            yield delta
+
+
+async def _run_tool(
+    registry: ToolRegistry, tool_ctx: ToolContext, raw_tc: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    tc = _normalize_tool_call(raw_tc)
+    result = await registry.execute(tc.function.name, tc.function.arguments, tool_ctx)
+    return (
+        {
+            "role": "tool",
+            "tool_call_id": tc.id,
+            "name": tc.function.name,
+            "content": result.content,
+        },
+        {"tool": tc.function.name, "ok": result.ok, "preview": result.content[:240]},
+    )
+
+
 async def run_counselor_with_tools(
     *,
     gateway: LLMGateway,
@@ -154,46 +269,23 @@ async def run_counselor_with_tools(
         person_id=person_id,
         conversation_id=conversation_id,
     )
-    system = render_template("system.v1.jinja2")
-    user_prompt = render_template("student_conversation.v1.jinja2", **prompt_vars)
-    seed_messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_prompt},
-    ]
     tools_on = (
-        enable_tools
-        if enable_tools is not None
-        else settings.enable_counselor_tools
+        enable_tools if enable_tools is not None else settings.enable_counselor_tools
     )
-    if not tools_on or not registry.openai_tools():
-        result = await _finalize_structured(
-            gateway, [_dict_to_llm_message(m) for m in seed_messages]
-        )
-        return result, []
-
-    graph = build_counselor_tool_graph(
+    chunks: list[str] = []
+    async for delta in iter_counselor_tokens(
         gateway=gateway,
         settings=settings,
+        prompt_vars=prompt_vars,
         registry=registry,
         tool_ctx=tool_ctx,
-    )
-    final_state = await graph.ainvoke(
-        {
-            "messages": seed_messages,
-            "round": 0,
-            "max_rounds": max(1, int(settings.counselor_max_tool_rounds)),
-            "final": None,
-            "tool_trace": [],
-            "pending_tool_calls": [],
-        }
-    )
-    result = final_state.get("final")
-    if result is None:
-        result = await _finalize_structured(
-            gateway,
-            [_dict_to_llm_message(m) for m in (final_state.get("messages") or seed_messages)],
-        )
-    return result, list(final_state.get("tool_trace") or [])
+        enable_tools=bool(tools_on and registry.openai_tools()),
+    ):
+        chunks.append(delta)
+    text = "".join(chunks)
+    parsed = _result_from_text(text)
+    result = parsed if parsed is not None else ConversationResult(reply=text.strip())
+    return result, []
 
 
 def _normalize_tool_call(raw: dict[str, Any] | LLMToolCall) -> LLMToolCall:

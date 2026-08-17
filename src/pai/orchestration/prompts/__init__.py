@@ -8,14 +8,7 @@ PROMPTS_DIR = Path(__file__).resolve().parent
 
 REQUIRED_VARS: dict[str, set[str]] = {
     "student_conversation.v1.jinja2": {
-        "current_message",
-        "student_context",
-        "known_facts",
-        "semantic_memory_context",
-        "pending_confirmations",
-        "applied_vault_changes",
-        "task_results",
-        "web_search_available",
+        "profile_block",
     },
     "system.v1.jinja2": set(),
 }

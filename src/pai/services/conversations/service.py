@@ -110,8 +110,12 @@ async def save_user_message(
     person: Person,
     conversation_id: uuid.UUID,
     content: str,
+    *,
+    verify_owner: bool = True,
+    commit: bool = True,
 ) -> Message:
-    await get_conversation_owned(session, person.id, conversation_id)
+    if verify_owner:
+        await get_conversation_owned(session, person.id, conversation_id)
     msg = Message(
         conversation_id=conversation_id,
         person_id=person.id,
@@ -122,9 +126,31 @@ async def save_user_message(
     from pai.services.journey.service import record_user_message
 
     await record_user_message(session, person.id, content, source_id=msg.id)
-    await session.commit()
-    await session.refresh(msg)
+    await session.flush()
+    if commit:
+        await session.commit()
     return msg
+
+
+async def begin_chat_turn(
+    session: AsyncSession,
+    person: Person,
+    conversation_id: uuid.UUID,
+    content: str,
+) -> tuple[Message, OrchestrationRun]:
+    """One commit: user message + orchestration run. Caller already owns the conversation."""
+    msg = await save_user_message(
+        session, person, conversation_id, content, verify_owner=False, commit=False
+    )
+    run = OrchestrationRun(
+        person_id=person.id,
+        conversation_id=conversation_id,
+        run_type="chat_message",
+        status="running",
+    )
+    session.add(run)
+    await session.commit()
+    return msg, run
 
 
 async def save_assistant_message(
@@ -205,5 +231,4 @@ async def start_orchestration_run(
     )
     session.add(run)
     await session.commit()
-    await session.refresh(run)
     return run

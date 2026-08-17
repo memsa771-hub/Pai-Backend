@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from pydantic import BaseModel
 
 from pai.config import Settings, get_settings
@@ -40,6 +42,11 @@ class LLMGateway:
             return self._settings.llm_counseling_model
         return self._settings.llm_counseling_model
 
+    def _max_tokens_for(self, task: str) -> int:
+        if task in ("counseling", "student_conversation"):
+            return int(self._settings.llm_counseling_max_tokens)
+        return 2048
+
     async def run(
         self,
         *,
@@ -49,6 +56,7 @@ class LLMGateway:
         temperature: float = 0.3,
         tools: list[dict] | None = None,
         tool_choice: str | dict | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse | BaseModel:
         provider = self._provider_for_task(task)
         request = LLMRequest(
@@ -57,10 +65,39 @@ class LLMGateway:
             model=self._model_for_task(task),
             tools=tools,
             tool_choice=tool_choice,
+            max_tokens=max_tokens or self._max_tokens_for(task),
         )
         if output_schema is not None:
             return await provider.generate_structured(request, output_schema)
         return await provider.generate(request)
+
+    async def stream(
+        self,
+        *,
+        task: str,
+        messages: list[LLMMessage],
+        temperature: float = 0.3,
+        tools: list[dict] | None = None,
+        tool_choice: str | dict | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[str]:
+        provider = self._provider_for_task(task)
+        request = LLMRequest(
+            messages=messages,
+            temperature=temperature,
+            model=self._model_for_task(task),
+            tools=tools,
+            tool_choice=tool_choice,
+            max_tokens=max_tokens or self._max_tokens_for(task),
+        )
+        stream_fn = getattr(provider, "stream", None)
+        if stream_fn is None:
+            out = await provider.generate(request)
+            if out.content:
+                yield out.content
+            return
+        async for delta in stream_fn(request):
+            yield delta
 
     async def aclose(self) -> None:
         for provider in self._providers.values():

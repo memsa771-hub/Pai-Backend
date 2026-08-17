@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -9,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from pai.config import Settings
 from pai.core.errors import AuthError
+from pai.llm.stream_parse import delta_from_sse_line
 from pai.llm.schemas import (
     LLMMessage,
     LLMRequest,
@@ -85,6 +87,50 @@ class DeepSeekProvider:
             tool_calls=[tc for tc in tool_calls if tc is not None],
             finish_reason=choice.get("finish_reason"),
         )
+
+    async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
+        timeout = request.timeout_seconds or self._settings.llm_timeout_seconds
+        model = request.model or self._settings.llm_counseling_model
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [m.to_api_dict() for m in request.messages],
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if request.tools:
+            payload["tools"] = request.tools
+            if request.tool_choice is not None:
+                payload["tool_choice"] = request.tool_choice
+        if request.response_format:
+            payload["response_format"] = request.response_format
+        headers = {
+            "Authorization": f"Bearer {self._settings.deepseek_api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with self._client.stream(
+                "POST",
+                "/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            ) as response:
+                if response.status_code >= 400:
+                    body = (await response.aread())[:300]
+                    logger.warning("DeepSeek stream error status=%s body=%s", response.status_code, body)
+                    raise LLMProviderError("LLM provider returned an error.")
+                async for line in response.aiter_lines():
+                    delta = delta_from_sse_line(line)
+                    if delta:
+                        yield delta
+        except LLMProviderError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise LLMProviderError("LLM request timed out.") from exc
+        except httpx.HTTPError as exc:
+            raise LLMProviderError("LLM provider unreachable.") from exc
 
     async def generate_structured(
         self,

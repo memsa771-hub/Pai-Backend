@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
 from pai.services.conversations.models import Message, OrchestrationRun
-from pai.services.conversations import service as conv_svc
 from pai.data.db import get_session_factory
 from pai.ingestion.vault_apply import process_candidates
 from pai.llm.gateway import LLMGateway
@@ -20,12 +19,18 @@ from pai.orchestration.agents import FactExtractionAgent, StudentConversationAge
 from pai.orchestration.candidate_eval import evaluate_candidates_batch
 from pai.orchestration.checkpoint import get_graph_checkpointer
 from pai.orchestration.context import (
+    build_counselor_context,
     build_student_context_pack,
     context_pack_to_json,
+    invalidate_counselor_cache,
 )
 from pai.orchestration.counselor_graph import public_reply
 from pai.orchestration.graph import build_pai_graph
-from pai.orchestration.routing import counselor_web_search_enabled, should_extract_facts
+from pai.orchestration.routing import (
+    counselor_web_search_enabled,
+    is_greeting,
+    should_extract_facts,
+)
 from pai.orchestration.schemas import (
     PendingConfirmation,
     RunError,
@@ -136,77 +141,52 @@ class PAIOrchestrator:
             self._memory = None
 
     async def node_save_user_message(self, state: PAIState) -> PAIState:
-        assert self._session and self._person
-        await conv_svc.get_conversation_owned(
-            self._session,
-            uuid.UUID(state["person_id"]),
-            uuid.UUID(state["conversation_id"]),
-        )
         if self._run:
             self._run.current_step = "load_student_context"
         return state
 
     async def node_load_student_context(self, state: PAIState) -> PAIState:
         assert self._session and self._person
-        pack_task = build_student_context_pack(
+        async def _no_recall() -> str:
+            return ""
+
+        recall = (
+            _no_recall()
+            if is_greeting(state["user_message"]) or not self._memory
+            else self._memory.recall(state["user_message"])
+        )
+        pack_task = build_counselor_context(
             self._session,
             self._person,
             conversation_id=uuid.UUID(state["conversation_id"]),
             settings=self._settings,
         )
-        # Recall uses a separate session — safe to overlap with vault/context reads.
+        pack, semantic = await asyncio.gather(pack_task, recall)
         if self._memory:
-            pack, semantic = await asyncio.gather(
-                pack_task, self._memory.recall(state["user_message"])
-            )
             self._memory.hydrate_conversation(pack.recent_messages)
-            state["semantic_memory_context"] = semantic or ""
-        else:
-            pack = await pack_task
+        if semantic:
+            pack.relevant_memory = [
+                line.strip(" -")
+                for line in str(semantic).splitlines()
+                if line.strip() and not line.strip().startswith("Relevant context")
+            ][:5]
+        state["semantic_memory_context"] = semantic or ""
         state["student_context"] = pack
-        state["student_context_json"] = context_pack_to_json(pack)
+        state["student_context_json"] = pack.profile_block()
+        state["extraction_required"] = should_extract_facts(state["user_message"])
         if self._run:
-            self._run.current_step = "route_turn"
+            self._run.current_step = "serve_turn"
         return state
 
     async def node_route_turn(self, state: PAIState) -> PAIState:
-        required = should_extract_facts(state["user_message"])
-        state["extraction_required"] = required
-        if not required:
-            updated = await self._capture_goal(state["user_message"], llm_goal=None)
-            if updated:
-                await self._inject_goal_facts(state)
+        state["extraction_required"] = should_extract_facts(state["user_message"])
         return state
 
     async def node_serve_turn(self, state: PAIState) -> PAIState:
-        """Reply immediately; overlap extraction so it does not add a serial LLM hop."""
+        """Counselor reply only. Extraction/Vault run after the user has the text."""
         if self._run:
             self._run.current_step = "serve_turn"
-        extract_task = None
-        if state.get("extraction_required"):
-            extract_task = asyncio.create_task(self._extract_llm_only(state))
-        try:
-            state = await self.node_run_conversation_agent(state)
-        except BaseException:
-            if extract_task is not None:
-                extract_task.cancel()
-            raise
-        if extract_task is None:
-            return state
-        try:
-            patch = await extract_task
-        except Exception:
-            logger.exception("Extraction failed; counselor reply still sent")
-            return state
-        self._apply_extract_patch(state, patch)
-        updated = await self._capture_goal(
-            state["user_message"], llm_goal=patch.get("llm_goal")
-        )
-        if updated:
-            state["goal_updated"] = True
-        state = await self.node_validate_candidates(state)
-        state = await self.node_apply_vault_changes(state)
-        return await self.node_refresh_student_context(state)
+        return await self.node_run_conversation_agent(state)
 
     async def _extract_llm_only(self, state: PAIState) -> dict:
         pack = state.get("student_context")
@@ -341,6 +321,7 @@ class PAIOrchestrator:
                 logger.exception("Memory formation failed")
         if to_apply or drafts:
             await self._session.commit()
+            invalidate_counselor_cache(self._person.id)
         state["applied_vault_changes"] = applied
         state["pending_confirmations"] = pending
         if self._run:
@@ -375,8 +356,13 @@ class PAIOrchestrator:
         pack = state.get("student_context")
         semantic_ctx = state.get("semantic_memory_context") or ""
         known_facts_lines: list[str] = []
-        if pack is not None and getattr(pack, "known_facts", None):
-            known_facts_lines = list(pack.known_facts)
+        profile_block = ""
+        recent: list = []
+        if pack is not None:
+            known_facts_lines = list(getattr(pack, "known_facts", None) or [])
+            if hasattr(pack, "profile_block"):
+                profile_block = pack.profile_block()
+            recent = list(getattr(pack, "recent_messages", None) or [])
         allow_web = counselor_web_search_enabled(self._settings, state["user_message"])
         registry = build_turn_registry(
             enable_web_search=allow_web,
@@ -387,13 +373,11 @@ class PAIOrchestrator:
             current_message=state["user_message"],
             student_context_json=state.get("student_context_json") or "{}",
             known_facts_lines=known_facts_lines,
-            pending_confirmations_json=json.dumps(
-                [p.model_dump() for p in state.get("pending_confirmations") or []]
-            ),
-            applied_vault_changes_json=json.dumps(
-                [c.model_dump() for c in state.get("applied_vault_changes") or []]
-            ),
-            task_results_json=json.dumps([]),
+            profile_block=profile_block,
+            recent_messages_json=json.dumps(recent),
+            pending_confirmations_json="[]",
+            applied_vault_changes_json="[]",
+            task_results_json="[]",
             semantic_memory_context=semantic_ctx,
             memory=self._memory,
             person_id=state["person_id"],
@@ -414,6 +398,70 @@ class PAIOrchestrator:
         if self._run:
             self._run.current_step = "process_tasks"
         return state
+
+    async def finish_intelligence(self, state: PAIState) -> PAIState:
+        """Vault/memory/tasks after the student already has the reply."""
+        if state.get("extraction_required"):
+            try:
+                patch = await self._extract_llm_only(state)
+                self._apply_extract_patch(state, patch)
+                updated = await self._capture_goal(
+                    state["user_message"], llm_goal=patch.get("llm_goal")
+                )
+                if updated:
+                    state["goal_updated"] = True
+                    invalidate_counselor_cache(self._person.id)
+                state = await self.node_validate_candidates(state)
+                state = await self.node_apply_vault_changes(state)
+            except Exception:
+                logger.exception("Post-reply extraction failed")
+        return await self.node_process_tasks(state)
+
+    async def iter_reply_tokens(self, state: PAIState):
+        from pai.orchestration.counselor_graph import iter_counselor_tokens
+        from pai.tools.base import ToolContext
+
+        pack = state.get("student_context")
+        profile_block = pack.profile_block() if pack is not None and hasattr(pack, "profile_block") else ""
+        recent = list(getattr(pack, "recent_messages", None) or []) if pack is not None else []
+        allow_web = counselor_web_search_enabled(self._settings, state["user_message"])
+        registry = build_turn_registry(
+            enable_web_search=allow_web,
+            enable_semantic_recall=False,
+            enable_remember=False,
+        )
+        tool_ctx = ToolContext(
+            settings=self._settings,
+            memory=self._memory,
+            person_id=state["person_id"],
+            conversation_id=state["conversation_id"],
+        )
+        prompt_vars = {
+            "current_message": state["user_message"],
+            "profile_block": profile_block,
+            "recent_turns": recent,
+            "web_note": (
+                "LIVE WEB is available via the web_search tool this turn."
+                if allow_web
+                else ""
+            ),
+        }
+        chunks: list[str] = []
+        async for delta in iter_counselor_tokens(
+            gateway=self._gateway,
+            settings=self._settings,
+            prompt_vars=prompt_vars,
+            registry=registry,
+            tool_ctx=tool_ctx,
+            enable_tools=allow_web,
+        ):
+            chunks.append(delta)
+            yield delta
+        text = "".join(chunks)
+        state["assistant_reply"] = public_reply(text) or text
+        state["assistant_result"] = None
+        if self._memory:
+            self._memory.record_turn(user=state["user_message"], assistant=state["assistant_reply"])
 
     async def node_process_tasks(self, state: PAIState) -> PAIState:
         assert self._session and self._person

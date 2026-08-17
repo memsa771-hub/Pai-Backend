@@ -49,20 +49,9 @@ def test_prompt_templates_validate_at_startup():
 def test_prompt_render_student_conversation():
     text = render_template(
         "student_conversation.v1.jinja2",
-        current_message="Hi",
-        student_context="{}",
-        recent_messages="[]",
-        known_facts="{}",
-        semantic_memory_context="(none)",
-        missing_critical_fields="[]",
-        pending_confirmations="[]",
-        active_tasks="[]",
-        applied_vault_changes="[]",
-        task_results="[]",
-        web_search_available=False,
+        profile_block="goal: MS CS in Germany",
     )
-    assert "PAI" in text or "student" in text.lower()
-    assert "missing_critical_fields" in text
+    assert "goal: MS CS in Germany" in text
     from pai.tools.extraction.llm_extractor import _render as render_intel
 
     extract = render_intel(
@@ -77,8 +66,9 @@ def test_prompt_render_student_conversation():
     assert "msg-1" in extract
     assert "3.9" in extract
     system = render_template("system.v1.jinja2")
-    assert "Do not assume Pakistan" in system
-    assert "missing_critical_fields" in system
+    assert "PAI" in system
+    assert "web_search" in system
+    assert "80 words" in system
     from pai.services.vault.catalog import extraction_catalog_hint
 
     full = render_intel(

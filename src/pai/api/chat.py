@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from pai.config import Settings, get_settings
 from pai.services.conversations import service as conv_svc
+from pai.data.db import get_session_factory
 from pai.dependencies import get_db, require_onboarding_complete
-from pai.ingestion.chat import handle_user_message
+from pai.ingestion.chat import (
+    handle_user_message,
+    run_intelligence_followup,
+    _payload_from_state,
+)
+from pai.orchestration.orchestrator import PAIOrchestrator
+from pai.services.conversations.models import OrchestrationRun
+from pai.services.conversations.service import begin_chat_turn, save_assistant_message
+from pai.services.memory.service import PersonMemoryService
+from pai.services.person.models import Person
 from pai.schemas import ApiErrorResponse, success
 
 chat_router = APIRouter(prefix="/api/v1", tags=["chat"])
@@ -51,16 +64,19 @@ def _message_item(m) -> dict:
     }
 
 
+def _sse(event: str, data: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
 @chat_router.post(
     "/chat",
     status_code=status.HTTP_200_OK,
     summary="Send a counselor message",
     description=(
         "Primary PAI turn. Requires `Authorization: Bearer <accessToken>`.\n\n"
-        "PAI is **one counselor per student**. Every message continues the same "
-        "thread. An empty transcript opens with a Vault-grounded greeting.\n\n"
-        "Each turn reconstructs knowledge from the Person Vault, typed profile, "
-        "semantic memory, and (when configured) Tavily web search.\n\n"
+        "Returns the reply as soon as the counselor finishes. Vault/memory "
+        "extraction continues in the background (`intelligencePending`).\n\n"
+        "Prefer `POST /api/v1/chat/stream` for token-by-token typing.\n\n"
         "**Swagger:** Authorize with `data.accessToken` only (no `Bearer` prefix)."
     ),
     responses=_AUTH_ERRORS,
@@ -68,6 +84,7 @@ def _message_item(m) -> dict:
 async def chat(
     body: ChatRequest,
     request: Request,
+    background: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
@@ -75,13 +92,141 @@ async def chat(
     conv = await conv_svc.get_or_create_person_conversation(
         session, person, settings=settings
     )
-    await conv_svc.ensure_thread_opening(session, person, conv.id, settings=settings)
-    user_msg = await conv_svc.save_user_message(session, person, conv.id, body.message)
+    user_msg, run = await begin_chat_turn(session, person, conv.id, body.message)
     gateway = getattr(request.app.state, "llm_gateway", None)
     data = await handle_user_message(
-        session, settings, person, conv.id, user_msg, gateway=gateway
+        session,
+        settings,
+        person,
+        conv.id,
+        user_msg,
+        gateway=gateway,
+        run=run,
+        background=background,
     )
     return JSONResponse(content=success(data))
+
+
+@chat_router.post(
+    "/chat/stream",
+    summary="Stream a counselor reply (SSE)",
+    description=(
+        "Same turn as `/chat`, but tokens are sent as `event: token` as they "
+        "arrive. `event: reply` has the saved message id. `event: done` follows "
+        "immediately (`intelligencePending` may be true); Vault extraction "
+        "continues in the background."
+    ),
+    responses=_AUTH_ERRORS,
+)
+async def chat_stream(
+    body: ChatRequest,
+    request: Request,
+    background: BackgroundTasks,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    person=Depends(require_onboarding_complete),
+) -> StreamingResponse:
+    conv = await conv_svc.get_or_create_person_conversation(
+        session, person, settings=settings
+    )
+    user_msg, run = await begin_chat_turn(session, person, conv.id, body.message)
+    gateway = getattr(request.app.state, "llm_gateway", None)
+    person_id = person.id
+    conversation_id = conv.id
+    user_message_id = str(user_msg.id)
+    user_text = user_msg.content
+    run_id = run.id
+
+    async def events():
+        factory = get_session_factory(settings)
+        async with factory() as stream_session:
+            row = await stream_session.execute(
+                select(Person)
+                .options(selectinload(Person.vault))
+                .where(Person.id == person_id)
+            )
+            stream_person = row.scalar_one()
+            orch = PAIOrchestrator(settings, gateway=gateway)
+            orch._session = stream_session
+            orch._person = stream_person
+            orch._run = await stream_session.get(OrchestrationRun, run_id)
+            orch._memory = PersonMemoryService(
+                settings, stream_person.id, session_factory=factory
+            )
+            state = {
+                "person_id": str(person_id),
+                "conversation_id": str(conversation_id),
+                "user_message_id": user_message_id,
+                "user_message": user_text,
+                "student_context": None,
+                "student_context_json": "{}",
+                "extraction_required": False,
+                "fact_candidates": [],
+                "observed_candidates": [],
+                "candidate_results": [],
+                "applied_vault_changes": [],
+                "pending_confirmations": [],
+                "task_proposals": [],
+                "task_results": [],
+                "assistant_result": None,
+                "assistant_reply": "",
+                "run_id": str(run_id),
+                "run_status": "running",
+                "errors": [],
+                "orchestration_llm_calls": 0,
+                "semantic_memory_context": "",
+                "tool_trace": [],
+            }
+            state = await orch.node_load_student_context(state)
+            async for delta in orch.iter_reply_tokens(state):
+                yield _sse("token", delta)
+            reply = state.get("assistant_reply") or ""
+            assistant = await save_assistant_message(
+                stream_session,
+                stream_person,
+                conversation_id,
+                reply,
+                provider=settings.llm_default_provider,
+                model=settings.llm_counseling_model,
+            )
+            await stream_session.commit()
+            yield _sse(
+                "reply",
+                {
+                    "conversationId": str(conversation_id),
+                    "messageId": str(assistant.id),
+                    "reply": reply,
+                },
+            )
+            done = _payload_from_state(
+                conversation_id=conversation_id,
+                assistant=assistant,
+                graph_state=state,
+                intelligence_pending=True,
+            )
+            yield _sse("done", done)
+            background.add_task(
+                run_intelligence_followup,
+                settings=settings,
+                gateway=gateway,
+                person_id=person_id,
+                conversation_id=conversation_id,
+                user_message=user_text,
+                user_message_id=user_message_id,
+                extraction_required=bool(state.get("extraction_required")),
+                task_proposals=list(state.get("task_proposals") or []),
+                run_id=str(run_id),
+            )
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @chat_router.get(

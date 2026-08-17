@@ -58,13 +58,14 @@ class Settings(BaseSettings):
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL")
     llm_timeout_seconds: float = Field(default=60.0, alias="LLM_TIMEOUT_SECONDS")
+    llm_counseling_max_tokens: int = Field(default=400, alias="LLM_COUNSELING_MAX_TOKENS")
 
     supabase_storage_bucket: str = Field(default="documents", alias="SUPABASE_STORAGE_BUCKET")
     document_max_bytes: int = Field(default=10_485_760, alias="DOCUMENT_MAX_BYTES")
     document_processing_timeout_seconds: float = Field(
         default=120.0, alias="DOCUMENT_PROCESSING_TIMEOUT_SECONDS"
     )
-    chat_recent_message_limit: int = Field(default=20, alias="CHAT_RECENT_MESSAGE_LIMIT")
+    chat_recent_message_limit: int = Field(default=8, alias="CHAT_RECENT_MESSAGE_LIMIT")
     enable_document_worker: bool = Field(default=True, alias="ENABLE_DOCUMENT_WORKER")
 
     # Web search (Tavily) — leave empty until you add the key; tool degrades gracefully

@@ -16,6 +16,143 @@ from pai.services.person.profile_snapshot import load_typed_profile_records
 from pai.services.vault.service import VaultService
 
 
+class CounselorContext(BaseModel):
+    """Compact counselor prompt + stay payload. Not the full Person dump."""
+
+    person_id: str
+    identity: dict[str, Any] = Field(default_factory=dict)
+    goal: str | None = None
+    education: str | None = None
+    location: str | None = None
+    budget: str | None = None
+    tests: list[str] = Field(default_factory=list)
+    universities: list[str] = Field(default_factory=list)
+    known_facts: list[str] = Field(default_factory=list)
+    missing_critical_fields: list[str] = Field(default_factory=list)
+    recent_messages: list[dict[str, str]] = Field(default_factory=list)
+    relevant_memory: list[str] = Field(default_factory=list)
+    active_tasks: list[dict[str, str]] = Field(default_factory=list)
+
+    def profile_block(self) -> str:
+        lines = []
+        if self.goal:
+            lines.append(f"goal: {self.goal}")
+        if self.education:
+            lines.append(f"education: {self.education}")
+        if self.location:
+            lines.append(f"location: {self.location}")
+        if self.budget:
+            lines.append(f"budget: {self.budget}")
+        if self.tests:
+            lines.append("tests: " + "; ".join(self.tests[:6]))
+        if self.universities:
+            lines.append("universities: " + "; ".join(self.universities[:6]))
+        if self.relevant_memory:
+            lines.append("memory: " + " | ".join(self.relevant_memory[:5]))
+        if self.missing_critical_fields:
+            lines.append("gaps: " + ", ".join(self.missing_critical_fields[:4]))
+        return "\n".join(lines) if lines else "(no stored profile yet)"
+
+
+_profile_cache: dict[str, tuple[int, dict[str, Any]]] = {}
+
+
+def _fact_after(facts: list[str], *prefixes: str) -> str | None:
+    for item in facts:
+        key = item.split(":", 1)[0].strip().casefold()
+        if any(key.startswith(prefix) for prefix in prefixes):
+            return item.split(":", 1)[-1].strip() or None
+    return None
+
+
+def _facts_all(facts: list[str], *prefixes: str) -> list[str]:
+    out: list[str] = []
+    for item in facts:
+        key = item.split(":", 1)[0].strip().casefold()
+        if any(key.startswith(prefix) for prefix in prefixes):
+            value = item.split(":", 1)[-1].strip()
+            if value:
+                out.append(value)
+    return out
+
+
+async def build_counselor_context(
+    session: AsyncSession,
+    person: Person,
+    *,
+    conversation_id: uuid.UUID | None = None,
+    settings: Settings | None = None,
+    semantic_memory: str = "",
+) -> CounselorContext:
+    """Vault + goals + last messages. No documents, cross-thread, or task fan-out."""
+    settings = settings or get_settings()
+    if person.vault is None:
+        await session.refresh(person, attribute_names=["vault"])
+    version = int(getattr(person.vault, "version", 0) or 0) if person.vault else 0
+    cached = _profile_cache.get(str(person.id))
+    identity = {
+        "email": person.email,
+        "fullName": person.full_name,
+        "preferredName": person.preferred_name,
+    }
+    if cached and cached[0] == version:
+        facts = list(cached[1].get("facts") or [])
+        missing = list(cached[1].get("missing") or [])
+    else:
+        typed_records = await load_typed_profile_records(session, person.id)
+        vault_svc = VaultService(settings)
+        unified = await vault_svc.get_unified_vault(
+            session,
+            person,
+            include_sensitive=False,
+            typed_records=typed_records,
+        )
+        completion = unified.get("completion") or {}
+        sparse = unified.get("sparseFields") or {}
+        from pai.services.journey.service import goal_fact_lines
+
+        facts = await goal_fact_lines(session, person.id)
+        facts.extend(build_known_facts(identity=identity, sparse=sparse, typed=typed_records))
+        missing = _advice_gaps(completion.get("missingCriticalFields") or [])
+        _profile_cache[str(person.id)] = (version, {"facts": facts, "missing": missing})
+    recent: list[dict[str, str]] = []
+    if conversation_id:
+        result = await session.execute(
+            select(Message)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.person_id == person.id,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(settings.chat_recent_message_limit)
+        )
+        rows = list(reversed(result.scalars().all()))
+        recent = [{"role": m.role, "content": m.content} for m in rows]
+    memory_lines = [
+        line.strip(" -")
+        for line in (semantic_memory or "").splitlines()
+        if line.strip() and not line.strip().startswith("Relevant context")
+    ]
+    return CounselorContext(
+        person_id=str(person.id),
+        identity=identity,
+        goal=_fact_after(facts, "current goal"),
+        education=_fact_after(facts, "education"),
+        location=_fact_after(facts, "current city", "current country", "location"),
+        budget=_fact_after(facts, "budget", "funding"),
+        tests=_facts_all(facts, "test"),
+        universities=_facts_all(facts, "target universit"),
+        known_facts=facts[:16],
+        missing_critical_fields=missing,
+        recent_messages=recent,
+        relevant_memory=memory_lines[:5],
+    )
+
+
+def invalidate_counselor_cache(person_id: uuid.UUID | str) -> None:
+    _profile_cache.pop(str(person_id), None)
+
+
 class PersonContextPack(BaseModel):
     person_id: str
     identity: dict[str, Any] = Field(default_factory=dict)
@@ -289,7 +426,7 @@ async def build_student_context_pack(
     return pack
 
 
-def context_pack_to_json(pack: PersonContextPack | StudentContextPack) -> str:
+def context_pack_to_json(pack: BaseModel | PersonContextPack | StudentContextPack) -> str:
     return json.dumps(pack.model_dump(), default=str)
 
 

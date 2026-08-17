@@ -99,6 +99,7 @@ class StudentConversationAgent:
         conversation_id: str = "",
         tool_registry: ToolRegistry | None = None,
         enable_tools: bool | None = None,
+        profile_block: str = "",
         web_search_available: bool = False,
         # Backward-compatible unused kwargs from older callers/tests
         recent_messages_json: str = "[]",
@@ -116,15 +117,26 @@ class StudentConversationAgent:
                     facts = [f"{k}: {v}" for k, v in parsed.items()]
             except Exception:
                 facts = []
+        try:
+            recent = json.loads(recent_messages_json) if recent_messages_json else []
+        except Exception:
+            recent = []
+        if not isinstance(recent, list):
+            recent = []
         prompt_vars: dict[str, Any] = {
             "current_message": current_message,
-            "student_context": student_context_json,
-            "known_facts": facts or [],
-            "semantic_memory_context": semantic_memory_context or "(none)",
-            "pending_confirmations": pending_confirmations_json,
-            "applied_vault_changes": applied_vault_changes_json,
-            "task_results": task_results_json,
-            "web_search_available": web_search_available,
+            "profile_block": profile_block
+            or (
+                "\n".join(f"- {line}" for line in (facts or []))
+                if facts
+                else student_context_json
+            ),
+            "recent_turns": recent,
+            "web_note": (
+                "LIVE WEB is available via the web_search tool this turn."
+                if web_search_available
+                else ""
+            ),
         }
 
         use_tools = (

@@ -323,11 +323,15 @@ def test_vault_batch_write_uses_one_select():
     class _Session:
         def __init__(self) -> None:
             self.queries = 0
+            self.flushes = 0
             self.added: list[object] = []
 
         async def execute(self, _stmt):
             self.queries += 1
             return SimpleNamespace(scalars=lambda: [])
+
+        async def flush(self) -> None:
+            self.flushes += 1
 
         def add(self, obj) -> None:
             self.added.append(obj)
@@ -352,6 +356,7 @@ def test_vault_batch_write_uses_one_select():
             skip_consent_check=True,
         )
         assert session.queries == 1
+        assert session.flushes == 1
         kinds = [type(obj) for obj in session.added]
         assert kinds.count(VaultValue) == 3
         assert kinds.count(VaultEvidence) == 3

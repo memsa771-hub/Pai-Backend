@@ -335,7 +335,7 @@ class VaultService:
         actor_type: str = "person",
         skip_consent_check: bool = False,
     ) -> None:
-        """Write many vault_value fields in one select. Flush happens with the request commit."""
+        """Write many vault_value fields in one select + one flush, then evidence rows."""
         if not items:
             return
         vault = person.vault
@@ -345,11 +345,16 @@ class VaultService:
         prepared: list[tuple[Any, Any]] = []
         for field_key, value in items:
             field = get_catalog_field(field_key)
-            if field is None:
-                raise UnknownFieldError()
-            if field.derived or not field.editable or field.storage != "vault_value":
-                raise FieldNotEditableError()
+            if (
+                field is None
+                or field.derived
+                or not field.editable
+                or field.storage != "vault_value"
+            ):
+                continue
             prepared.append((field, value))
+        if not prepared:
+            return
 
         if not skip_consent_check:
             needed = {field.consent_category for field, _ in prepared if field.consent_category}
@@ -370,6 +375,7 @@ class VaultService:
         for row in result.scalars():
             existing_by_key.setdefault(row.field_key, row)
 
+        pending: list[tuple[VaultValue, Any, Any]] = []
         scopes = list(vault.applicable_scopes or [])
         for field, value in prepared:
             existing = existing_by_key.get(field.key)
@@ -378,9 +384,8 @@ class VaultService:
                 old_val = existing.value
             else:
                 old_val = None
-            row_id = uuid.uuid4()
             row = VaultValue(
-                id=row_id,
+                id=uuid.uuid4(),
                 vault_id=vault.id,
                 field_key=field.key,
                 value=None if field.sensitive else value,
@@ -391,9 +396,18 @@ class VaultService:
                 supersedes_id=existing.id if existing else None,
             )
             session.add(row)
+            pending.append((row, value, old_val))
+            existing_by_key[field.key] = row
+            if field.applicable_scope not in scopes:
+                scopes.append(field.applicable_scope)
+        if scopes != list(vault.applicable_scopes or []):
+            vault.applicable_scopes = scopes
+        # Parent rows must exist before vault_evidence FK inserts.
+        await session.flush()
+        for row, value, old_val in pending:
             session.add(
                 VaultEvidence(
-                    vault_value_id=row_id,
+                    vault_value_id=row.id,
                     source_type=source_type,
                     source_reference=str(person.id),
                     confidence=1.0,
@@ -402,7 +416,7 @@ class VaultService:
             session.add(
                 VaultHistory(
                     vault_id=vault.id,
-                    field_key=field.key,
+                    field_key=row.field_key,
                     action="updated" if old_val is not None else "created",
                     old_value=old_val,
                     new_value=value,
@@ -410,11 +424,6 @@ class VaultService:
                     actor_id=str(person.id),
                 )
             )
-            existing_by_key[field.key] = row
-            if field.applicable_scope not in scopes:
-                scopes.append(field.applicable_scope)
-        if scopes != list(vault.applicable_scopes or []):
-            vault.applicable_scopes = scopes
 
     async def ensure_consent(
         self, session: AsyncSession, person_id: uuid.UUID, category: str

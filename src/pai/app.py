@@ -156,6 +156,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content=error("VALIDATION_ERROR", humanize_validation_error(exc.errors())),
         )
 
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled request error")
+        return JSONResponse(
+            status_code=500,
+            content=error("INTERNAL_ERROR", "Request failed. Try again."),
+        )
+
     @app.get(
         "/health/live",
         tags=["health"],

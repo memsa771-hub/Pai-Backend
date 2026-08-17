@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.orchestration.schemas import CandidateResult, VaultCandidate
 from pai.orchestration.verifier import policy_decision, validate_candidate
-from pai.person.models import Person, VaultValue
-from pai.vault.catalog import get_catalog_field
+from pai.services.person.models import Person, VaultValue
+from pai.services.vault.catalog import get_catalog_field
+from pai.tools.extraction.formation import assertion_of, is_vault_eligible
 
 
 def _normalize(value: Any) -> str:
@@ -41,6 +42,12 @@ def evaluate_candidate(
     existing_state: dict[str, Any],
 ) -> CandidateResult:
     """Pure evaluation against a preloaded vault snapshot."""
+    if not is_vault_eligible(candidate):
+        return CandidateResult(
+            candidate=candidate,
+            outcome="reject",
+            rationale_summary="Not student vault truth (observed / attributed / non-asserted)",
+        )
     validated = validate_candidate(candidate)
     if validated is None:
         return CandidateResult(
@@ -60,7 +67,7 @@ def evaluate_candidate(
             rationale_summary="Same normalized value already active",
         )
     if existing_val is not None and _normalize(existing_val) != _normalize(candidate.value):
-        if candidate.is_correction and candidate.explicitness == "explicit":
+        if candidate.is_correction and assertion_of(candidate) == "explicit":
             pass
         else:
             return CandidateResult(
@@ -70,7 +77,11 @@ def evaluate_candidate(
             )
 
     if candidate.requires_confirmation or field.sensitive:
-        if candidate.explicitness == "explicit" and not field.sensitive:
+        if (
+            candidate.explicitness == "explicit"
+            and assertion_of(candidate) == "explicit"
+            and not field.sensitive
+        ):
             decision = policy_decision(validated)
         else:
             return CandidateResult(

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from pai.intelligence.vault_intel.boosters import run_deterministic_boosters
-from pai.intelligence.vault_intel.merge import merge_candidates
-from pai.intelligence.vault_intel.normalize import normalize_candidates
-from pai.intelligence.vault_intel.service import VaultIntelligenceService
+from pai.tools.extraction.boosters import run_deterministic_boosters
+from pai.tools.extraction.merge import merge_candidates
+from pai.tools.extraction.normalize import normalize_candidates
+from pai.tools.extraction.service import VaultIntelligenceService
 from pai.orchestration.schemas import VaultCandidate
 
 
@@ -113,3 +113,184 @@ def test_vault_intel_registers_future_sources(test_settings):
     assert "document" in sources
     assert "linkedin" in sources
     assert "social" in sources
+
+
+def test_grounding_keeps_verbatim_and_drops_hallucination():
+    from pai.tools.extraction.ground import ground_candidates
+
+    source = "I want to study locally in FAST"
+    kept = VaultCandidate(
+        field_key="application.target_universities",
+        value=["FAST"],
+        confidence=0.9,
+        source_reference="m1",
+        evidence_text="study locally in FAST",
+    )
+    fake = VaultCandidate(
+        field_key="location.current_city",
+        value="Mars",
+        confidence=0.9,
+        source_reference="m1",
+        evidence_text="I live on Mars",
+    )
+    out = ground_candidates([kept, fake], source)
+    assert [row.field_key for row in out] == ["application.target_universities"]
+
+
+def test_grounding_drops_empty_evidence():
+    from pai.tools.extraction.ground import ground_candidates
+
+    source = "I want Germany"
+    blank = VaultCandidate(
+        field_key="application.study_country",
+        value="DE",
+        confidence=0.9,
+        source_reference="m1",
+        evidence_text="",
+    )
+    assert ground_candidates([blank], source) == []
+
+
+def test_normalize_keeps_other_potential_facts():
+    raw = [
+        VaultCandidate(
+            field_key="memory.observed",
+            value="Parents prefer Germany",
+            confidence=0.8,
+            evidence_text="my parents are more comfortable with Germany",
+            source_reference="m1",
+        ),
+        VaultCandidate(
+            field_key="OTHER_POTENTIAL_FACT",
+            value="Brother thinks Germany is better",
+            confidence=0.7,
+            evidence_text="My brother thinks Germany is better",
+            source_reference="m1",
+        ),
+    ]
+    out = normalize_candidates(raw)
+    assert len(out) == 2
+    assert all(c.field_key == "memory.observed" for c in out)
+    assert all(c.fact_type == "OTHER_POTENTIAL_FACT" for c in out)
+
+
+def test_merge_keeps_distinct_jobs_and_observed():
+    jobs = [
+        VaultCandidate(
+            field_key="career.work_history",
+            value={"organization": "Acme", "title": "Intern"},
+            confidence=0.9,
+            evidence_text="Intern at Acme",
+            source_reference="m1",
+        ),
+        VaultCandidate(
+            field_key="career.work_history",
+            value={"organization": "Beta", "title": "Tutor"},
+            confidence=0.9,
+            evidence_text="Tutor at Beta",
+            source_reference="m1",
+        ),
+    ]
+    observed = [
+        VaultCandidate(
+            field_key="memory.observed",
+            value="Parents prefer Germany",
+            confidence=0.8,
+            evidence_text="parents are more comfortable with Germany",
+            source_reference="m1",
+        ),
+        VaultCandidate(
+            field_key="memory.observed",
+            value="US tuition too expensive",
+            confidence=0.8,
+            evidence_text="US tuition is too expensive",
+            source_reference="m1",
+        ),
+    ]
+    merged = merge_candidates(jobs, observed)
+    assert len(merged) == 4
+
+
+def test_partition_keeps_negation_attribution_and_other_out_of_vault():
+    from pai.orchestration.candidate_eval import evaluate_candidate
+    from pai.orchestration.verifier import policy_decision
+    from pai.tools.extraction.formation import partition_candidates
+
+    negated = VaultCandidate(
+        field_key="application.study_country",
+        value="US",
+        confidence=0.95,
+        source_reference="m1",
+        evidence_text="I don't want the US",
+        assertion_status="negated",
+    )
+    maybe = VaultCandidate(
+        field_key="application.study_country",
+        value="US",
+        confidence=0.9,
+        source_reference="m1",
+        evidence_text="If I get a scholarship, maybe I'll consider the US",
+        assertion_status="hypothetical",
+    )
+    brother = VaultCandidate(
+        field_key="application.study_country",
+        value="DE",
+        confidence=0.9,
+        source_reference="m1",
+        evidence_text="My brother thinks Germany is better",
+        attributed_to="brother",
+        assertion_status="explicit",
+    )
+    other = VaultCandidate(
+        field_key="memory.observed",
+        value="Parents prefer Germany",
+        confidence=0.8,
+        source_reference="m1",
+        evidence_text="parents are more comfortable with Germany",
+        fact_type="OTHER_POTENTIAL_FACT",
+    )
+    explicit = VaultCandidate(
+        field_key="application.study_country",
+        value="DE",
+        confidence=0.95,
+        source_reference="m1",
+        evidence_text="I want Germany",
+        assertion_status="explicit",
+    )
+    vault, observed = partition_candidates([negated, maybe, brother, other, explicit])
+    assert [c.field_key for c in vault] == ["application.study_country"]
+    assert vault[0].value == "DE"
+    assert len(observed) == 4
+    assert evaluate_candidate(negated, {"active_values": {}}).outcome == "reject"
+    assert evaluate_candidate(brother, {"active_values": {}}).outcome == "reject"
+    assert policy_decision(maybe) == "reject"
+
+    inferred = VaultCandidate(
+        field_key="preferences.preferred_language",
+        value="en",
+        confidence=0.86,
+        source_reference="m1",
+        evidence_text="English please",
+        assertion_status="inferred",
+    )
+    result = evaluate_candidate(inferred, {"active_values": {}})
+    assert result.outcome == "pending_confirmation"
+
+
+def test_omnibus_prompt_is_recall_first_not_summarize():
+    from pai.services.vault.catalog import extraction_catalog_hint
+    from pai.tools.extraction.llm_extractor import _render
+
+    text = _render(
+        "omnibus.v1.jinja2",
+        source="chat",
+        source_reference="m1",
+        document_type_hint="",
+        known_facts=["budget = $15,000"],
+        catalog_hint=extraction_catalog_hint(),
+        text="I don't want the US",
+    )
+    assert "Do NOT summarize" in text
+    assert "assertion_status" in text
+    assert "memory.observed" in text
+    assert "What should I remember" not in text

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from pai.orchestration.schemas import VaultCandidate
-from pai.vault.catalog import get_catalog_field
+from pai.orchestration.schemas import OBSERVED_FIELD_KEY, VaultCandidate
+from pai.services.vault.catalog import get_catalog_field
+from pai.tools.extraction.formation import assertion_of
 
 
 def validate_candidate(candidate: VaultCandidate) -> VaultCandidate | None:
+    if candidate.field_key == OBSERVED_FIELD_KEY:
+        return None
     field = get_catalog_field(candidate.field_key)
     if field is None or field.derived or not field.editable:
         return None
@@ -56,11 +59,18 @@ def policy_decision(candidate: VaultCandidate, *, from_document: bool = False) -
     field = get_catalog_field(candidate.field_key)
     if field is None:
         return "reject"
+    status = assertion_of(candidate)
+    if status in ("negated", "hypothetical"):
+        return "reject"
     if candidate.requires_confirmation:
         return "pending"
     if field.sensitive and candidate.confidence < 0.95:
         return "pending"
+    if status == "uncertain":
+        return "pending"
     accept_at = 0.80 if from_document and not field.sensitive else 0.85
+    if status == "inferred":
+        accept_at = max(accept_at, 0.90)
     if candidate.confidence >= accept_at and not field.sensitive:
         return "accept"
     if candidate.confidence >= 0.7:

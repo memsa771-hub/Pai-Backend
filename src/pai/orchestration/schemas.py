@@ -3,13 +3,19 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 Explicitness = Literal["explicit", "strongly_implied", "uncertain"]
+AssertionStatus = Literal[
+    "explicit", "inferred", "uncertain", "negated", "hypothetical"
+]
 CandidateOutcome = Literal[
     "accept", "reinforce", "pending_confirmation", "conflict", "reject"
 ]
+
+# Escape hatch: not a Vault catalog key. Survives extraction, never auto-writes Vault.
+OBSERVED_FIELD_KEY = "memory.observed"
 
 
 class VaultCandidate(BaseModel):
@@ -18,6 +24,9 @@ class VaultCandidate(BaseModel):
     value: Any
     confidence: float = Field(ge=0.0, le=1.0)
     explicitness: Explicitness = "explicit"
+    assertion_status: AssertionStatus = "explicit"
+    attributed_to: str | None = None
+    fact_type: str | None = None
     source_type: Literal[
         "chat", "document", "manual", "auth", "system", "linkedin", "social"
     ] = "chat"
@@ -26,6 +35,30 @@ class VaultCandidate(BaseModel):
     is_correction: bool = False
     requires_confirmation: bool = False
     rationale_summary: str = ""
+
+    @field_validator("assertion_status", mode="before")
+    @classmethod
+    def _assertion_status_token(cls, value: object) -> object:
+        if isinstance(value, str):
+            token = value.strip().lower()
+            aliases = {"strongly_implied": "inferred", "implied": "inferred"}
+            token = aliases.get(token, token)
+            allowed = {
+                "explicit",
+                "inferred",
+                "uncertain",
+                "negated",
+                "hypothetical",
+            }
+            return token if token in allowed else "uncertain"
+        return value
+
+    @field_validator("attributed_to", mode="before")
+    @classmethod
+    def _attributed_to_token(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
 
 class CandidateResult(BaseModel):
@@ -69,8 +102,19 @@ class ConversationResult(BaseModel):
     task_proposals: list[TaskProposal] = Field(default_factory=list)
 
 
+class GoalExtract(BaseModel):
+    """Living brief in the student's words — not a country/uni enum."""
+
+    stated: bool = False
+    intent: str | None = None
+    mode: Literal["pursuing", "exploring"] | None = None
+    supersedes_previous: bool = False
+    evidence_text: str | None = None
+
+
 class FactExtractionResult(BaseModel):
     fact_candidates: list[VaultCandidate] = Field(default_factory=list)
+    current_goal: GoalExtract | None = None
 
 
 class RunError(BaseModel):

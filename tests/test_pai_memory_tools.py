@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from pai.memory.service import PersonMemoryService
+from pai.services.memory.service import PersonMemoryService
 from pai.orchestration.prompts import validate_prompt_templates
 from pai.tools.base import ToolContext
 from pai.tools.registry import build_default_registry

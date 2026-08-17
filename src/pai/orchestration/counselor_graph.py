@@ -9,7 +9,7 @@ from langgraph.graph import END, StateGraph
 from pai.config import Settings
 from pai.llm.gateway import LLMGateway
 from pai.llm.schemas import LLMMessage, LLMResponse, LLMToolCall, LLMToolCallFunction
-from pai.memory.service import PersonMemoryService
+from pai.services.memory.service import PersonMemoryService
 from pai.orchestration.prompts import render_template
 from pai.orchestration.schemas import ConversationResult
 from pai.tools.base import ToolContext

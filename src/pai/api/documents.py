@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.dependencies import get_db, require_onboarding_complete
-from pai.documents.models import DocumentCandidate
-from pai.documents.service import (
+from pai.services.documents.models import DocumentCandidate
+from pai.services.documents.service import (
     create_document_upload,
     enqueue_reprocess,
     get_document_owned,
@@ -65,7 +65,7 @@ async def list_documents(
     session: Annotated[AsyncSession, Depends(get_db)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    from pai.documents.models import Document
+    from pai.services.documents.models import Document
 
     result = await session.execute(
         select(Document).where(Document.person_id == person.id).order_by(Document.created_at.desc())

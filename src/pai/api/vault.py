@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.dependencies import get_db, resolve_person_from_token
 from pai.schemas import success
-from pai.vault.catalog import CATALOG_VERSION, VAULT_CATALOG
-from pai.vault.completion import build_vault_status
-from pai.vault.service import VaultService
+from pai.services.vault.catalog import CATALOG_VERSION, VAULT_CATALOG
+from pai.services.vault.completion import build_vault_status
+from pai.services.vault.service import VaultService
 
 router = APIRouter(prefix="/api/v1/vault", tags=["vault"])
 

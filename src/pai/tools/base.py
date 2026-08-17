@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from pai.config import Settings
-from pai.memory.service import PersonMemoryService
+from pai.services.memory.service import PersonMemoryService
 
 
 @dataclass

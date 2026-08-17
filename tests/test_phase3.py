@@ -63,7 +63,7 @@ def test_prompt_render_student_conversation():
     )
     assert "PAI" in text or "student" in text.lower()
     assert "missing_critical_fields" in text
-    from pai.intelligence.vault_intel.llm_extractor import _render as render_intel
+    from pai.tools.extraction.llm_extractor import _render as render_intel
 
     extract = render_intel(
         "omnibus.v1.jinja2",
@@ -79,7 +79,7 @@ def test_prompt_render_student_conversation():
     system = render_template("system.v1.jinja2")
     assert "Do not assume Pakistan" in system
     assert "missing_critical_fields" in system
-    from pai.vault.catalog import extraction_catalog_hint
+    from pai.services.vault.catalog import extraction_catalog_hint
 
     full = render_intel(
         "omnibus.v1.jinja2",
@@ -313,9 +313,9 @@ def test_claim_job_skip_locked(postgres_ready, test_settings):
     from datetime import UTC, datetime
 
     from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.documents.models import Document, DocumentJob
-    from pai.documents.service import claim_next_job
-    from pai.person.models import Person
+    from pai.services.documents.models import Document, DocumentJob
+    from pai.services.documents.service import claim_next_job
+    from pai.services.person.models import Person
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

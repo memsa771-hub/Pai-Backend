@@ -54,6 +54,7 @@ class LLMRequest(BaseModel):
     model: str | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
+    response_format: dict[str, Any] | None = None
 
 
 class LLMResponse(BaseModel):

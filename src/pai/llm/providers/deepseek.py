@@ -51,6 +51,8 @@ class DeepSeekProvider:
             payload["tools"] = request.tools
             if request.tool_choice is not None:
                 payload["tool_choice"] = request.tool_choice
+        if request.response_format:
+            payload["response_format"] = request.response_format
         headers = {
             "Authorization": f"Bearer {self._settings.deepseek_api_key}",
             "Content-Type": "application/json",
@@ -107,6 +109,7 @@ class DeepSeekProvider:
                 max_tokens=request.max_tokens,
                 timeout_seconds=request.timeout_seconds,
                 model=request.model,
+                response_format={"type": "json_object"},
             )
         )
         text = raw.content.strip()

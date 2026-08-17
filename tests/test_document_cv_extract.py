@@ -5,10 +5,10 @@ from __future__ import annotations
 import io
 import zipfile
 
-from pai.documents.text import extract_text_from_bytes
+from pai.services.documents.text import extract_text_from_bytes
 from pai.orchestration.schemas import VaultCandidate
 from pai.orchestration.verifier import policy_decision, validate_candidate
-from pai.vault.catalog import extraction_catalog_hint, get_catalog_field
+from pai.services.vault.catalog import extraction_catalog_hint, get_catalog_field
 
 
 def _docx_with_text(text: str) -> bytes:
@@ -52,6 +52,7 @@ def test_catalog_tells_llm_about_career_writes():
     hint = extraction_catalog_hint()
     assert "career.work_history" in hint
     assert "career.skills" in hint
+    assert "memory.observed" in hint
     skills = get_catalog_field("career.skills")
     assert skills is not None
     assert skills.editable is True
@@ -81,7 +82,7 @@ def test_cv_career_candidates_validate():
 
 
 def test_omnibus_cv_prompt_asks_for_full_resume():
-    from pai.intelligence.vault_intel.llm_extractor import _render
+    from pai.tools.extraction.llm_extractor import _render
 
     text = _render(
         "omnibus.v1.jinja2",

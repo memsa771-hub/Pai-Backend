@@ -23,12 +23,12 @@ from pai.api.vault import router as vault_router
 from pai.config import Settings, get_settings
 from pai.core.errors import AuthError
 from pai.data.db import warmup_database
-from pai.documents.worker import document_worker_loop
+from pai.services.documents.worker import document_worker_loop
 from pai.llm.gateway import LLMGateway
 from pai.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
 from pai.orchestration.checkpoint import close_graph_checkpointer, init_graph_checkpointer
 from pai.orchestration.prompts import validate_prompt_templates
-from pai.providers.supabase import SupabaseAuthProvider
+from pai.auth.supabase import SupabaseAuthProvider
 from pai.schemas import error, humanize_validation_error, success
 
 logger = logging.getLogger(__name__)

@@ -26,6 +26,7 @@ class PAIState(TypedDict, total=False):
     extraction_required: bool
 
     fact_candidates: list[VaultCandidate]
+    observed_candidates: list[VaultCandidate]
     candidate_results: list[CandidateResult]
     applied_vault_changes: list[VaultChange]
     pending_confirmations: list[PendingConfirmation]
@@ -44,4 +45,5 @@ class PAIState(TypedDict, total=False):
     orchestration_llm_calls: int
     semantic_memory_context: str
     tool_trace: list[dict[str, Any]]
+    goal_updated: bool
     _session_bound: Any

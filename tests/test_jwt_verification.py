@@ -6,7 +6,7 @@ import pytest
 from jose import jwt
 
 from pai.core.errors import InvalidTokenError
-from pai.security.jwt import reset_jwks_cache_for_tests, validate_access_token
+from pai.auth.jwt import reset_jwks_cache_for_tests, validate_access_token
 
 
 def test_hs256_token_still_validates(test_settings):

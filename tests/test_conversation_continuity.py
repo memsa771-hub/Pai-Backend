@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pai.conversations.service import get_or_create_person_conversation
+from pai.services.conversations.service import get_or_create_person_conversation
 from pai.orchestration.context import build_known_facts
 
 
@@ -94,10 +94,10 @@ def test_chat_starters_use_study_country():
 
 @pytest.mark.asyncio
 async def test_person_always_gets_the_same_conversation(postgres_ready):
-    from pai.core.provider import ProviderUser
+    from pai.auth.provider import ProviderUser
     from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.person.models import Person
-    from pai.person.service import PersonBootstrapService
+    from pai.services.person.models import Person
+    from pai.services.person.service import PersonBootstrapService
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

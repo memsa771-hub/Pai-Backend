@@ -6,18 +6,18 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.core.provider import AuthProvider
+from pai.auth.provider import AuthProvider
 from pai.dependencies import (
     get_auth_provider,
     get_db,
     get_validated_access_token,
     resolve_person_from_token,
 )
-from pai.person.service import (
+from pai.services.person.service import (
     PersonBootstrapService,
     update_person_profile,
 )
-from pai.person.typed_resources import (
+from pai.services.person.typed_resources import (
     MODELS,
     create_resource,
     delete_resource,
@@ -94,6 +94,35 @@ async def get_person_me(
                     else None
                 ),
                 "onboardingPath": person.onboarding_path,
+            }
+        )
+    )
+
+
+@router.get("/journey")
+async def get_person_journey(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    person=Depends(resolve_person_from_token),
+    limit: int = Query(20, ge=1, le=50),
+) -> JSONResponse:
+    from pai.services.journey.service import (
+        event_to_public,
+        goal_to_public,
+        list_goal_versions,
+        list_recent_events,
+    )
+
+    versions = await list_goal_versions(session, person.id, limit=6)
+    current = next((row for row in versions if row.status == "active"), None)
+    history = [row for row in versions if row.status == "superseded"]
+    events = await list_recent_events(session, person.id, limit=limit)
+    return JSONResponse(
+        content=success(
+            {
+                "currentGoal": goal_to_public(current) if current else None,
+                "previousGoal": goal_to_public(history[0]) if history else None,
+                "goalHistory": [goal_to_public(row) for row in history],
+                "events": [event_to_public(row) for row in events],
             }
         )
     )

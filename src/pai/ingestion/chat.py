@@ -6,12 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
 from pai.core.errors import AuthError
-from pai.conversations.models import Message
-from pai.conversations.service import save_assistant_message, start_orchestration_run
+from pai.services.conversations.models import Message
+from pai.services.conversations.service import save_assistant_message, start_orchestration_run
 from pai.llm.gateway import LLMGateway
 from pai.orchestration.context import chat_stay_payload
 from pai.orchestration.orchestrator import PAIOrchestrator
-from pai.person.models import Person
+from pai.services.person.models import Person
 
 
 async def handle_user_message(

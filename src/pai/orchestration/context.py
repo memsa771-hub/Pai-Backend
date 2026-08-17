@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.conversations.models import Conversation, Message
-from pai.documents.models import Document
-from pai.person.models import Person, VaultValue
-from pai.person.profile_snapshot import load_typed_profile_records
-from pai.vault.service import VaultService
+from pai.services.conversations.models import Conversation, Message
+from pai.services.documents.models import Document
+from pai.services.person.models import Person, VaultValue
+from pai.services.person.profile_snapshot import load_typed_profile_records
+from pai.services.vault.service import VaultService
 
 
 class PersonContextPack(BaseModel):
@@ -56,7 +56,7 @@ def _advice_gaps(missing: list[str]) -> list[str]:
     return [key for key in missing if key in _ADVICE_GAPS]
 
 
-from pai.tasks.service import list_tasks_for_person
+from pai.services.tasks.service import list_tasks_for_person
 
 
 def _sparse_value(entry: Any) -> Any:
@@ -251,7 +251,10 @@ async def build_person_context_pack(
         "fullName": person.full_name,
         "preferredName": person.preferred_name,
     }
-    known = build_known_facts(identity=identity, sparse=sparse, typed=typed_records)
+    from pai.services.journey.service import goal_fact_lines
+
+    known = await goal_fact_lines(session, person.id)
+    known.extend(build_known_facts(identity=identity, sparse=sparse, typed=typed_records))
     return PersonContextPack(
         person_id=str(person.id),
         identity=identity,

@@ -9,12 +9,13 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
-from pai.conversations.models import Message, OrchestrationRun
-from pai.conversations import service as conv_svc
+from pai.services.conversations.models import Message, OrchestrationRun
+from pai.services.conversations import service as conv_svc
 from pai.data.db import get_session_factory
 from pai.ingestion.vault_apply import process_candidates
 from pai.llm.gateway import LLMGateway
-from pai.memory.service import PersonMemoryService
+from pai.services.memory.formation import apply_memory_drafts, drafts_from_turn
+from pai.services.memory.service import PersonMemoryService
 from pai.orchestration.agents import FactExtractionAgent, StudentConversationAgent
 from pai.orchestration.candidate_eval import evaluate_candidates_batch
 from pai.orchestration.checkpoint import get_graph_checkpointer
@@ -30,8 +31,9 @@ from pai.orchestration.schemas import (
     VaultChange,
 )
 from pai.orchestration.state import PAIState
-from pai.person.models import Person
-from pai.tasks.service import process_task_proposals
+from pai.services.person.models import Person
+from pai.services.tasks.service import process_task_proposals
+from pai.tools.extraction.formation import partition_candidates
 from pai.tools.registry import build_turn_registry
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,7 @@ class PAIOrchestrator:
             "student_context_json": "{}",
             "extraction_required": should_extract_facts(user_message.content),
             "fact_candidates": [],
+            "observed_candidates": [],
             "candidate_results": [],
             "applied_vault_changes": [],
             "pending_confirmations": [],
@@ -166,7 +169,12 @@ class PAIOrchestrator:
         return state
 
     async def node_route_turn(self, state: PAIState) -> PAIState:
-        state["extraction_required"] = should_extract_facts(state["user_message"])
+        required = should_extract_facts(state["user_message"])
+        state["extraction_required"] = required
+        if not required:
+            updated = await self._capture_goal(state["user_message"], llm_goal=None)
+            if updated:
+                await self._inject_goal_facts(state)
         return state
 
     async def node_extract_facts(self, state: PAIState) -> PAIState:
@@ -174,6 +182,9 @@ class PAIOrchestrator:
             state.setdefault("errors", []).append(
                 RunError(code="LLM_LIMIT", message="LLM call limit reached", step="extract_facts")
             )
+            updated = await self._capture_goal(state["user_message"], llm_goal=None)
+            if updated:
+                state["goal_updated"] = True
             return state
         pack = state.get("student_context")
         known_facts = list(getattr(pack, "known_facts", None) or [])
@@ -184,7 +195,9 @@ class PAIOrchestrator:
             person_id=state.get("person_id"),
             memory=self._memory,
         )
-        state["fact_candidates"] = candidates
+        vault, observed = partition_candidates(candidates)
+        state["fact_candidates"] = vault
+        state["observed_candidates"] = observed
         bundle = getattr(self._fact_agent, "last_bundle", None)
         if bundle is not None:
             state.setdefault("tool_trace", []).append(
@@ -200,6 +213,12 @@ class PAIOrchestrator:
             )
         if bundle is not None and int(getattr(bundle, "provider_calls", 0) or 0) > 0:
             state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
+        updated = await self._capture_goal(
+            state["user_message"],
+            llm_goal=getattr(bundle, "current_goal", None) if bundle is not None else None,
+        )
+        if updated:
+            state["goal_updated"] = True
         if self._run:
             self._run.current_step = "validate_candidates"
         return state
@@ -258,25 +277,26 @@ class PAIOrchestrator:
                         source_reference=p.source_reference,
                     )
                 )
+        results = state.get("candidate_results") or []
+        drafts = drafts_from_turn(
+            accepted=[
+                r.candidate
+                for r in results
+                if r.outcome in ("accept", "reinforce")
+            ],
+            pending=[
+                r.candidate for r in results if r.outcome == "pending_confirmation"
+            ],
+            conflicts=[r.candidate for r in results if r.outcome == "conflict"],
+            observed=list(state.get("observed_candidates") or []),
+        )
+        if drafts:
+            try:
+                await apply_memory_drafts(self._session, self._person.id, drafts)
+            except Exception:
+                logger.exception("Memory formation failed")
+        if to_apply or drafts:
             await self._session.commit()
-            # Deterministic semantic memory from accepted facts (not LLM tool choice).
-            if self._memory and applied:
-                for change in applied:
-                    if change.status in ("rejected",):
-                        continue
-                    try:
-                        await self._memory.remember(
-                            f"Vault {change.status}: {change.field_key} "
-                            f"(confidence={change.confidence})",
-                            metadata={
-                                "type": "vault_fact",
-                                "source": "deterministic_apply",
-                                "field_key": change.field_key,
-                                "conversation_id": state["conversation_id"],
-                            },
-                        )
-                    except Exception:
-                        logger.exception("Deterministic memory write failed")
         state["applied_vault_changes"] = applied
         state["pending_confirmations"] = pending
         if self._run:
@@ -286,7 +306,7 @@ class PAIOrchestrator:
     async def node_refresh_student_context(self, state: PAIState) -> PAIState:
         assert self._session and self._person
         applied = state.get("applied_vault_changes") or []
-        if not applied:
+        if not applied and not state.get("goal_updated"):
             # No vault mutations — keep context from load_student_context.
             return state
         applied_json = [c.model_dump() for c in applied]
@@ -376,3 +396,29 @@ class PAIOrchestrator:
                 else None
             )
         return state
+
+    async def _capture_goal(self, text: str, *, llm_goal) -> bool:
+        assert self._session and self._person
+        from pai.services.journey.service import apply_goal_from_message
+
+        return await apply_goal_from_message(
+            self._session, self._person.id, text, llm_goal=llm_goal
+        )
+
+    async def _inject_goal_facts(self, state: PAIState) -> None:
+        assert self._session and self._person
+        from pai.services.journey.service import goal_fact_lines
+
+        pack = state.get("student_context")
+        if pack is None:
+            return
+        lines = await goal_fact_lines(self._session, self._person.id)
+        rest = [
+            item
+            for item in (getattr(pack, "known_facts", None) or [])
+            if not str(item).startswith("Current goal")
+            and not str(item).startswith("Previous goal")
+        ]
+        pack.known_facts = lines + rest
+        state["student_context"] = pack
+        state["student_context_json"] = context_pack_to_json(pack)

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.orchestration.schemas import VaultCandidate
-from pai.person.models import (
+from pai.services.person.models import (
     Certification,
     Education,
     Goal,
@@ -19,11 +19,11 @@ from pai.person.models import (
     VaultHistory,
     WorkExperience,
 )
-from pai.person.typed_resources import SCOPE_BY_RESOURCE
+from pai.services.person.typed_resources import SCOPE_BY_RESOURCE
 from pai.phone import normalize_phone
-from pai.vault.catalog import CatalogField
-from pai.vault.completion import apply_completion_to_vault
-from pai.vault.service import expand_scope_for_person
+from pai.services.vault.catalog import CatalogField
+from pai.services.vault.completion import apply_completion_to_vault
+from pai.services.vault.service import expand_scope_for_person
 
 
 class TypedApplyResult:

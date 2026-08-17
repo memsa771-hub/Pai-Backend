@@ -12,7 +12,7 @@ from pai.core.errors import (
     IncorrectPasswordError,
     UserNotFoundError,
 )
-from pai.core.provider import (
+from pai.auth.provider import (
     GenericActionResult,
     ProviderSession,
     ProviderUser,
@@ -284,7 +284,7 @@ async def _truncate_all(settings: Settings) -> None:
     async with factory() as session:
         await session.execute(
             text(
-                "TRUNCATE student_tasks, person_semantic_memories, conversations, messages, orchestration_runs, document_candidates, "
+                "TRUNCATE student_tasks, person_semantic_memories, person_events, person_decisions, conversations, messages, orchestration_runs, document_candidates, "
                 "document_jobs, documents, persons, person_vaults, educations, work_experiences, "
                 "projects, skills, certifications, goals, vault_values, vault_evidence, "
                 "vault_history, person_consents RESTART IDENTITY CASCADE"

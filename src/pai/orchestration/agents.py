@@ -5,11 +5,11 @@ import logging
 from typing import Any
 
 from pai.config import Settings, get_settings
-from pai.intelligence.vault_intel.service import VaultIntelligenceService
-from pai.intelligence.vault_intel.types import ExtractionBundle
+from pai.tools.extraction.service import VaultIntelligenceService
+from pai.tools.extraction.types import ExtractionBundle
 from pai.llm.gateway import LLMGateway
 from pai.llm.schemas import LLMMessage
-from pai.memory.service import PersonMemoryService
+from pai.services.memory.service import PersonMemoryService
 from pai.orchestration.counselor_graph import run_counselor_with_tools
 from pai.orchestration.prompts import render_template
 from pai.orchestration.schemas import ConversationResult, VaultCandidate

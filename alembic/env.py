@@ -9,11 +9,12 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 
 from pai.data.base import Base
-import pai.person.models  # noqa: F401
-import pai.conversations.models  # noqa: F401
-import pai.documents.models  # noqa: F401
-import pai.tasks.models  # noqa: F401
-import pai.memory.models  # noqa: F401
+import pai.services.person.models  # noqa: F401
+import pai.services.conversations.models  # noqa: F401
+import pai.services.documents.models  # noqa: F401
+import pai.services.tasks.models  # noqa: F401
+import pai.services.memory.models  # noqa: F401
+import pai.services.journey.models  # noqa: F401
 
 config = context.config
 

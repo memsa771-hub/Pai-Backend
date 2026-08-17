@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.conversations import service as conv_svc
+from pai.services.conversations import service as conv_svc
 from pai.dependencies import get_db, require_onboarding_complete
 from pai.ingestion.chat import handle_user_message
 from pai.schemas import ApiErrorResponse, success

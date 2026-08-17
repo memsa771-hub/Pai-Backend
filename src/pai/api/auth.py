@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.core.errors import AuthError, PersonNotFoundError
-from pai.core.provider import ProviderUser
-from pai.core.service import AuthService, SessionBundle
+from pai.auth.provider import ProviderUser
+from pai.auth.service import AuthService, SessionBundle
 from pai.data.db import get_session_factory
 from pai.dependencies import (
     get_db,
@@ -19,9 +19,9 @@ from pai.dependencies import (
     require_csrf,
     validate_access_token,
 )
-from pai.onboarding.service import onboarding_public_status
-from pai.person.models import Person
-from pai.person.service import (
+from pai.services.onboarding.service import onboarding_public_status
+from pai.services.person.models import Person
+from pai.services.person.service import (
     PersonBootstrapService,
     get_person_by_auth,
     soft_delete_person_data,

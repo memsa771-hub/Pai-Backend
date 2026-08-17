@@ -15,11 +15,11 @@ from pai.orchestration.verifier import (
     verification_level_for,
 )
 from pai.ingestion.typed_apply import apply_typed_candidate
-from pai.person.models import Person, VaultEvidence, VaultHistory, VaultValue
-from pai.vault.catalog import get_catalog_field
-from pai.vault.completion import apply_completion_to_vault
-from pai.vault.security import SensitiveValueCodec
-from pai.vault.service import _history_value
+from pai.services.person.models import Person, VaultEvidence, VaultHistory, VaultValue
+from pai.services.vault.catalog import get_catalog_field
+from pai.services.vault.completion import apply_completion_to_vault
+from pai.services.vault.security import SensitiveValueCodec
+from pai.services.vault.service import _history_value
 
 
 class VaultApplyResult(BaseModel):
@@ -188,4 +188,12 @@ async def process_candidates(
             mutated = True
     if mutated and person.vault is not None:
         await apply_completion_to_vault(session, person, person.vault)
+    if mutated:
+        from pai.services.journey.service import record_vault_applied
+
+        record_vault_applied(
+            session,
+            person.id,
+            [row.field_key for row in accepted if row.status != "pending"],
+        )
     return accepted, pending

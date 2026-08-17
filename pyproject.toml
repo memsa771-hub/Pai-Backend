@@ -57,7 +57,7 @@ packages = ["src/pai"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/pai/orchestration/prompts" = "pai/orchestration/prompts"
-"src/pai/intelligence/vault_intel/prompts" = "pai/intelligence/vault_intel/prompts"
+"src/pai/tools/extraction/prompts" = "pai/tools/extraction/prompts"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -4,8 +4,8 @@ import pytest
 from conftest import ONBOARDING_PAYLOAD
 from pydantic import ValidationError
 
-from pai.onboarding.enums import field_enum_catalog
-from pai.onboarding.schema import PATH_CHOICES, OnboardingSubmit
+from pai.services.onboarding.enums import field_enum_catalog
+from pai.services.onboarding.schema import PATH_CHOICES, OnboardingSubmit
 
 
 def test_enum_catalog_exposes_dropdown_ids():
@@ -241,7 +241,7 @@ def test_cv_choice_does_not_require_form_fields():
 def test_cv_upload_completes_onboarding_without_form(verified_user, monkeypatch):
     import uuid
 
-    from pai.documents.models import Document, DocumentJob
+    from pai.services.documents.models import Document, DocumentJob
 
     client, headers, _ = verified_user
 
@@ -274,8 +274,8 @@ def test_cv_upload_completes_onboarding_without_form(verified_user, monkeypatch)
         del session, settings, storage, gateway
         job.status = "completed"
 
-    monkeypatch.setattr("pai.documents.service.create_document_upload", fake_upload)
-    monkeypatch.setattr("pai.documents.service.process_document_job", fake_process)
+    monkeypatch.setattr("pai.services.documents.service.create_document_upload", fake_upload)
+    monkeypatch.setattr("pai.services.documents.service.process_document_job", fake_process)
 
     res = client.post(
         "/api/v1/onboarding/cv",
@@ -317,8 +317,8 @@ def test_vault_batch_write_uses_one_select():
 
     from cryptography.fernet import Fernet
 
-    from pai.person.models import VaultEvidence, VaultHistory, VaultValue
-    from pai.vault.service import VaultService
+    from pai.services.person.models import VaultEvidence, VaultHistory, VaultValue
+    from pai.services.vault.service import VaultService
 
     class _Session:
         def __init__(self) -> None:

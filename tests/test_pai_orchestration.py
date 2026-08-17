@@ -144,7 +144,7 @@ def test_invalid_llm_field_rejected_before_vault():
 @pytest.mark.asyncio
 async def test_evaluate_sensitive_pending(postgres_ready, test_settings):
     from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.person.models import Person, PersonVault
+    from pai.services.person.models import Person, PersonVault
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -280,8 +280,8 @@ def test_vault_candidate_fields_roundtrip():
 def test_duplicate_tasks_prevented(postgres_ready, test_settings):
     import asyncio
     from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.person.models import Person
-    from pai.tasks.service import process_task_proposals
+    from pai.services.person.models import Person
+    from pai.services.tasks.service import process_task_proposals
     from pai.orchestration.schemas import TaskProposal
 
     reset_engine_for_tests()
@@ -335,4 +335,23 @@ def test_substantive_turn_calls_extraction_then_conversation(test_settings):
     )
     # Short GPA line is booster-only — skip the extract LLM.
     assert mock.calls == ["ConversationResult"]
+
+
+def test_goal_statement_still_runs_extract_llm(test_settings):
+    gateway = LLMGateway(test_settings)
+    mock = SchemaRoutingMockProvider(
+        extraction=FactExtractionResult(fact_candidates=[]),
+        conversation=ConversationResult(reply="Got it."),
+    )
+    gateway.register_provider("deepseek", mock)
+    import asyncio
+
+    fact = FactExtractionAgent(gateway)
+    asyncio.run(
+        fact.extract_from_chat(
+            user_message="I want to study locally in FAST",
+            user_message_id="m1",
+        )
+    )
+    assert "FactExtractionResult" in mock.calls
 

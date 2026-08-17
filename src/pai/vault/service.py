@@ -32,6 +32,20 @@ class VaultService:
         self._settings = settings or get_settings()
         self._codec = SensitiveValueCodec(self._settings.vault_encryption_key)
 
+    async def get_sparse_fields(
+        self,
+        session: AsyncSession,
+        person: Person,
+        *,
+        include_sensitive: bool = False,
+    ) -> dict[str, Any]:
+        """Active vault_value map only — no completion scan or typed counts."""
+        vault = person.vault
+        if vault is None:
+            return {}
+        consents = await self._consent_map(session, person.id)
+        return await self._load_sparse_fields(session, vault, consents, include_sensitive)
+
     async def get_unified_vault(
         self,
         session: AsyncSession,
@@ -409,7 +423,7 @@ class VaultService:
         for row in result.scalars():
             existing_by_key.setdefault(row.field_key, row)
 
-        pending: list[tuple[VaultValue, Any, Any]] = []
+        pending: list[tuple[VaultValue, Any, Any, Any]] = []
         scopes = list(vault.applicable_scopes or [])
         for field, value in prepared:
             existing = existing_by_key.get(field.key)
@@ -430,7 +444,7 @@ class VaultService:
                 supersedes_id=existing.id if existing else None,
             )
             session.add(row)
-            pending.append((row, value, old_val))
+            pending.append((row, field, value, old_val))
             existing_by_key[field.key] = row
             if field.applicable_scope not in scopes:
                 scopes.append(field.applicable_scope)
@@ -438,7 +452,7 @@ class VaultService:
             vault.applicable_scopes = scopes
         # Parent rows must exist before vault_evidence FK inserts.
         await session.flush()
-        for row, value, old_val in pending:
+        for row, field, value, old_val in pending:
             session.add(
                 VaultEvidence(
                     vault_value_id=row.id,

@@ -46,18 +46,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
     )
     app.state.llm_gateway = LLMGateway(settings)
-    if settings.app_env not in {"test", "testing"}:
-        try:
-            await warmup_database(settings)
-        except Exception:
-            logger.warning(
-                "Database warmup failed; first request may be slower.", exc_info=True
-            )
     if not getattr(app.state, "_provider_initialized", False):
         provider = SupabaseAuthProvider(settings)
         app.state.auth_provider = provider
         app.state._provider_initialized = True
         app.state._owns_provider = True
+    if settings.app_env not in {"test", "testing"}:
+        async def _warmup_db() -> None:
+            try:
+                await warmup_database(settings)
+            except Exception:
+                logger.warning(
+                    "Database warmup failed; first request may be slower.",
+                    exc_info=True,
+                )
+
+        async def _warmup_auth() -> None:
+            try:
+                await app.state.auth_provider.health_check()
+            except Exception:
+                logger.warning(
+                    "Auth warmup failed; first login may be slower.",
+                    exc_info=True,
+                )
+
+        await asyncio.gather(_warmup_db(), _warmup_auth())
     worker_stop = asyncio.Event()
     worker_task: asyncio.Task | None = None
     if settings.enable_document_worker:

@@ -26,9 +26,7 @@ from pai.onboarding.schema import (
     OnboardingSubmit,
 )
 from pai.person.models import Education, Goal, Person, Skill, WorkExperience
-from pai.vault.catalog import CATALOG_VERSION
-from pai.vault.completion import apply_completion_to_vault
-from pai.vault.service import VaultService
+from pai.vault.service import VaultService, grow_vault_schema
 
 
 def _sparse_get(sparse: dict[str, Any], key: str) -> Any:
@@ -79,8 +77,9 @@ class OnboardingService:
         self._require_vault(person)
         if person.onboarding_completed_at is not None:
             return self._result(person)
-        unified = await self._vault.get_unified_vault(session, person, include_sensitive=True)
-        sparse = unified.get("sparseFields") or {}
+        sparse = await self._vault.get_sparse_fields(
+            session, person, include_sensitive=True
+        )
         education = await self._first_education(session, person)
         goal = await self._first_goal(session, person)
         values = self._current_values(person, sparse, education, goal)
@@ -203,8 +202,7 @@ class OnboardingService:
 
     async def _touch_vault(self, session: AsyncSession, person: Person) -> None:
         if person.vault:
-            person.vault.catalog_version = CATALOG_VERSION
-            await apply_completion_to_vault(session, person, person.vault)
+            grow_vault_schema(person.vault)
 
     async def _apply_submit(
         self, session: AsyncSession, person: Person, body: OnboardingSubmit

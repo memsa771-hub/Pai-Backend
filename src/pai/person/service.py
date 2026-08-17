@@ -129,8 +129,9 @@ class PersonBootstrapService:
         if person is not None:
             dirty = self._sync_identity(person, provider_user)
             vault = person.vault
+            # Login is auth + person flags. Catalog grow is a cheap column write;
+            # do not scan typed tables / recompute completion on the login path.
             if vault is not None and grow_vault_schema(vault):
-                await apply_completion_to_vault(session, person, vault)
                 dirty = True
             if dirty:
                 await session.commit()

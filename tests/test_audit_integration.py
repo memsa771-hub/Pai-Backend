@@ -38,9 +38,11 @@ def test_document_candidates_not_visible_cross_user(vault_client, fake_provider)
     hb = auth_headers(vault_client, "audit-b@ex.com", "Password123!")
     complete_onboarding(vault_client, ha)
     complete_onboarding(vault_client, hb)
-    conv_a = vault_client.post("/api/v1/conversations", headers=ha, json={}).json()["data"]["id"]
-    denied_conv = vault_client.get(f"/api/v1/conversations/{conv_a}", headers=hb)
-    assert denied_conv.status_code in (403, 404)
+    a_hist = vault_client.get("/api/v1/chat/messages", headers=ha)
+    b_hist = vault_client.get("/api/v1/chat/messages", headers=hb)
+    assert a_hist.status_code == 200, a_hist.text
+    assert b_hist.status_code == 200, b_hist.text
+    assert a_hist.json()["data"]["conversationId"] != b_hist.json()["data"]["conversationId"]
 
 
 def test_scenario_manual_profile_education(vault_client, verified_user):
@@ -73,7 +75,6 @@ def test_scenario_manual_profile_education(vault_client, verified_user):
 
 def test_chat_llm_failure_leaves_user_message(vault_client, onboarded_user, test_settings, monkeypatch):
     client, headers, _ = onboarded_user
-    conv_id = client.post("/api/v1/conversations", headers=headers, json={}).json()["data"]["id"]
 
     class FailLLM:
         name = "mock"
@@ -94,12 +95,12 @@ def test_chat_llm_failure_leaves_user_message(vault_client, onboarded_user, test
         lambda settings, gateway=None: orch,
     )
     resp = client.post(
-        f"/api/v1/conversations/{conv_id}/messages",
+        "/api/v1/chat",
         headers=headers,
-        json={"content": "Hello counselor"},
+        json={"message": "Hello counselor"},
     )
     assert resp.status_code in (502, 500, 503)
-    msgs = client.get(f"/api/v1/conversations/{conv_id}/messages", headers=headers).json()["data"]["items"]
+    msgs = client.get("/api/v1/chat/messages", headers=headers).json()["data"]["items"]
     assert any(m["role"] == "user" and m["content"] == "Hello counselor" for m in msgs)
 
 

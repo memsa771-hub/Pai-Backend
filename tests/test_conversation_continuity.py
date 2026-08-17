@@ -1,4 +1,4 @@
-"""Conversation continuity: omit conversationId continues latest active thread."""
+"""One counselor thread per person."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pai.conversations.service import resolve_chat_conversation
+from pai.conversations.service import get_or_create_person_conversation
 from pai.orchestration.context import build_known_facts
 
 
@@ -93,7 +93,7 @@ def test_chat_starters_use_study_country():
 
 
 @pytest.mark.asyncio
-async def test_resolve_chat_continues_latest(postgres_ready):
+async def test_person_always_gets_the_same_conversation(postgres_ready):
     from pai.core.provider import ProviderUser
     from pai.data.db import get_session_factory, reset_engine_for_tests
     from pai.person.models import Person
@@ -113,14 +113,8 @@ async def test_resolve_chat_continues_latest(postgres_ready):
         boot = await PersonBootstrapService(postgres_ready).bootstrap(session, user)
         person = await session.get(Person, uuid.UUID(boot["person"]["id"]))
         assert person is not None
-        first = await resolve_chat_conversation(
-            session, person, conversation_id=None, new_conversation=True, title="A"
-        )
-        second = await resolve_chat_conversation(
-            session, person, conversation_id=None, new_conversation=False
-        )
+        first = await get_or_create_person_conversation(session, person)
+        second = await get_or_create_person_conversation(session, person)
+        third = await get_or_create_person_conversation(session, person)
         assert second.id == first.id
-        third = await resolve_chat_conversation(
-            session, person, conversation_id=None, new_conversation=True, title="B"
-        )
-        assert third.id != first.id
+        assert third.id == first.id

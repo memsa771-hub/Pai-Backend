@@ -19,10 +19,9 @@ async def create_conversation(
     session: AsyncSession,
     person: Person,
     *,
-    title: str | None = None,
     settings=None,
 ) -> Conversation:
-    row = Conversation(person_id=person.id, title=title or "New conversation")
+    row = Conversation(person_id=person.id, title="PAI")
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -42,44 +41,17 @@ async def get_latest_active_conversation(
     return result.scalar_one_or_none()
 
 
-async def resolve_chat_conversation(
+async def get_or_create_person_conversation(
     session: AsyncSession,
     person: Person,
     *,
-    conversation_id: uuid.UUID | None,
-    new_conversation: bool = False,
-    title: str | None = None,
     settings=None,
 ) -> Conversation:
-    """Resolve the topic thread for this turn.
-
-    Person-level knowledge (Vault, semantic memory, goals, tasks) is independent of
-    this choice. A new conversation is a new *topic*, not a memory wipe.
-
-    - Explicit conversation_id → continue that thread.
-    - new_conversation=True → create a new topic thread.
-    - Otherwise continue the latest active thread (client convenience / Swagger).
-    """
-    if conversation_id is not None:
-        return await get_conversation_owned(session, person.id, conversation_id)
-    if not new_conversation:
-        existing = await get_latest_active_conversation(session, person.id)
-        if existing is not None:
-            return existing
-    return await create_conversation(session, person, title=title, settings=settings)
-
-
-async def list_conversations(
-    session: AsyncSession, person_id: uuid.UUID, *, limit: int = 50, offset: int = 0
-) -> list[Conversation]:
-    result = await session.execute(
-        select(Conversation)
-        .where(Conversation.person_id == person_id, Conversation.status != "deleted")
-        .order_by(Conversation.updated_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    return list(result.scalars().all())
+    """One counselor transcript per person. Extra rows from older clients are ignored for writes."""
+    existing = await get_latest_active_conversation(session, person.id)
+    if existing is not None:
+        return existing
+    return await create_conversation(session, person, settings=settings)
 
 
 async def get_conversation_owned(
@@ -98,31 +70,39 @@ async def get_conversation_owned(
     return row
 
 
-async def delete_conversation(
-    session: AsyncSession, person_id: uuid.UUID, conversation_id: uuid.UUID
-) -> None:
-    conv = await get_conversation_owned(session, person_id, conversation_id)
-    conv.status = "deleted"
-    await session.commit()
-
-
-async def list_messages(
+async def list_person_messages(
     session: AsyncSession,
-    person_id: uuid.UUID,
-    conversation_id: uuid.UUID,
+    person: Person,
     *,
     settings=None,
-) -> list[Message]:
-    await get_conversation_owned(session, person_id, conversation_id)
-    person = await session.get(Person, person_id)
-    if person is not None:
-        await ensure_thread_opening(session, person, conversation_id, settings=settings)
+    limit: int = 50,
+    offset: int | None = None,
+) -> tuple[list[Message], int, int, Conversation]:
+    """Paginated history for this person (all threads, chronological).
+
+    Omit offset to return the latest `limit` messages (chat window). Pass offset
+    from 0 to walk older pages. Extra conversation rows from older clients are
+    included so the UI stays one merged PAI transcript.
+    """
+    conv = await get_or_create_person_conversation(session, person, settings=settings)
+    await ensure_thread_opening(session, person, conv.id, settings=settings)
+    total = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.person_id == person.id)
+        )
+        or 0
+    )
+    skip = max(0, total - limit) if offset is None else max(0, offset)
     result = await session.execute(
         select(Message)
-        .where(Message.conversation_id == conversation_id, Message.person_id == person_id)
+        .where(Message.person_id == person.id)
         .order_by(Message.created_at.asc())
+        .offset(skip)
+        .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(result.scalars().all()), total, skip, conv
 
 
 async def save_user_message(
@@ -164,7 +144,7 @@ async def save_assistant_message(
     )
     session.add(msg)
     conv = await session.get(Conversation, conversation_id)
-    if update_title and conv and conv.title in (None, "New conversation"):
+    if update_title and conv and conv.title in (None, "New conversation", "PAI"):
         conv.title = content[:80]
     await session.commit()
     await session.refresh(msg)
@@ -178,14 +158,12 @@ async def ensure_thread_opening(
     *,
     settings=None,
 ) -> Message | None:
-    """If the thread is empty, PAI speaks first from Vault facts (no extra LLM)."""
+    """If this person has no messages yet, PAI speaks first from Vault facts."""
     from pai.config import get_settings
     from pai.orchestration.context import build_student_context_pack, compose_opening
 
     n = await session.scalar(
-        select(func.count())
-        .select_from(Message)
-        .where(Message.conversation_id == conversation_id, Message.person_id == person.id)
+        select(func.count()).select_from(Message).where(Message.person_id == person.id)
     )
     if n:
         return None
@@ -223,107 +201,3 @@ async def start_orchestration_run(
     await session.commit()
     await session.refresh(run)
     return run
-
-
-def messages_to_flow(messages: list[Message]) -> list[dict]:
-    """Pair consecutive user → assistant messages into readable turns."""
-    flow: list[dict] = []
-    pending_user: Message | None = None
-    turn = 0
-    for msg in messages:
-        if msg.role == "user":
-            if pending_user is not None:
-                turn += 1
-                flow.append(
-                    {
-                        "turn": turn,
-                        "user": pending_user.content,
-                        "assistant": None,
-                        "askedAt": pending_user.created_at.isoformat()
-                        if pending_user.created_at
-                        else None,
-                        "repliedAt": None,
-                    }
-                )
-            pending_user = msg
-        elif msg.role == "assistant":
-            turn += 1
-            if pending_user is not None:
-                flow.append(
-                    {
-                        "turn": turn,
-                        "user": pending_user.content,
-                        "assistant": msg.content,
-                        "askedAt": pending_user.created_at.isoformat()
-                        if pending_user.created_at
-                        else None,
-                        "repliedAt": msg.created_at.isoformat() if msg.created_at else None,
-                    }
-                )
-                pending_user = None
-            else:
-                flow.append(
-                    {
-                        "turn": turn,
-                        "user": None,
-                        "assistant": msg.content,
-                        "askedAt": None,
-                        "repliedAt": msg.created_at.isoformat() if msg.created_at else None,
-                    }
-                )
-    if pending_user is not None:
-        turn += 1
-        flow.append(
-            {
-                "turn": turn,
-                "user": pending_user.content,
-                "assistant": None,
-                "askedAt": pending_user.created_at.isoformat() if pending_user.created_at else None,
-                "repliedAt": None,
-            }
-        )
-    return flow
-
-
-async def get_conversation_flow(
-    session: AsyncSession,
-    person_id: uuid.UUID,
-    conversation_id: uuid.UUID,
-    *,
-    settings=None,
-) -> dict:
-    conv = await get_conversation_owned(session, person_id, conversation_id)
-    messages = await list_messages(session, person_id, conversation_id, settings=settings)
-    return {
-        "id": str(conv.id),
-        "title": conv.title,
-        "status": conv.status,
-        "topic": conv.topic,
-        "updatedAt": conv.updated_at.isoformat() if conv.updated_at else None,
-        "flow": messages_to_flow(messages),
-    }
-
-
-async def list_conversation_threads(
-    session: AsyncSession,
-    person_id: uuid.UUID,
-    *,
-    limit: int = 50,
-    offset: int = 0,
-    settings=None,
-) -> list[dict]:
-    rows = await list_conversations(session, person_id, limit=limit, offset=offset)
-    threads: list[dict] = []
-    for conv in rows:
-        messages = await list_messages(session, person_id, conv.id, settings=settings)
-        threads.append(
-            {
-                "id": str(conv.id),
-                "title": conv.title,
-                "status": conv.status,
-                "topic": conv.topic,
-                "updatedAt": conv.updated_at.isoformat() if conv.updated_at else None,
-                "flow": messages_to_flow(messages),
-            }
-        )
-    return threads

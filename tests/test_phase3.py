@@ -206,8 +206,6 @@ def test_chat_message_with_mock_counselor(onboarded_user, test_settings, monkeyp
     from pai.orchestration.schemas import VaultCandidate as OrchVaultCandidate
 
     client, headers, _ = onboarded_user
-    conv_id = client.post("/api/v1/conversations", headers=headers, json={}).json()["data"]["id"]
-
     mock = SchemaRoutingMockProvider(
         extraction=FactExtractionResult(
             fact_candidates=[
@@ -234,14 +232,14 @@ def test_chat_message_with_mock_counselor(onboarded_user, test_settings, monkeyp
         lambda settings, gateway=None: orchestrator,
     )
     resp = client.post(
-        f"/api/v1/conversations/{conv_id}/messages",
+        "/api/v1/chat",
         headers=headers,
-        json={"content": "I prefer English for counseling."},
+        json={"message": "I prefer English for counseling."},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()["data"]
     assert body["reply"]
-    assert body.get("conversationId") == conv_id
+    assert body.get("conversationId")
     assert body.get("nextQuestion") == "What field are you targeting?"
     assert "starters" in body
     assert "knownFacts" in body
@@ -265,13 +263,12 @@ def test_policy_high_confidence_non_sensitive_accepts():
     assert policy_decision(c) == "accept"
 
 
-def test_conversation_create_and_ownership(onboarded_user, test_settings):
+def test_chat_history_is_person_scoped(onboarded_user, test_settings):
     client, headers, _ = onboarded_user
-    created = client.post("/api/v1/conversations", headers=headers, json={"title": "Plan"})
-    assert created.status_code == 201
-    conv_id = created.json()["data"]["id"]
-    listing = client.get("/api/v1/conversations", headers=headers)
-    assert any(i["id"] == conv_id for i in listing.json()["data"]["items"])
+    mine = client.get("/api/v1/chat/messages", headers=headers)
+    assert mine.status_code == 200, mine.text
+    conv_id = mine.json()["data"]["conversationId"]
+    assert conv_id
     import jwt
     from datetime import UTC, datetime, timedelta
 
@@ -286,29 +283,22 @@ def test_conversation_create_and_ownership(onboarded_user, test_settings):
         algorithm="HS256",
     )
     forbidden = client.get(
-        f"/api/v1/conversations/{conv_id}",
+        "/api/v1/chat/messages",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert forbidden.status_code in (403, 404)
+    assert forbidden.status_code in (401, 403, 404)
 
 
 def test_new_conversation_opens_with_vault_greeting(onboarded_user):
     client, headers, _ = onboarded_user
-    created = client.post("/api/v1/conversations", headers=headers, json={})
-    assert created.status_code == 201
-    conv_id = created.json()["data"]["id"]
-    msgs = client.get(f"/api/v1/conversations/{conv_id}/messages", headers=headers)
-    assert msgs.status_code == 200
+    msgs = client.get("/api/v1/chat/messages", headers=headers)
+    assert msgs.status_code == 200, msgs.text
     items = msgs.json()["data"]["items"]
     assert items
     assert items[0]["role"] == "assistant"
     assert "PAI" in items[0]["content"]
     joined = items[0]["content"]
     assert any(token in joined for token in ("BSCS", "Germany", "Lahore", "DE"))
-    home = client.get("/api/v1/chat/home", headers=headers)
-    assert home.status_code == 200
-    assert home.json()["data"]["conversationId"] == conv_id
-    assert home.json()["data"]["knownFacts"]
 
 
 def test_document_upload_validation_rejects_executable(onboarded_user):

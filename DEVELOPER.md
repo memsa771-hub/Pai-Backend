@@ -32,7 +32,7 @@ src/pai/
   vault/                 # Catalog, completion, vault service
   person/                # Person bootstrap + typed resources
   ingestion/             # Deterministic vault/typed applies
-  conversations/         # Threads + messages
+  conversations/         # One transcript per person + messages
   memory/                # Semantic + conversation memory (AgentSpan)
   documents/             # Upload + worker
   tasks/                 # Student task proposals
@@ -62,9 +62,9 @@ Authorize with **accessToken only** (no `Bearer` prefix in the Swagger box).
 - After first verified login, choose **Complete Onboarding** or **Upload My CV**
 - Onboarding writes into the same Person Vault (not a separate profile)
 - PAI is **one counselor per Person**
-- A conversation is only a **topic thread**
-- `newConversation: true` = new topic, not amnesia
-- Omit `conversationId` → continues latest active thread
+- There is **one chat transcript**, not a ChatGPT sidebar
+- `GET /api/v1/chat/messages` loads history (paginated)
+- `POST /api/v1/chat` sends the next message; Vault + memory persist forever
 
 ## Key modules
 

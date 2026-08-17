@@ -47,16 +47,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "chat",
         "description": (
-            "Primary PAI counselor entrypoint. "
-            "`POST /api/v1/chat` creates or continues a conversation in one call. "
+            "One counselor per student. "
+            "`POST /api/v1/chat` sends a message. "
+            "`GET /api/v1/chat/messages` loads the transcript (paginated). "
             "Empty threads open with a Vault-grounded greeting; live facts use Tavily."
-        ),
-    },
-    {
-        "name": "conversations",
-        "description": (
-            "Prefer **`GET /api/v1/conversations/threads`** for full Q&A flows. "
-            "CRUD and raw messages endpoints remain available."
         ),
     },
     {
@@ -83,7 +77,7 @@ Onboarding seeds a **small starting profile**. The Vault grows from **chat extra
 4. Swagger adds `Bearer` for you. Adding it twice causes `401`.
 5. Call **`GET /api/v1/auth/me`** — must return 200 before chat.
 6. If `data.onboardingCompleted` is false, `GET /api/v1/onboarding` then either `POST /api/v1/onboarding` (form) or `POST /api/v1/onboarding/cv` (CV unlocks chat immediately). Deeper profile facts come from chat.
-7. Call **`POST /api/v1/chat`** with a message.
+7. Call **`GET /api/v1/chat/messages`** then **`POST /api/v1/chat`** with a message.
 
 Login auto-bootstraps the Person Vault for verified users. New users must finish onboarding before counselor chat.
 

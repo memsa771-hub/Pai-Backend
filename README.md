@@ -196,10 +196,8 @@ National ID is **not** part of general onboarding. Name and email come from sign
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/chat` | Primary counselor turn (auto-creates conversation) |
-| POST/GET/DELETE | `/api/v1/conversations` | Conversation CRUD |
-| GET | `/api/v1/conversations/{id}/messages` | Chat history |
-| POST | `/api/v1/conversations/{id}/messages` | Same turn path (compat) |
+| POST | `/api/v1/chat` | Send a counselor message (one thread per student) |
+| GET | `/api/v1/chat/messages` | Paginated transcript (omit offset = latest page) |
 | POST/GET/DELETE | `/api/v1/documents` | Upload & list private documents |
 | GET | `/api/v1/documents/{id}/status`, `/candidates` | Processing & extracted candidates |
 | POST | `/api/v1/documents/{id}/review`, `/reprocess` | Human review & re-queue |

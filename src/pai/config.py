@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     )
     chat_recent_message_limit: int = Field(default=8, alias="CHAT_RECENT_MESSAGE_LIMIT")
     enable_document_worker: bool = Field(default=True, alias="ENABLE_DOCUMENT_WORKER")
+    # One loop per API process. person_id advisory locks keep students serialized
+    # if you run `uvicorn --workers N`.
     enable_intelligence_worker: bool = Field(default=True, alias="ENABLE_INTELLIGENCE_WORKER")
 
     # Web search (Tavily) — leave empty until you add the key; tool degrades gracefully

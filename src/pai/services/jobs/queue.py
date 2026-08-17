@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.orchestration.schemas import TaskProposal
@@ -13,6 +13,25 @@ from pai.services.jobs.models import PersonJob
 MAX_ATTEMPTS = 3
 # ponytail: 10m lease is enough for one extract LLM call; Temporal replaces this later.
 LEASE_SECONDS = 600
+# Distinct from other advisory locks in this database.
+_PERSON_JOB_LOCK_NS = 87423091
+
+_CLAIM_SQL = """
+SELECT c.id
+FROM person_jobs AS c
+WHERE c.status = 'pending'
+  AND c.available_at <= :now
+  AND NOT EXISTS (
+      SELECT 1
+      FROM person_jobs AS p
+      WHERE p.person_id = c.person_id
+        AND p.status = 'processing'
+  )
+  AND pg_try_advisory_xact_lock(:lock_ns, hashtext(c.person_id::text))
+ORDER BY c.created_at
+FOR UPDATE SKIP LOCKED
+LIMIT 1
+"""
 
 
 def _proposals_payload(proposals: list) -> list[dict[str, Any]]:
@@ -76,22 +95,24 @@ async def reclaim_expired_leases(session: AsyncSession) -> None:
 
 
 async def claim_next_person_job(session: AsyncSession) -> PersonJob | None:
-    """Oldest pending job whose student is not already being processed."""
+    """Oldest pending job whose student is not already being processed.
+
+    SKIP LOCKED only protects the job row. Two workers could otherwise claim
+    Germany and France for the same student before either commits `processing`.
+    `pg_try_advisory_xact_lock` on person_id closes that window for
+    `uvicorn --workers N`.
+    """
     await reclaim_expired_leases(session)
     now = datetime.now(UTC)
-    busy = select(PersonJob.person_id).where(PersonJob.status == "processing")
     result = await session.execute(
-        select(PersonJob)
-        .where(
-            PersonJob.status == "pending",
-            PersonJob.available_at <= now,
-            PersonJob.person_id.not_in(busy),
-        )
-        .order_by(PersonJob.created_at)
-        .with_for_update(skip_locked=True)
-        .limit(1)
+        text(_CLAIM_SQL),
+        {"now": now, "lock_ns": _PERSON_JOB_LOCK_NS},
     )
-    job = result.scalar_one_or_none()
+    job_id = result.scalar_one_or_none()
+    if job_id is None:
+        await session.commit()
+        return None
+    job = await session.get(PersonJob, job_id)
     if job is None:
         await session.commit()
         return None

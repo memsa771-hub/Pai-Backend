@@ -308,3 +308,53 @@ def test_form_submit_with_cv_path_tag_still_allowed(verified_user):
     assert data["onboardingCompleted"] is True
     assert data["onboardingPath"] == "cv"
     assert "enums" not in data
+
+
+def test_vault_batch_write_uses_one_select():
+    import asyncio
+    import uuid
+    from types import SimpleNamespace
+
+    from cryptography.fernet import Fernet
+
+    from pai.person.models import VaultEvidence, VaultHistory, VaultValue
+    from pai.vault.service import VaultService
+
+    class _Session:
+        def __init__(self) -> None:
+            self.queries = 0
+            self.added: list[object] = []
+
+        async def execute(self, _stmt):
+            self.queries += 1
+            return SimpleNamespace(scalars=lambda: [])
+
+        def add(self, obj) -> None:
+            self.added.append(obj)
+
+    async def _run() -> None:
+        svc = VaultService(
+            SimpleNamespace(vault_encryption_key=Fernet.generate_key().decode())
+        )
+        person = SimpleNamespace(
+            id=uuid.uuid4(),
+            vault=SimpleNamespace(id=uuid.uuid4(), applicable_scopes=["universal"]),
+        )
+        session = _Session()
+        await svc.upsert_sparse_fields(
+            session,
+            person,
+            [
+                ("demographics.nationality", "PK"),
+                ("location.current_city", "Lahore"),
+                ("demographics.gender", "male"),
+            ],
+            skip_consent_check=True,
+        )
+        assert session.queries == 1
+        kinds = [type(obj) for obj in session.added]
+        assert kinds.count(VaultValue) == 3
+        assert kinds.count(VaultEvidence) == 3
+        assert kinds.count(VaultHistory) == 3
+
+    asyncio.run(_run())

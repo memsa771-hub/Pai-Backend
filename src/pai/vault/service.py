@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -315,95 +316,140 @@ class VaultService:
         actor_type: str = "person",
         skip_consent_check: bool = False,
     ) -> None:
-        """Write a vault_value field without opening a nested transaction."""
-        field = get_catalog_field(field_key)
-        if field is None:
-            raise UnknownFieldError()
-        if field.derived or not field.editable or field.storage != "vault_value":
-            raise FieldNotEditableError()
+        await self.upsert_sparse_fields(
+            session,
+            person,
+            [(field_key, value)],
+            source_type=source_type,
+            actor_type=actor_type,
+            skip_consent_check=skip_consent_check,
+        )
+
+    async def upsert_sparse_fields(
+        self,
+        session: AsyncSession,
+        person: Person,
+        items: list[tuple[str, Any]],
+        *,
+        source_type: str = "onboarding",
+        actor_type: str = "person",
+        skip_consent_check: bool = False,
+    ) -> None:
+        """Write many vault_value fields in one select. Flush happens with the request commit."""
+        if not items:
+            return
         vault = person.vault
         if vault is None:
             raise UnknownFieldError("Vault not initialized.")
-        if (
-            field.consent_category
-            and not skip_consent_check
-            and not await self._has_consent(session, person.id, field.consent_category)
-        ):
-            raise ConsentRequiredError()
 
+        prepared: list[tuple[Any, Any]] = []
+        for field_key, value in items:
+            field = get_catalog_field(field_key)
+            if field is None:
+                raise UnknownFieldError()
+            if field.derived or not field.editable or field.storage != "vault_value":
+                raise FieldNotEditableError()
+            prepared.append((field, value))
+
+        if not skip_consent_check:
+            needed = {field.consent_category for field, _ in prepared if field.consent_category}
+            if needed:
+                consents = await self._consent_map(session, person.id)
+                if any(not consents.get(category) for category in needed):
+                    raise ConsentRequiredError()
+
+        keys = [field.key for field, _ in prepared]
         result = await session.execute(
             select(VaultValue).where(
                 VaultValue.vault_id == vault.id,
-                VaultValue.field_key == field_key,
+                VaultValue.field_key.in_(keys),
                 VaultValue.status == "active",
             )
         )
-        existing = result.scalar_one_or_none()
-        if existing:
-            existing.status = "superseded"
-            old_val = existing.value
-        else:
-            old_val = None
+        existing_by_key: dict[str, VaultValue] = {}
+        for row in result.scalars():
+            existing_by_key.setdefault(row.field_key, row)
 
-        row = VaultValue(
-            vault_id=vault.id,
-            field_key=field_key,
-            value=None if field.sensitive else value,
-            value_encrypted=self._codec.encrypt_json(value) if field.sensitive else None,
-            status="active",
-            verification_level="self_reported",
-            confidence=1.0,
-            supersedes_id=existing.id if existing else None,
-        )
-        session.add(row)
-        await session.flush()
-        session.add(
-            VaultEvidence(
-                vault_value_id=row.id,
-                source_type=source_type,
-                source_reference=str(person.id),
-                confidence=1.0,
-            )
-        )
-        session.add(
-            VaultHistory(
+        scopes = list(vault.applicable_scopes or [])
+        for field, value in prepared:
+            existing = existing_by_key.get(field.key)
+            if existing:
+                existing.status = "superseded"
+                old_val = existing.value
+            else:
+                old_val = None
+            row_id = uuid.uuid4()
+            row = VaultValue(
+                id=row_id,
                 vault_id=vault.id,
-                field_key=field_key,
-                action="updated" if old_val is not None else "created",
-                old_value=old_val,
-                new_value=value,
-                actor_type=actor_type,
-                actor_id=str(person.id),
+                field_key=field.key,
+                value=None if field.sensitive else value,
+                value_encrypted=self._codec.encrypt_json(value) if field.sensitive else None,
+                status="active",
+                verification_level="self_reported",
+                confidence=1.0,
+                supersedes_id=existing.id if existing else None,
             )
-        )
-        await self._maybe_expand_scopes(session, vault, field.applicable_scope)
+            session.add(row)
+            session.add(
+                VaultEvidence(
+                    vault_value_id=row_id,
+                    source_type=source_type,
+                    source_reference=str(person.id),
+                    confidence=1.0,
+                )
+            )
+            session.add(
+                VaultHistory(
+                    vault_id=vault.id,
+                    field_key=field.key,
+                    action="updated" if old_val is not None else "created",
+                    old_value=old_val,
+                    new_value=value,
+                    actor_type=actor_type,
+                    actor_id=str(person.id),
+                )
+            )
+            existing_by_key[field.key] = row
+            if field.applicable_scope not in scopes:
+                scopes.append(field.applicable_scope)
+        if scopes != list(vault.applicable_scopes or []):
+            vault.applicable_scopes = scopes
 
     async def ensure_consent(
         self, session: AsyncSession, person_id: uuid.UUID, category: str
     ) -> None:
-        from datetime import UTC, datetime
+        await self.ensure_consents(session, person_id, [category])
 
+    async def ensure_consents(
+        self, session: AsyncSession, person_id: uuid.UUID, categories: Iterable[str]
+    ) -> None:
+        wanted = [category for category in dict.fromkeys(categories) if category]
+        if not wanted:
+            return
         result = await session.execute(
             select(PersonConsent).where(
                 PersonConsent.person_id == person_id,
-                PersonConsent.category == category,
+                PersonConsent.category.in_(wanted),
             )
         )
-        row = result.scalar_one_or_none()
+        have = {row.category: row for row in result.scalars()}
         now = datetime.now(UTC)
-        if row is None:
-            session.add(
-                PersonConsent(
-                    person_id=person_id,
-                    category=category,
-                    granted=True,
-                    granted_at=now,
+        for category in wanted:
+            row = have.get(category)
+            if row is None:
+                session.add(
+                    PersonConsent(
+                        person_id=person_id,
+                        category=category,
+                        granted=True,
+                        granted_at=now,
+                    )
                 )
-            )
-            return
-        row.granted = True
-        row.granted_at = row.granted_at or now
-        row.revoked_at = None
+                continue
+            row.granted = True
+            row.granted_at = row.granted_at or now
+            row.revoked_at = None
 
     async def _consent_map(self, session: AsyncSession, person_id: uuid.UUID) -> dict[str, bool]:
         result = await session.execute(

@@ -26,7 +26,7 @@ from pai.onboarding.schema import (
     OnboardingSubmit,
 )
 from pai.person.models import Education, Goal, Person, Skill, WorkExperience
-from pai.vault.catalog import CATALOG_VERSION, get_catalog_field
+from pai.vault.catalog import CATALOG_VERSION
 from pai.vault.completion import apply_completion_to_vault
 from pai.vault.service import VaultService
 
@@ -121,7 +121,6 @@ class OnboardingService:
         if person.onboarding_completed_at is None:
             person.onboarding_completed_at = datetime.now(UTC)
         await session.commit()
-        await session.refresh(person)
         return self._result(person)
 
     async def ingest_cv(
@@ -192,7 +191,6 @@ class OnboardingService:
             person.onboarding_completed_at = datetime.now(UTC)
         await self._touch_vault(session, person)
         await session.commit()
-        await session.refresh(person)
         return self._result(person)
 
     def _require_vault(self, person: Person) -> None:
@@ -212,98 +210,52 @@ class OnboardingService:
         self, session: AsyncSession, person: Person, body: OnboardingSubmit
     ) -> None:
         person.phone = body.phone
-        await self._vault.ensure_consent(session, person.id, "demographics")
-        await self._upsert_vault(
-            session,
-            person,
-            "demographics.date_of_birth",
-            body.dateOfBirth.isoformat(),
-            skip_consent=True,
-        )
-        await self._upsert_vault(
-            session, person, "demographics.nationality", body.nationality
-        )
-        await self._upsert_vault(
-            session, person, "location.current_country", body.currentCountry
-        )
-        await self._upsert_vault(session, person, "location.current_city", body.currentCity)
-        await self._upsert_vault(
-            session, person, "identity.current_status", body.currentStatus.value
-        )
-        await self._upsert_vault(session, person, "demographics.gender", body.gender.value)
+        consents = ["demographics"]
+        if body.budget is not None or body.scholarships is not None:
+            consents.append("finance")
+        await self._vault.ensure_consents(session, person.id, consents)
+
+        updates: list[tuple[str, Any]] = [
+            ("demographics.date_of_birth", body.dateOfBirth.isoformat()),
+            ("demographics.nationality", body.nationality),
+            ("location.current_country", body.currentCountry),
+            ("location.current_city", body.currentCity),
+            ("identity.current_status", body.currentStatus.value),
+            ("demographics.gender", body.gender.value),
+            ("education.highest_level", body.educationLevel.value),
+        ]
         if body.linkedinUrl:
-            await self._upsert_vault(session, person, "social.linkedin_url", body.linkedinUrl)
-
-        await self._upsert_vault(
-            session, person, "education.highest_level", body.educationLevel.value
-        )
-        await self._upsert_education(session, person, body)
-        await self._upsert_goal(session, person, body)
-
+            updates.append(("social.linkedin_url", body.linkedinUrl))
         destinations = list(body.targetCountries)
         if body.studyCountry and body.studyCountry not in destinations:
             destinations.insert(0, body.studyCountry)
         if destinations:
-            await self._upsert_vault(
-                session, person, "application.study_country", destinations[0]
-            )
+            updates.append(("application.study_country", destinations[0]))
             if len(destinations) > 1:
-                await self._upsert_vault(
-                    session, person, "mobility.preferred_regions", destinations
-                )
+                updates.append(("mobility.preferred_regions", destinations))
         if body.intake:
             cycle = body.intake.value
             if body.intakeYear:
                 cycle = f"{cycle} {body.intakeYear}"
-            await self._upsert_vault(session, person, "application.admission_cycle", cycle)
+            updates.append(("application.admission_cycle", cycle))
         if body.budget:
-            await self._vault.ensure_consent(session, person.id, "finance")
-            await self._upsert_vault(
-                session, person, "finance.funding_status", body.budget.value, skip_consent=True
-            )
+            updates.append(("finance.funding_status", body.budget.value))
         if body.scholarships is not None:
-            await self._vault.ensure_consent(session, person.id, "finance")
-            await self._upsert_vault(
-                session,
-                person,
-                "finance.scholarship_interest",
-                body.scholarships,
-                skip_consent=True,
+            updates.append(("finance.scholarship_interest", body.scholarships))
+        if body.testScores:
+            updates.append(
+                (
+                    "application.test_scores",
+                    [{"name": item.name.value, "score": item.score} for item in body.testScores],
+                )
             )
+        await self._vault.upsert_sparse_fields(
+            session, person, updates, skip_consent_check=True
+        )
+        await self._upsert_education(session, person, body)
+        await self._upsert_goal(session, person, body)
         await self._upsert_skills(session, person, body)
         await self._upsert_work(session, person, body)
-        if body.testScores:
-            await self._upsert_vault(
-                session,
-                person,
-                "application.test_scores",
-                [{"name": item.name.value, "score": item.score} for item in body.testScores],
-            )
-
-    async def _upsert_vault(
-        self,
-        session: AsyncSession,
-        person: Person,
-        field_key: str,
-        value: Any,
-        *,
-        skip_consent: bool = False,
-    ) -> None:
-        field = get_catalog_field(field_key)
-        if (
-            field is None
-            or field.derived
-            or not field.editable
-            or field.storage != "vault_value"
-        ):
-            return
-        await self._vault.upsert_sparse_field(
-            session,
-            person,
-            field_key,
-            value,
-            skip_consent_check=skip_consent or not field.consent_category,
-        )
 
     async def _upsert_education(
         self, session: AsyncSession, person: Person, body: OnboardingSubmit
@@ -317,7 +269,11 @@ class OnboardingService:
         ):
             return
         degree = body.resolved_degree()
-        row = await self._first_education(session, person)
+        row = (
+            None
+            if person.onboarding_completed_at is None
+            else await self._first_education(session, person)
+        )
         if row is None:
             if not body.institution:
                 return
@@ -354,7 +310,11 @@ class OnboardingService:
         goal_key = body.primaryGoal.value
         title = (body.goalDetail or PRIMARY_GOAL_TITLES[goal_key])[:256]
         goal_type = GOAL_TYPE_FOR_PRIMARY[goal_key]
-        row = await self._first_goal(session, person)
+        row = (
+            None
+            if person.onboarding_completed_at is None
+            else await self._first_goal(session, person)
+        )
         if row is None:
             session.add(
                 Goal(
@@ -380,8 +340,10 @@ class OnboardingService:
     ) -> None:
         if not body.skills:
             return
-        existing = await session.execute(select(Skill).where(Skill.person_id == person.id))
-        known = {row.name.strip().lower() for row in existing.scalars() if row.name}
+        known: set[str] = set()
+        if person.onboarding_completed_at is not None:
+            existing = await session.execute(select(Skill).where(Skill.person_id == person.id))
+            known = {row.name.strip().lower() for row in existing.scalars() if row.name}
         for item in body.skills:
             key = item.name.strip().lower()
             if key in known:
@@ -404,14 +366,16 @@ class OnboardingService:
     ) -> None:
         if not body.workExperience:
             return
-        existing = await session.execute(
-            select(WorkExperience).where(WorkExperience.person_id == person.id)
-        )
-        known = {
-            (row.organization.strip().lower(), row.title.strip().lower())
-            for row in existing.scalars()
-            if row.organization and row.title
-        }
+        known: set[tuple[str, str]] = set()
+        if person.onboarding_completed_at is not None:
+            existing = await session.execute(
+                select(WorkExperience).where(WorkExperience.person_id == person.id)
+            )
+            known = {
+                (row.organization.strip().lower(), row.title.strip().lower())
+                for row in existing.scalars()
+                if row.organization and row.title
+            }
         for item in body.workExperience:
             key = (item.organization.strip().lower(), item.title.strip().lower())
             if key in known:

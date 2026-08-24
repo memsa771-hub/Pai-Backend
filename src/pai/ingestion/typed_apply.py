@@ -618,9 +618,32 @@ async def apply_typed_candidate(
 
     if field.storage == "goals" and field.key == "application.career_interest":
         title = candidate.value if isinstance(candidate.value, str) else str(candidate.value)
-        goal, status, old = await _upsert_career_goal(
-            session, person, title, vault_status=vault_status
-        )
+        # Delegate to GoalService so multi-goal logic is respected
+        try:
+            from pai.services.goals.service import upsert_goal_from_anchors, enqueue_goal_intelligence_job
+            from pai.services.goals.resolver import _classify_goal_type, _extract_anchors_from_intent
+
+            goal_type = _classify_goal_type(title, {})
+            anchors = _extract_anchors_from_intent(title, goal_type)
+            goal, action = await upsert_goal_from_anchors(
+                session,
+                person.id,
+                goal_type=goal_type,
+                title=title,
+                anchors=anchors,
+                activate=(vault_status != "pending"),
+                create_if_new=True,
+            )
+            if action in ("created", "updated"):
+                await enqueue_goal_intelligence_job(session, goal)
+            old = _goal_snap(goal)
+            status = action
+        except Exception:
+            import logging as _log
+            _log.getLogger(__name__).exception("GoalService upsert failed; falling back to legacy")
+            goal, status, old = await _upsert_career_goal(
+                session, person, title, vault_status=vault_status
+            )
         await expand_scope_for_person(session, person, SCOPE_BY_RESOURCE["goals"])
         await _log_typed_history(
             session,

@@ -32,10 +32,21 @@ class CounselorContext(BaseModel):
     recent_messages: list[dict[str, str]] = Field(default_factory=list)
     relevant_memory: list[str] = Field(default_factory=list)
     active_tasks: list[dict[str, str]] = Field(default_factory=list)
+    # Goal-centric fields
+    active_goal_id: str | None = None
+    active_goal_brief: str | None = None
+    active_goal_status: str | None = None  # ready | partial | pending | failed
 
     def profile_block(self) -> str:
         lines = []
-        if self.goal:
+        # Inject active goal brief first if available (overrides legacy goal line)
+        if self.active_goal_brief:
+            lines.append(f"[ACTIVE GOAL INTELLIGENCE — status:{self.active_goal_status or 'unknown'}]")
+            for brief_line in self.active_goal_brief.splitlines():
+                stripped = brief_line.strip()
+                if stripped:
+                    lines.append(f"  {stripped}")
+        elif self.goal:
             lines.append(f"goal: {self.goal}")
         if self.education:
             lines.append(f"education: {self.education}")
@@ -133,6 +144,32 @@ async def build_counselor_context(
         for line in (semantic_memory or "").splitlines()
         if line.strip() and not line.strip().startswith("Relevant context")
     ]
+    # Load active goal brief if a conversation is provided
+    active_goal_id: str | None = None
+    active_goal_brief: str | None = None
+    active_goal_status: str | None = None
+    if conversation_id is not None:
+        try:
+            from pai.services.goals.service import (
+                get_conversation_active_goal,
+                get_goal_intelligence,
+            )
+
+            active_goal = await get_conversation_active_goal(
+                session, conversation_id, person.id
+            )
+            if active_goal is not None:
+                active_goal_id = str(active_goal.id)
+                intel = await get_goal_intelligence(session, active_goal.id)
+                if intel is not None and intel.counselor_brief:
+                    active_goal_brief = intel.counselor_brief
+                    active_goal_status = intel.status
+                else:
+                    active_goal_status = active_goal.intelligence_status or "pending"
+        except Exception:
+            import logging as _logging
+            _logging.getLogger(__name__).exception("Failed to load active goal brief (non-fatal)")
+
     return CounselorContext(
         person_id=str(person.id),
         identity=identity,
@@ -146,6 +183,9 @@ async def build_counselor_context(
         missing_critical_fields=missing,
         recent_messages=recent,
         relevant_memory=memory_lines[:5],
+        active_goal_id=active_goal_id,
+        active_goal_brief=active_goal_brief,
+        active_goal_status=active_goal_status,
     )
 
 

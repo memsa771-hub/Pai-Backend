@@ -20,6 +20,8 @@ class Conversation(Base):
     title: Mapped[str | None] = mapped_column(String(256))
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     topic: Mapped[str | None] = mapped_column(String(128))
+    # The goal currently active in this thread. NULL = no goal active.
+    active_goal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

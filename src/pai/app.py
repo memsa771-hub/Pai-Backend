@@ -17,6 +17,7 @@ from pai.api.auth import account_router
 from pai.api.auth import router as auth_router
 from pai.api.chat import chat_router
 from pai.api.documents import router as documents_router
+from pai.api.goals import goals_router
 from pai.api.onboarding import router as onboarding_router
 from pai.api.person import router as person_router
 from pai.api.vault import router as vault_router
@@ -24,6 +25,7 @@ from pai.config import Settings, get_settings
 from pai.core.errors import AuthError
 from pai.data.db import warmup_database
 from pai.services.documents.worker import document_worker_loop
+from pai.services.goals.worker import goal_worker_loop
 from pai.services.jobs.worker import intelligence_worker_loop
 from pai.llm.gateway import LLMGateway
 from pai.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
@@ -78,6 +80,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_tasks.append(asyncio.create_task(document_worker_loop(settings, worker_stop)))
     if settings.enable_intelligence_worker:
         worker_tasks.append(asyncio.create_task(intelligence_worker_loop(settings, worker_stop)))
+    if settings.enable_goal_worker:
+        worker_tasks.append(asyncio.create_task(goal_worker_loop(settings, worker_stop)))
     try:
         yield
     finally:
@@ -211,6 +215,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(vault_router)
     app.include_router(chat_router)
     app.include_router(documents_router)
+    app.include_router(goals_router)
     return app
 
 

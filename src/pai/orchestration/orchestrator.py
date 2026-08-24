@@ -506,11 +506,36 @@ class PAIOrchestrator:
 
     async def _capture_goal(self, text: str, *, llm_goal) -> bool:
         assert self._session and self._person
+        # Legacy journey decision (keeps PersonDecision chain intact)
         from pai.services.journey.service import apply_goal_from_message
 
-        return await apply_goal_from_message(
+        journey_changed = await apply_goal_from_message(
             self._session, self._person.id, text, llm_goal=llm_goal
         )
+        # New goal-centric resolver — runs only if we have a conversation context
+        if self._run is not None:
+            conversation_id = getattr(self._run, "conversation_id", None)
+            if conversation_id is not None:
+                try:
+                    from pai.services.goals.resolver import resolve as resolve_goal
+
+                    resolver_result = await resolve_goal(
+                        self._session,
+                        self._person.id,
+                        conversation_id,
+                        llm_goal=llm_goal,
+                        user_message=text,
+                    )
+                    if resolver_result.action != "none":
+                        logger.debug(
+                            "Goal resolver: action=%s goal_id=%s enqueued=%s",
+                            resolver_result.action,
+                            resolver_result.goal.id if resolver_result.goal else None,
+                            resolver_result.intelligence_enqueued,
+                        )
+                except Exception:
+                    logger.exception("Goal resolver failed (non-fatal)")
+        return journey_changed
 
     async def _inject_goal_facts(self, state: PAIState) -> None:
         assert self._session and self._person

@@ -151,9 +151,10 @@ class OnboardingService:
             content_type=content_type,
             data=data,
             storage=storage,
+            source_type="onboarding",
+            document_type="resume",
+            created_by="student",
         )
-        doc.document_type = "resume"
-        await session.commit()
         result = await session.execute(
             select(DocumentJob)
             .where(DocumentJob.document_id == doc.id)

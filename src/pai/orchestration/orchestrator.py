@@ -47,6 +47,16 @@ logger = logging.getLogger(__name__)
 MAX_LLM_CALLS_PER_TURN = 2
 
 
+def _counselor_web_note(allow_web: bool, attachment_note: str = "") -> str:
+    parts: list[str] = []
+    if allow_web:
+        parts.append("LIVE WEB is available via the web_search tool this turn.")
+    extra = (attachment_note or "").strip()
+    if extra:
+        parts.append(extra)
+    return "\n".join(parts)
+
+
 class PAIOrchestrator:
     """Central control plane for student counseling turns."""
 
@@ -170,6 +180,12 @@ class PAIOrchestrator:
                 for line in str(semantic).splitlines()
                 if line.strip() and not line.strip().startswith("Relevant context")
             ][:5]
+        from pai.services.documents.service import attachment_note_for_message
+
+        note = await attachment_note_for_message(
+            self._session, uuid.UUID(state["user_message_id"])
+        )
+        state["attachment_note"] = note
         state["semantic_memory_context"] = semantic or ""
         state["student_context"] = pack
         state["student_context_json"] = pack.profile_block()
@@ -385,6 +401,7 @@ class PAIOrchestrator:
             tool_registry=registry,
             enable_tools=allow_web,
             web_search_available=allow_web,
+            extra_note=str(state.get("attachment_note") or ""),
         )
         state["assistant_result"] = result
         state["assistant_reply"] = public_reply(result.reply) or (result.reply or "")
@@ -440,10 +457,8 @@ class PAIOrchestrator:
             "current_message": state["user_message"],
             "profile_block": profile_block,
             "recent_turns": recent,
-            "web_note": (
-                "LIVE WEB is available via the web_search tool this turn."
-                if allow_web
-                else ""
+            "web_note": _counselor_web_note(
+                allow_web, str(state.get("attachment_note") or "")
             ),
         }
         chunks: list[str] = []

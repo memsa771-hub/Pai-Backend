@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     llm_counseling_model: str = Field(default="deepseek-chat", alias="LLM_COUNSELING_MODEL")
     llm_extraction_model: str = Field(default="deepseek-chat", alias="LLM_EXTRACTION_MODEL")
     llm_document_model: str = Field(default="deepseek-chat", alias="LLM_DOCUMENT_MODEL")
+    llm_document_vision_model: str = Field(
+        default="deepseek-v4-flash-vision-exp", alias="LLM_DOCUMENT_VISION_MODEL"
+    )
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL")
     llm_timeout_seconds: float = Field(default=60.0, alias="LLM_TIMEOUT_SECONDS")
@@ -65,6 +68,10 @@ class Settings(BaseSettings):
     document_processing_timeout_seconds: float = Field(
         default=120.0, alias="DOCUMENT_PROCESSING_TIMEOUT_SECONDS"
     )
+    document_allow_image_uploads: bool = Field(default=True, alias="DOCUMENT_ALLOW_IMAGE_UPLOADS")
+    document_ocr_provider: str = Field(default="deepseek_vision", alias="DOCUMENT_OCR_PROVIDER")
+    document_vision_max_pages: int = Field(default=4, alias="DOCUMENT_VISION_MAX_PAGES")
+    document_malware_scan_provider: str = Field(default="none", alias="DOCUMENT_MALWARE_SCAN_PROVIDER")
     chat_recent_message_limit: int = Field(default=8, alias="CHAT_RECENT_MESSAGE_LIMIT")
     enable_document_worker: bool = Field(default=True, alias="ENABLE_DOCUMENT_WORKER")
     # One loop per API process. person_id advisory locks keep students serialized

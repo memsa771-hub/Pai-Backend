@@ -64,8 +64,18 @@ def _education_payload(value: Any) -> dict[str, Any] | None:
 
     if value.get("gpa") is not None:
         out["gpa"] = float(value["gpa"])
+    elif value.get("value") is not None and not institution:
+        try:
+            out["gpa"] = float(value["value"])
+        except (TypeError, ValueError):
+            pass
     if value.get("gpa_scale") is not None:
         out["gpa_scale"] = float(value["gpa_scale"])
+    elif value.get("scale") is not None and "gpa" in out and not institution:
+        try:
+            out["gpa_scale"] = float(value["scale"])
+        except (TypeError, ValueError):
+            pass
     if value.get("graduation_year") is not None:
         out["graduation_year"] = int(value["graduation_year"])
     if value.get("status") is not None:
@@ -103,7 +113,7 @@ def _education_payload(value: Any) -> dict[str, Any] | None:
         label = out.get("degree") or out.get("major")
         if label:
             out["institution"] = str(label)
-        else:
+        elif out.get("gpa") is None and out.get("percentage") is None:
             return None
     return out
 
@@ -325,6 +335,8 @@ async def _apply_education_one(
         _apply_education_fields(existing, payload)
         row = existing
         status = "updated"
+    elif not payload.get("institution"):
+        return TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
     else:
         row = Education(
             person_id=person.id,

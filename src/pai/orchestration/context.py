@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.services.conversations.models import Conversation, Message
-from pai.services.documents.models import Document
+from pai.services.documents.models import Document, VerificationCase
 from pai.services.person.models import Person, VaultValue
 from pai.services.person.profile_snapshot import load_typed_profile_records
 from pai.services.vault.service import VaultService
@@ -359,12 +359,19 @@ async def build_person_context_pack(
         select(Document)
         .where(
             Document.person_id == person.id,
-            Document.status.in_(["processed", "awaiting_review", "processing"]),
+            Document.deleted_at.is_(None),
         )
+        .order_by(Document.created_at.desc())
         .limit(5)
     )
     doc_summaries = [
-        {"id": str(d.id), "filename": d.original_filename, "type": d.document_type or "generic"}
+        {
+            "id": str(d.id),
+            "filename": d.original_filename,
+            "type": d.document_type or "other",
+            "source": d.source_type,
+            "attention": d.verification_status,
+        }
         for d in docs.scalars()
     ]
     pending_conflicts: list[str] = []
@@ -392,6 +399,16 @@ async def build_person_context_pack(
 
     known = await goal_fact_lines(session, person.id)
     known.extend(build_known_facts(identity=identity, sparse=sparse, typed=typed_records))
+    open_cases = await session.execute(
+        select(VerificationCase.field_key).where(
+            VerificationCase.person_id == person.id,
+            VerificationCase.status.in_(("open", "presented")),
+        )
+    )
+    disputed = list(open_cases.scalars().all())
+    pending_conflicts = list(dict.fromkeys([*pending_conflicts, *disputed]))
+    for key in disputed:
+        known.append(f"DISPUTED {key}: do not treat as settled truth")
     return PersonContextPack(
         person_id=str(person.id),
         identity=identity,

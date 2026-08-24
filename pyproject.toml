@@ -58,6 +58,7 @@ packages = ["src/pai"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/pai/orchestration/prompts" = "pai/orchestration/prompts"
 "src/pai/tools/extraction/prompts" = "pai/tools/extraction/prompts"
+"src/pai/services/document_intelligence/data" = "pai/services/document_intelligence/data"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

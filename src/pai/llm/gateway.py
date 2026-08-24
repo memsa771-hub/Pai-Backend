@@ -38,6 +38,8 @@ class LLMGateway:
             return self._settings.llm_extraction_model
         if task in ("document", "document_extract"):
             return self._settings.llm_document_model
+        if task in ("document_vision", "ocr"):
+            return self._settings.llm_document_vision_model
         if task in ("counseling", "student_conversation"):
             return self._settings.llm_counseling_model
         return self._settings.llm_counseling_model

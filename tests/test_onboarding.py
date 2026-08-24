@@ -245,7 +245,7 @@ def test_cv_upload_completes_onboarding_without_form(verified_user, monkeypatch)
 
     client, headers, _ = verified_user
 
-    async def fake_upload(session, settings, person, *, filename, content_type, data, storage):
+    async def fake_upload(session, settings, person, *, filename, content_type, data, storage, **kwargs):
         del settings, storage
         doc = Document(
             id=uuid.uuid4(),

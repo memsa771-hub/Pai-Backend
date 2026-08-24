@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text, update
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.orchestration.schemas import TaskProposal
+from pai.services.jobs.lease import MAX_ATTEMPTS, apply_failure, reclaim_expired_leases as reclaim_model_leases
 from pai.services.jobs.models import PersonJob
-
-MAX_ATTEMPTS = 3
-# ponytail: 10m lease is enough for one extract LLM call; Temporal replaces this later.
-LEASE_SECONDS = 600
 # Distinct from other advisory locks in this database.
 _PERSON_JOB_LOCK_NS = 87423091
 
@@ -86,12 +83,7 @@ def enqueue_intelligence(
 
 
 async def reclaim_expired_leases(session: AsyncSession) -> None:
-    cutoff = datetime.now(UTC) - timedelta(seconds=LEASE_SECONDS)
-    await session.execute(
-        update(PersonJob)
-        .where(PersonJob.status == "processing", PersonJob.locked_at <= cutoff)
-        .values(status="pending", locked_at=None)
-    )
+    await reclaim_model_leases(session, PersonJob)
 
 
 async def claim_next_person_job(session: AsyncSession) -> PersonJob | None:
@@ -131,11 +123,5 @@ async def mark_job_done(session: AsyncSession, job: PersonJob) -> None:
 
 
 async def mark_job_failed(session: AsyncSession, job: PersonJob, exc: BaseException) -> None:
-    job.last_error = str(exc)[:500]
-    job.locked_at = None
-    if job.attempts < MAX_ATTEMPTS:
-        job.status = "pending"
-        job.available_at = datetime.now(UTC) + timedelta(seconds=2**job.attempts)
-    else:
-        job.status = "failed"
+    apply_failure(job, exc, max_attempts=MAX_ATTEMPTS)
     await session.commit()

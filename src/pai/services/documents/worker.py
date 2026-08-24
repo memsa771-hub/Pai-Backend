@@ -7,6 +7,7 @@ from pai.config import Settings, get_settings
 from pai.data.db import get_session_factory
 from pai.services.documents.models import DocumentJob
 from pai.services.documents.service import claim_next_job, process_document_job
+from pai.services.jobs.lease import apply_failure
 from pai.llm.gateway import LLMGateway
 from pai.storage.supabase import SupabaseStorageProvider
 
@@ -30,8 +31,7 @@ async def run_document_worker_once(settings: Settings | None = None) -> bool:
             await session.rollback()
             job = await session.get(DocumentJob, job.id)
             if job:
-                job.status = "pending" if job.attempts < 3 else "failed"
-                job.last_error = str(exc)[:500]
+                apply_failure(job, exc)
                 await session.commit()
     return True
 

@@ -298,6 +298,14 @@ def test_document_upload_validation_rejects_executable(onboarded_user):
     assert resp.status_code == 400
 
 
+def test_document_upload_rejects_mime_mismatch(onboarded_user):
+    client, headers, _ = onboarded_user
+    files = {"file": ("cv.pdf", b"\xff\xd8\xff\x00", "application/pdf")}
+    resp = client.post("/api/v1/documents", headers=headers, files=files)
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "INVALID_FILE"
+
+
 def test_claim_job_skip_locked(postgres_ready, test_settings):
     import asyncio
     from datetime import UTC, datetime

@@ -75,7 +75,9 @@ class SupabaseStorageProvider:
     async def delete_object(self, path: str) -> None:
         bucket = self._settings.supabase_storage_bucket
         url = f"{self._base}/object/{bucket}/{path}"
-        await self._client.delete(url, headers=self._headers())
+        response = await self._client.delete(url, headers=self._headers())
+        if response.status_code >= 400 and response.status_code != 404:
+            raise RuntimeError("Storage delete failed.")
 
     async def download_bytes(self, path: str) -> bytes:
         bucket = self._settings.supabase_storage_bucket

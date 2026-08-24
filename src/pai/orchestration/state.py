@@ -46,4 +46,5 @@ class PAIState(TypedDict, total=False):
     semantic_memory_context: str
     tool_trace: list[dict[str, Any]]
     goal_updated: bool
+    attachment_note: str
     _session_bound: Any

@@ -101,6 +101,7 @@ class StudentConversationAgent:
         enable_tools: bool | None = None,
         profile_block: str = "",
         web_search_available: bool = False,
+        extra_note: str = "",
         # Backward-compatible unused kwargs from older callers/tests
         recent_messages_json: str = "[]",
         known_facts_json: str = "{}",
@@ -132,10 +133,15 @@ class StudentConversationAgent:
                 else student_context_json
             ),
             "recent_turns": recent,
-            "web_note": (
-                "LIVE WEB is available via the web_search tool this turn."
-                if web_search_available
-                else ""
+            "web_note": "\n".join(
+                part
+                for part in (
+                    "LIVE WEB is available via the web_search tool this turn."
+                    if web_search_available
+                    else "",
+                    (extra_note or "").strip(),
+                )
+                if part
             ),
         }
 

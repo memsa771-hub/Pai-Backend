@@ -15,6 +15,7 @@ from pai.orchestration.verifier import (
     verification_level_for,
 )
 from pai.ingestion.typed_apply import apply_typed_candidate
+from pai.services.document_intelligence.config import policy
 from pai.services.person.models import Person, VaultEvidence, VaultHistory, VaultValue
 from pai.services.vault.catalog import get_catalog_field
 from pai.services.vault.completion import apply_completion_to_vault
@@ -117,18 +118,23 @@ async def process_candidates(
     candidates: list[VaultCandidate],
     *,
     from_document: bool = False,
+    already_reconciled: bool = False,
 ) -> tuple[list[VaultApplyResult], list[VaultCandidate]]:
     accepted: list[VaultApplyResult] = []
     pending: list[VaultCandidate] = []
     mutated = False
-    for raw in candidates:
+    ordered = candidates
+    if from_document or already_reconciled:
+        order = {key: idx for idx, key in enumerate(policy().get("apply_order") or [])}
+        ordered = sorted(candidates, key=lambda c: order.get(c.field_key, len(order)))
+    for raw in ordered:
         candidate = validate_candidate(raw)
         if candidate is None:
             continue
         field = get_catalog_field(candidate.field_key)
         if field is None:
             continue
-        decision = policy_decision(candidate, from_document=from_document)
+        decision = "accept" if already_reconciled else policy_decision(candidate, from_document=from_document)
         if decision == "reject":
             continue
         vlevel = verification_level_for(

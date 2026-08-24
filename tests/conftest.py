@@ -286,7 +286,8 @@ async def _truncate_all(settings: Settings) -> None:
         await session.execute(
             text(
                 "TRUNCATE student_tasks, person_semantic_memories, person_events, person_decisions, conversations, messages, orchestration_runs, document_candidates, "
-                "document_jobs, documents, person_jobs, persons, person_vaults, educations, work_experiences, "
+                "verification_cases, document_facts, document_parties, document_analysis_runs, document_relations, "
+                "message_documents, document_jobs, document_versions, documents, person_jobs, persons, person_vaults, educations, work_experiences, "
                 "projects, skills, certifications, goals, vault_values, vault_evidence, "
                 "vault_history, person_consents RESTART IDENTITY CASCADE"
             )

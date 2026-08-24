@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -12,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from pai.config import Settings, get_settings
 from pai.services.conversations import service as conv_svc
+from pai.services.documents.service import attach_documents_to_message
 from pai.data.db import get_session_factory
 from pai.dependencies import get_db, require_onboarding_complete
 from pai.ingestion.chat import handle_user_message, _payload_from_state
@@ -31,7 +33,12 @@ class ChatRequest(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"message": "I want MS CS in Germany under 20000 EUR"}]
+            "examples": [
+                {
+                    "message": "Can you check whether this transcript is enough for TUM?",
+                    "attachmentIds": ["11111111-1111-1111-1111-111111111111"],
+                }
+            ]
         }
     )
 
@@ -41,6 +48,11 @@ class ChatRequest(BaseModel):
         max_length=16000,
         description="Student message to PAI.",
         examples=["I want MS CS in Germany under 20000 EUR"],
+    )
+    attachmentIds: list[uuid.UUID] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Document Vault ids from POST /documents. Files are not uploaded through chat.",
     )
 
 
@@ -89,6 +101,10 @@ async def chat(
         session, person, settings=settings
     )
     user_msg, run = await begin_chat_turn(session, person, conv.id, body.message)
+    if body.attachmentIds:
+        await attach_documents_to_message(
+            session, person.id, user_msg.id, body.attachmentIds
+        )
     gateway = getattr(request.app.state, "llm_gateway", None)
     data = await handle_user_message(
         session,
@@ -125,6 +141,10 @@ async def chat_stream(
         session, person, settings=settings
     )
     user_msg, run = await begin_chat_turn(session, person, conv.id, body.message)
+    if body.attachmentIds:
+        await attach_documents_to_message(
+            session, person.id, user_msg.id, body.attachmentIds
+        )
     gateway = getattr(request.app.state, "llm_gateway", None)
     person_id = person.id
     conversation_id = conv.id

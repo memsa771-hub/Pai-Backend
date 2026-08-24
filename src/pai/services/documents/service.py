@@ -57,6 +57,15 @@ class DocumentNotFoundError(AuthError):
         super().__init__(code="DOCUMENT_NOT_FOUND", message="Document not found.", status_code=404)
 
 
+class DocumentIdentityUnresolvedError(AuthError):
+    def __init__(self) -> None:
+        super().__init__(
+            code="DOCUMENT_IDENTITY_UNRESOLVED",
+            message="Resolve whether this document belongs to you before accepting extracted facts.",
+            status_code=409,
+        )
+
+
 def _public_document(doc: Document, *, open_cases: int = 0) -> dict:
     attention = attention_state(doc, open_cases=open_cases)
     return {
@@ -359,6 +368,8 @@ async def review_document_candidates(
 ) -> None:
     doc = await get_document_owned(session, person.id, document_id)
     reject_ids = reject_ids or []
+    if accept_ids and doc.identity_status == "mismatch":
+        raise DocumentIdentityUnresolvedError()
     if reject_ids:
         result = await session.execute(
             select(DocumentCandidate).where(

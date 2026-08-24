@@ -18,6 +18,7 @@ from pai.services.documents.service import (
     enqueue_reprocess,
     list_document_candidates,
     review_document_candidates,
+    DocumentIdentityUnresolvedError,
 )
 from pai.services.person.models import Person
 
@@ -198,6 +199,62 @@ def test_review_can_reject_candidates(postgres_ready):
                 assert items[0]["value"] == "Ada Lovelace"
                 assert items[0]["evidenceText"] == "Name: Ada Lovelace"
                 assert items[0]["reason"] == "printed on the CV"
+            finally:
+                await _delete_person(session, person)
+
+    asyncio.run(_run())
+
+
+def test_identity_mismatch_blocks_candidate_accept(postgres_ready):
+    from pai.data.db import get_session_factory, reset_engine_for_tests
+
+    reset_engine_for_tests()
+    factory = get_session_factory(postgres_ready)
+
+    async def _run():
+        async with factory() as session:
+            person = Person(
+                auth_provider="supabase",
+                external_auth_id=f"mismatch-{uuid.uuid4()}",
+                email=f"mismatch-{uuid.uuid4()}@example.com",
+            )
+            session.add(person)
+            await session.flush()
+            doc = Document(
+                person_id=person.id,
+                title="Brother transcript",
+                document_type="transcript",
+                source_type="document_vault",
+                storage_path=f"{person.id}/t.pdf",
+                original_filename="transcript.pdf",
+                mime_type="application/pdf",
+                size_bytes=20,
+                status="awaiting_review",
+                identity_status="mismatch",
+            )
+            session.add(doc)
+            await session.flush()
+            cand = DocumentCandidate(
+                document_id=doc.id,
+                person_id=person.id,
+                field_key="education.gpa",
+                value={"value": 3.8, "scale": 4.0},
+                confidence=0.9,
+                evidence_text="CGPA 3.80 / 4.00",
+                review_status="pending",
+            )
+            session.add(cand)
+            await session.commit()
+            try:
+                try:
+                    await review_document_candidates(
+                        session, person, doc.id, accept_ids=[cand.id]
+                    )
+                    raise AssertionError("mismatch accept must be blocked")
+                except DocumentIdentityUnresolvedError as err:
+                    assert err.code == "DOCUMENT_IDENTITY_UNRESOLVED"
+                await session.refresh(cand)
+                assert cand.review_status == "pending"
             finally:
                 await _delete_person(session, person)
 

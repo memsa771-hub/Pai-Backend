@@ -102,16 +102,18 @@ class OpenAIVisionProvider:
                         page_count=total_pages,
                         truncated=truncated,
                     )
-                if batch_usage:
-                    usage = batch_usage
+                _merge_usage(usage, batch_usage)
                 parts = _split_pages(text, [page for page, _, _ in chunk])
                 page_rows.extend(parts)
         min_chars = int(policy()["min_text_chars"])
-        full = "\n\n".join(
-            f"{_page_marker(row['page'])}\n{row['text']}".strip()
-            for row in page_rows
-            if row.get("text")
-        ).strip()
+        chunks: list[str] = []
+        for row in page_rows:
+            body = str(row.get("text") or "").strip()
+            if not body:
+                continue
+            page = row.get("page")
+            chunks.append(f"{_page_marker(int(page))}\n{body}" if page is not None else body)
+        full = "\n\n".join(chunks).strip()
         return DigitizationResult(
             text=full,
             method="vision",
@@ -214,29 +216,33 @@ def _rasterize_pdf(data: bytes, *, max_pages: int) -> tuple[list[tuple[int, str,
     return out, total
 
 
+def _merge_usage(total: dict, batch: dict) -> None:
+    for key, value in batch.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        total[key] = total.get(key, 0) + value
+
+
 def _split_pages(text: str, page_numbers: list[int]) -> list[dict]:
+    cleaned = text.strip()
+    if not cleaned:
+        return []
     if len(page_numbers) == 1:
-        return [{"page": page_numbers[0], "text": text.strip()}]
+        return [{"page": page_numbers[0], "text": cleaned}]
+    if not all(_page_marker(page) in text for page in page_numbers):
+        return [{"page": None, "text": cleaned}]
     rows: list[dict] = []
     remaining = text
     for i, page in enumerate(page_numbers):
         marker = _page_marker(page)
         nxt = page_numbers[i + 1] if i + 1 < len(page_numbers) else None
         start = remaining.find(marker)
-        chunk = remaining
-        if start >= 0:
-            chunk = remaining[start + len(marker) :]
-            remaining = chunk
+        chunk = remaining[start + len(marker) :]
+        remaining = chunk
         if nxt is not None:
-            end_mark = _page_marker(nxt)
-            end = chunk.find(end_mark)
-            if end >= 0:
-                piece, remaining = chunk[:end], chunk[end:]
-            else:
-                piece = chunk
+            end = chunk.find(_page_marker(nxt))
+            piece, remaining = chunk[:end], chunk[end:]
         else:
             piece = chunk
         rows.append({"page": page, "text": piece.strip()})
-    if not any(row["text"] for row in rows):
-        return [{"page": page_numbers[0], "text": text.strip()}]
     return rows

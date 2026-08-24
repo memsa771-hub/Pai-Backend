@@ -225,3 +225,21 @@ def test_counselor_profile_surfaces_critical_verification():
     assert "education.gpa disputed" in block
     assert "Do not make GPA-sensitive recommendations until resolved" in block
     assert "Ask the student to resolve this" in block
+
+
+def test_missing_page_markers_do_not_fabricate_provenance():
+    from pai.services.document_intelligence.evidence.grounding import page_for_span
+    from pai.services.document_intelligence.providers.openai_vision import _merge_usage, _split_pages
+
+    marked = _split_pages("===PAGE 1===\nAlpha\n===PAGE 2===\nCGPA 3.50\n", [1, 2])
+    assert marked == [{"page": 1, "text": "Alpha"}, {"page": 2, "text": "CGPA 3.50"}]
+    assert page_for_span("CGPA 3.50", marked) == 2
+
+    unmarked = _split_pages("Alpha\nCGPA 3.50 on page two", [1, 2])
+    assert unmarked == [{"page": None, "text": "Alpha\nCGPA 3.50 on page two"}]
+    assert page_for_span("CGPA 3.50", unmarked) is None
+
+    usage: dict = {}
+    _merge_usage(usage, {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14})
+    _merge_usage(usage, {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11})
+    assert usage == {"prompt_tokens": 18, "completion_tokens": 7, "total_tokens": 25}

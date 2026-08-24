@@ -144,6 +144,12 @@ async def resolve_case(
                 already_reconciled=True,
             )
             fact.reconciliation_status = "applied_user_confirmed"
+    if resolution_type == "resolved_document_correct" and case.document_id:
+        confirmed = await session.get(Document, case.document_id)
+        if confirmed is not None and confirmed.identity_status == "mismatch":
+            confirmed.identity_status = "matched"
+            if confirmed.verification_status == "identity_mismatch":
+                confirmed.verification_status = "needs_review"
     if resolution_type == "resolved_wrong_document" and case.document_id:
         doc = await session.get(Document, case.document_id)
         if doc is not None:

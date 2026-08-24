@@ -110,31 +110,118 @@ def test_transcript_gpa_shape_attaches_to_education_payload():
     assert "institution" not in payload
 
 
-def test_deepseek_vision_is_the_ocr_provider():
+def test_openai_vision_is_the_ocr_provider():
     from types import SimpleNamespace
 
-    from pai.services.document_intelligence.providers.deepseek_vision import (
-        DeepSeekVisionProvider,
-        _images_for_vision,
-    )
     from pai.services.document_intelligence.providers.factory import ocr_provider
+    from pai.services.document_intelligence.providers.openai_vision import (
+        OpenAIVisionProvider,
+        pages_for_vision,
+    )
 
     settings = SimpleNamespace(
-        deepseek_api_key="sk-test",
-        document_ocr_provider="deepseek_vision",
-        llm_document_vision_model="deepseek-v4-flash-vision-exp",
-        document_vision_max_pages=4,
-        document_processing_timeout_seconds=120,
+        openai_api_key="sk-test",
+        openai_base_url="https://api.openai.com/v1",
+        document_ocr_provider="openai_vision",
+        llm_document_vision_model="gpt-4o-mini",
+        document_vision_max_pages=20,
+        document_vision_batch_pages=2,
+        document_processing_timeout_seconds=180,
         llm_timeout_seconds=60,
-        deepseek_base_url="https://api.deepseek.com/v1",
     )
     provider = ocr_provider(settings)
-    assert isinstance(provider, DeepSeekVisionProvider)
+    assert isinstance(provider, OpenAIVisionProvider)
     assert provider.configured() is True
     jpeg = b"\xff\xd8\xff" + b"\x00" * 9000
-    parts = _images_for_vision(jpeg, "image/jpeg", max_pages=4)
-    assert parts == [("image/jpeg", jpeg)]
+    parts, total = pages_for_vision(jpeg, "image/jpeg", max_pages=20)
+    assert parts == [(1, "image/jpeg", jpeg)]
+    assert total == 1
     native = ocr_provider(SimpleNamespace(document_ocr_provider="native"))
     assert native.name == "native"
-    settings.deepseek_api_key = ""
-    assert DeepSeekVisionProvider(settings).configured() is False
+    settings.openai_api_key = ""
+    assert OpenAIVisionProvider(settings).configured() is False
+
+
+def test_pdf_pages_are_rasterized_and_not_silently_truncated():
+    import fitz
+
+    from pai.services.document_intelligence.providers.openai_vision import pages_for_vision
+
+    pdf = fitz.open()
+    pdf.new_page().insert_text((72, 72), "Page one CGPA 3.50")
+    pdf.new_page().insert_text((72, 72), "Page two graduation")
+    data = pdf.tobytes()
+    pdf.close()
+    images, total = pages_for_vision(data, "application/pdf", max_pages=1)
+    assert total == 2
+    assert len(images) == 1
+    assert images[0][0] == 1
+    assert images[0][1] == "image/jpeg"
+    assert images[0][2][:2] == b"\xff\xd8"
+    full, full_total = pages_for_vision(data, "application/pdf", max_pages=20)
+    assert full_total == 2
+    assert [page for page, _, _ in full] == [1, 2]
+
+
+def test_evidence_must_appear_in_digitized_text():
+    from pai.services.document_intelligence.evidence.grounding import evidence_grounded, page_for_span
+
+    text = "Student Name: Musawir Khan\nCGPA: 2.50 / 4.00"
+    assert evidence_grounded("CGPA: 2.50 / 4.00", text) is True
+    assert evidence_grounded("CGPA  2.50/4.00", text) is True
+    assert evidence_grounded("CGPA: 3.50 / 4.00", text) is False
+    assert page_for_span("CGPA: 2.50 / 4.00", [{"page": 2, "text": text}]) == 2
+
+
+def test_unreadable_ocr_never_applies_to_vault():
+    result = reconcile(
+        ReconcileInput(
+            field_key="career.skills",
+            incoming_value=[{"name": "Python"}],
+            existing_value=None,
+            evidence_text="Skills: Python",
+            source_authority="medium",
+            field_criticality="normal",
+            extraction_confidence=0.95,
+            document_quality="unreadable",
+        )
+    )
+    assert result.decision == "INSUFFICIENT_EVIDENCE"
+
+
+def test_low_quality_ocr_cannot_auto_apply():
+    result = reconcile(
+        ReconcileInput(
+            field_key="career.skills",
+            incoming_value=[{"name": "Python"}],
+            existing_value=None,
+            evidence_text="Skills: Python",
+            source_authority="medium",
+            field_criticality="normal",
+            extraction_confidence=0.95,
+            document_quality="low",
+        )
+    )
+    assert result.decision != "NEW_SAFE_FACT"
+    assert result.decision == "PROPOSE_UPDATE"
+
+
+def test_counselor_profile_surfaces_critical_verification():
+    from pai.orchestration.context import CounselorContext
+
+    ctx = CounselorContext(
+        person_id="p1",
+        goal="MS CS",
+        critical_verifications=[
+            {
+                "fieldKey": "education.gpa",
+                "existingValue": {"value": 2.5, "scale": 4.0},
+                "incomingValue": {"value": 3.5, "scale": 4.0},
+            }
+        ],
+    )
+    block = ctx.profile_block()
+    assert block.startswith("CRITICAL VERIFICATION:")
+    assert "education.gpa disputed" in block
+    assert "Do not make GPA-sensitive recommendations until resolved" in block
+    assert "Ask the student to resolve this" in block

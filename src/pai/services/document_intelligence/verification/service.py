@@ -68,6 +68,38 @@ async def list_open_cases(session: AsyncSession, person_id: uuid.UUID) -> list[V
     return list(result.scalars().all())
 
 
+async def close_open_cases_for_fields(
+    session: AsyncSession,
+    *,
+    person_id: uuid.UUID,
+    document_id: uuid.UUID,
+    field_keys: set[str],
+    resolution_type: str = "resolved_document_correct",
+    notes: str | None = None,
+) -> None:
+    """Close matching cases after candidate review already applied Vault facts."""
+    if not field_keys:
+        return
+    result = await session.execute(
+        select(VerificationCase).where(
+            VerificationCase.person_id == person_id,
+            VerificationCase.document_id == document_id,
+            VerificationCase.status.in_(("open", "presented")),
+            VerificationCase.field_key.in_(tuple(field_keys)),
+        )
+    )
+    now = datetime.now(UTC)
+    for case in result.scalars():
+        case.status = resolution_type
+        case.resolution_type = resolution_type
+        case.resolution_notes = notes or "closed_via_candidate_review"
+        case.resolved_at = now
+        if case.incoming_document_fact_id:
+            fact = await session.get(DocumentFact, case.incoming_document_fact_id)
+            if fact is not None:
+                fact.reconciliation_status = "applied_user_confirmed"
+
+
 async def resolve_case(
     session: AsyncSession,
     person: Person,

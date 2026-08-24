@@ -16,4 +16,5 @@ class DigitizationResult(BaseModel):
     quality: str = "unknown"
     needs_ocr: bool = False
     pages: list[dict[str, Any]] = Field(default_factory=list)
+    truncated: bool = False
     raw_response: dict[str, Any] | None = None

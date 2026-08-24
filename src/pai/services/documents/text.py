@@ -16,7 +16,7 @@ def extract_text_from_bytes(data: bytes, mime_type: str, filename: str) -> str:
     if mime.startswith("text/") or lower.endswith(".txt"):
         return data.decode("utf-8", errors="replace")[:MAX_CHARS]
     if mime == "application/pdf" or lower.endswith(".pdf"):
-        # ponytail: scanned image PDFs have no text layer; DeepSeek vision reads page images.
+        # ponytail: scanned PDFs have no text layer; OpenAI vision rasterizes pages later.
         return _pdf_text(data)[:MAX_CHARS]
     if (
         mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -26,25 +26,29 @@ def extract_text_from_bytes(data: bytes, mime_type: str, filename: str) -> str:
     return ""
 
 
-def _pdf_text(data: bytes) -> str:
+def pdf_page_texts(data: bytes) -> list[str]:
     from pypdf import PdfReader
 
     try:
         reader = PdfReader(io.BytesIO(data))
     except Exception:
-        return ""
+        return []
     if getattr(reader, "is_encrypted", False):
         try:
             reader.decrypt("")
         except Exception:
-            return ""
+            return []
     parts: list[str] = []
     for page in reader.pages:
         try:
             parts.append(page.extract_text() or "")
         except Exception:
-            continue
-    return "\n".join(part for part in parts if part).strip()
+            parts.append("")
+    return parts
+
+
+def _pdf_text(data: bytes) -> str:
+    return "\n\n".join(part for part in pdf_page_texts(data) if part).strip()
 
 
 def _docx_text(data: bytes) -> str:

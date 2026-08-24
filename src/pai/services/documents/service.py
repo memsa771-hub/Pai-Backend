@@ -26,6 +26,7 @@ from pai.services.document_intelligence.evidence.attention import attention_stat
 from pai.services.document_intelligence.security.scanner import scan_bytes
 from pai.services.document_intelligence.security.validation import validate_upload_bytes
 from pai.ingestion.vault_apply import process_candidates
+from pai.services.document_intelligence.verification.service import close_open_cases_for_fields
 from pai.services.jobs.lease import reclaim_expired_leases
 from pai.llm.gateway import LLMGateway
 from pai.orchestration.schemas import VaultCandidate
@@ -392,6 +393,12 @@ async def review_document_candidates(
             )
     if to_apply:
         await process_candidates(session, person, to_apply, from_document=True, already_reconciled=True)
+        await close_open_cases_for_fields(
+            session,
+            person_id=person.id,
+            document_id=doc.id,
+            field_keys={row.field_key for row in to_apply},
+        )
     leftover = await session.execute(
         select(DocumentCandidate.id).where(
             DocumentCandidate.document_id == doc.id,

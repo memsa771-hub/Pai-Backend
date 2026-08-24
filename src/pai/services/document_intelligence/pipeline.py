@@ -15,7 +15,13 @@ from pai.services.document_intelligence.classification.classifier import classif
 from pai.services.document_intelligence.classification.taxonomy import default_type, evidence_eligible
 from pai.services.document_intelligence.config import policy
 from pai.services.document_intelligence.digitization.service import digitize_bytes
+from pai.services.document_intelligence.digitization.schemas import DigitizationResult
 from pai.services.document_intelligence.evidence.authority import source_authority
+from pai.services.document_intelligence.evidence.grounding import (
+    evidence_grounded,
+    extraction_confidence,
+    page_for_span,
+)
 from pai.services.document_intelligence.evidence.criticality import field_criticality, field_sensitivity
 from pai.services.document_intelligence.extraction.extractor import extract_candidates
 from pai.services.document_intelligence.identity.matcher import match_student
@@ -147,9 +153,10 @@ async def run_document_analysis(
     doc.status = "digitizing"
 
     with span("document.analysis", document_id=str(doc.id), run_id=str(run.id)):
-        text, quality, ocr_conf = await _digitize(
-            session, settings, doc, version, run, job, storage
-        )
+        digitized = await _digitize(session, settings, doc, version, run, job, storage)
+        text, quality, ocr_conf = digitized.text, digitized.quality, digitized.ocr_confidence
+        pages = list(digitized.pages or [])
+        truncated = bool(digitized.truncated)
         if len(text.strip()) < int(rules["min_text_chars"]):
             doc.status = "failed"
             doc.verification_status = "needs_review"
@@ -250,11 +257,20 @@ async def run_document_analysis(
         for cand in candidates:
             if not (cand.evidence_text or "").strip():
                 continue
+            if not evidence_grounded(cand.evidence_text, text):
+                continue
             normalized, norm_conf = normalize_field(
                 cand.field_key, cand.value, document_type=doc.document_type or default_type()
             )
             authority = source_authority(doc.document_type or default_type(), cand.field_key)
             existing = await _existing_belief(session, person, cand.field_key)
+            confidence = extraction_confidence(
+                base=cand.confidence,
+                grounded=True,
+                document_quality=quality,
+                ocr_confidence=ocr_conf,
+                normalization_confidence=norm_conf,
+            )
             fact = DocumentFact(
                 person_id=person.id,
                 document_id=doc.id,
@@ -264,7 +280,8 @@ async def run_document_analysis(
                 raw_value=cand.value if isinstance(cand.value, (dict, list)) else cand.value,
                 normalized_value=normalized,
                 evidence_text=cand.evidence_text,
-                extraction_confidence=cand.confidence,
+                page=page_for_span(cand.evidence_text, pages),
+                extraction_confidence=confidence,
                 normalization_confidence=norm_conf,
                 ocr_confidence=ocr_conf,
                 document_quality=quality,
@@ -285,7 +302,7 @@ async def run_document_analysis(
                     identity_status=identity,
                     source_authority=authority,
                     field_criticality=fact.field_criticality,
-                    extraction_confidence=cand.confidence,
+                    extraction_confidence=confidence,
                     ocr_confidence=ocr_conf,
                     document_quality=quality,
                 )
@@ -293,18 +310,22 @@ async def run_document_analysis(
             fact.reconciliation_status = result.decision
             review = "pending"
             if result.decision in ("NEW_SAFE_FACT", "CONFIRMS_EXISTING"):
-                applied.append(
-                    VaultCandidate(
-                        field_key=cand.field_key,
-                        value=normalized,
-                        confidence=cand.confidence,
-                        evidence_text=cand.evidence_text or "",
-                        source_type="document",
-                        source_reference=str(doc.id),
-                        rationale_summary=result.reason,
+                if truncated:
+                    pending_left = True
+                    review = "pending"
+                else:
+                    applied.append(
+                        VaultCandidate(
+                            field_key=cand.field_key,
+                            value=normalized,
+                            confidence=confidence,
+                            evidence_text=cand.evidence_text or "",
+                            source_type="document",
+                            source_reference=str(doc.id),
+                            rationale_summary=result.reason,
+                        )
                     )
-                )
-                review = "accepted"
+                    review = "accepted"
             elif result.decision == "PROPOSE_UPDATE":
                 pending_left = True
             elif result.decision == "CRITICAL_CONFLICT":
@@ -332,18 +353,19 @@ async def run_document_analysis(
                     person_id=person.id,
                     field_key=cand.field_key,
                     value=normalized if isinstance(normalized, (dict, list)) else normalized,
-                    confidence=cand.confidence,
+                    confidence=confidence,
                     evidence_text=cand.evidence_text,
                     review_status=review,
                     reasoning_summary=f"{result.decision}:{result.reason}",
                 )
             )
 
-        if applied and identity in set(rules.get("auto_apply_identity") or ("matched",)):
+        if applied and identity in set(rules.get("auto_apply_identity") or ("matched",)) and not truncated:
             await process_candidates(
                 session, person, applied, from_document=True, already_reconciled=True
             )
 
+        pending_left = pending_left or truncated
         if identity == "mismatch":
             doc.verification_status = "identity_mismatch"
         elif had_critical:
@@ -372,12 +394,20 @@ async def _digitize(
     run: DocumentAnalysisRun,
     job: DocumentJob,
     storage: SupabaseStorageProvider,
-) -> tuple[str, str, float | None]:
+) -> DigitizationResult:
     _mark_stage(run, job, "digitize", doc)
-    if version is not None and version.content_text and len(version.content_text.strip()) >= 40:
+    min_chars = int(policy()["min_text_chars"])
+    if version is not None and version.content_text and len(version.content_text.strip()) >= min_chars:
         run.digitization = {"method": "cached", "quality": "good"}
         run.ocr_provider = "native"
-        return version.content_text, "good", None
+        text = version.content_text
+        return DigitizationResult(
+            text=text,
+            method="cached",
+            provider="native",
+            quality="good",
+            pages=[{"page": 1, "text": text}],
+        )
     prior = await session.scalar(
         select(DocumentAnalysisRun.digitization)
         .where(
@@ -390,7 +420,16 @@ async def _digitize(
     )
     if isinstance(prior, dict) and (prior.get("text") or "").strip():
         run.digitization = {"method": "prior_run", "quality": prior.get("quality")}
-        return str(prior["text"]), str(prior.get("quality") or "unknown"), prior.get("ocr_confidence")
+        text = str(prior["text"])
+        return DigitizationResult(
+            text=text,
+            method="prior_run",
+            provider=str(prior.get("provider") or "native"),
+            quality=str(prior.get("quality") or "unknown"),
+            ocr_confidence=prior.get("ocr_confidence"),
+            truncated=bool(prior.get("truncated")),
+            pages=list(prior.get("pages") or [{"page": 1, "text": text}]),
+        )
 
     path = version.storage_path if version is not None else doc.storage_path
     mime = version.mime_type if version is not None else doc.mime_type
@@ -412,8 +451,8 @@ async def _digitize(
     run.ocr_provider = result.provider
     run.ocr_model = result.model
     run.provider_artifact_path = artifact if result.provider != "native" else None
-    run.digitization = result.model_dump(exclude={"raw_response", "pages"})
-    return result.text, result.quality, result.ocr_confidence
+    run.digitization = result.model_dump(exclude={"raw_response"})
+    return result
 
 
 def _candidate_value(candidates: list[VaultCandidate], field_key: str):

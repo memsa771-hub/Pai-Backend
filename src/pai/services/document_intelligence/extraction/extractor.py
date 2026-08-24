@@ -8,6 +8,7 @@ from pai.orchestration.agents import FactExtractionAgent
 from pai.orchestration.schemas import VaultCandidate
 from pai.services.document_intelligence.classification.taxonomy import type_meta
 from pai.services.document_intelligence.config import policy
+from pai.services.document_intelligence.evidence.grounding import evidence_grounded
 from pai.services.document_intelligence.extraction.schemas import degree as degree_schema
 from pai.services.document_intelligence.extraction.schemas import passport as passport_schema
 from pai.services.document_intelligence.extraction.schemas import resume as resume_schema
@@ -42,13 +43,14 @@ async def extract_candidates(
     if typed:
         return typed
     agent = FactExtractionAgent(gateway)
-    return await agent.extract_from_document(
+    fallback = await agent.extract_from_document(
         document_id=document_id,
         document_text=document_text,
         document_type_hint=document_type,
         known_facts=known_facts,
         person_id=person_id,
     )
+    return [row for row in fallback if evidence_grounded(row.evidence_text, document_text)]
 
 
 async def _try_typed(
@@ -84,16 +86,16 @@ async def _try_typed(
         return []
     if not isinstance(out, BaseModel):
         return []
-    confidence = float(rules.get("typed_confidence") or 0.94)
+    base = float(rules.get("typed_confidence") or 0.9)
     candidates: list[VaultCandidate] = []
     for field_key, value, evidence in mapper(out):
-        if not evidence:
+        if not evidence or not evidence_grounded(evidence, document_text):
             continue
         candidates.append(
             VaultCandidate(
                 field_key=field_key,
                 value=value,
-                confidence=confidence,
+                confidence=base,
                 evidence_text=evidence,
                 source_type="document",
                 source_reference=document_id,

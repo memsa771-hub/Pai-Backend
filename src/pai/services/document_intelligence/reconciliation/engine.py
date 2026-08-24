@@ -50,12 +50,30 @@ def reconcile(item: ReconcileInput) -> ReconcileResult:
         return ReconcileResult(decision="WRONG_SUBJECT", reason="identity_mismatch")
     if not (item.evidence_text or "").strip():
         return ReconcileResult(decision="INSUFFICIENT_EVIDENCE", reason="no_span")
+    if item.document_quality in set(rules.get("unreadable_qualities") or ("unreadable",)):
+        return ReconcileResult(decision="INSUFFICIENT_EVIDENCE", reason="unreadable")
     if item.identity_status in set(rules.get("unconfirmed_identity") or ()):
         return ReconcileResult(decision="REQUIRES_CONFIRMATION", reason="identity_unconfirmed")
     conf = item.extraction_confidence
+    low_quality = item.document_quality in set(rules.get("low_qualities") or ("low",))
+    readable = item.document_quality in set(rules.get("readable_qualities") or ("good", "unknown"))
+    critical = rank(item.field_criticality) >= rank(str(rules.get("block_auto_apply_at") or "critical"))
+    if item.ocr_confidence is None and critical:
+        # Vision transcription has no OCR score; critical facts stay human-gated.
+        if item.existing_value is None:
+            return ReconcileResult(decision="PROPOSE_UPDATE", reason="critical_unscored_ocr")
+        if values_equivalent(item.field_key, item.existing_value, item.incoming_value):
+            return ReconcileResult(decision="CONFIRMS_EXISTING", reason="same_value")
+        delta = relative_delta(item.field_key, item.existing_value, item.incoming_value)
+        if delta >= float(rules["critical_relative_delta"]):
+            return ReconcileResult(decision="CRITICAL_CONFLICT", reason="critical_delta")
+        return ReconcileResult(decision="REQUIRES_CONFIRMATION", reason="critical_unscored_ocr")
     if item.existing_value is None:
-        if conf >= float(rules["new_safe_confidence"]) and rank(item.field_criticality) < rank(
-            str(rules.get("block_auto_apply_at") or "critical")
+        if (
+            conf >= float(rules["new_safe_confidence"])
+            and not critical
+            and readable
+            and not low_quality
         ):
             return ReconcileResult(decision="NEW_SAFE_FACT", reason="new_high_confidence")
         if conf >= float(rules["propose_confidence"]):
@@ -64,9 +82,10 @@ def reconcile(item: ReconcileInput) -> ReconcileResult:
     if values_equivalent(item.field_key, item.existing_value, item.incoming_value):
         return ReconcileResult(decision="CONFIRMS_EXISTING", reason="same_value")
     delta = relative_delta(item.field_key, item.existing_value, item.incoming_value)
-    critical = rank(item.field_criticality) >= rank(str(rules.get("block_auto_apply_at") or "critical"))
     if critical and delta >= float(rules["critical_relative_delta"]):
         return ReconcileResult(decision="CRITICAL_CONFLICT", reason="critical_delta")
+    if low_quality or not readable:
+        return ReconcileResult(decision="REQUIRES_CONFIRMATION", reason="low_document_quality")
     if conf >= float(rules["propose_confidence"]):
         return ReconcileResult(decision="PROPOSE_UPDATE", reason="differs")
     return ReconcileResult(decision="INSUFFICIENT_EVIDENCE", reason="weak_diff")

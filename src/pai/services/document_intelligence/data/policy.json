@@ -123,7 +123,7 @@
   "identity_case_field": "identity.subject",
   "unconfirmed_identity": ["ambiguous", "likely_match"],
   "auto_apply_identity": ["matched"],
-  "typed_confidence": 0.94,
+  "typed_confidence": 0.9,
   "extract_char_limit": 20000,
   "classify_text_chars": 4000,
   "max_content_text_chars": 50000,
@@ -154,5 +154,8 @@
   },
   "processing_status_extra": ["uploaded", "queued", "processing"],
   "criticality_rank": { "low": 0, "normal": 1, "high": 2, "critical": 3 },
-  "block_auto_apply_at": "critical"
+  "block_auto_apply_at": "critical",
+  "readable_qualities": ["good", "unknown"],
+  "low_qualities": ["low"],
+  "unreadable_qualities": ["unreadable"]
 }

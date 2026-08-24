@@ -32,9 +32,24 @@ class CounselorContext(BaseModel):
     recent_messages: list[dict[str, str]] = Field(default_factory=list)
     relevant_memory: list[str] = Field(default_factory=list)
     active_tasks: list[dict[str, str]] = Field(default_factory=list)
+    critical_verifications: list[dict[str, Any]] = Field(default_factory=list)
 
     def profile_block(self) -> str:
         lines = []
+        if self.critical_verifications:
+            lines.append("CRITICAL VERIFICATION:")
+            for row in self.critical_verifications[:4]:
+                field = str(row.get("fieldKey") or "fact")
+                lines.append(
+                    f"{field} disputed. Current: {row.get('existingValue')}. "
+                    f"Document: {row.get('incomingValue')}. "
+                    + (
+                        "Do not make GPA-sensitive recommendations until resolved. "
+                        if field.startswith("education.gpa")
+                        else "Do not treat this as settled truth until resolved. "
+                    )
+                    + "Ask the student to resolve this."
+                )
         if self.goal:
             lines.append(f"goal: {self.goal}")
         if self.education:
@@ -133,6 +148,16 @@ async def build_counselor_context(
         for line in (semantic_memory or "").splitlines()
         if line.strip() and not line.strip().startswith("Relevant context")
     ]
+    from pai.services.document_intelligence.verification.service import list_open_cases, public_case
+
+    cases = await list_open_cases(session, person.id)
+    verifications = [public_case(row) for row in cases[:8]]
+    known = list(facts[:16])
+    for row in reversed(verifications):
+        known.insert(
+            0,
+            f"DISPUTED {row.get('fieldKey')}: current={row.get('existingValue')} document={row.get('incomingValue')}",
+        )
     return CounselorContext(
         person_id=str(person.id),
         identity=identity,
@@ -142,10 +167,11 @@ async def build_counselor_context(
         budget=_fact_after(facts, "budget", "funding"),
         tests=_facts_all(facts, "test"),
         universities=_facts_all(facts, "target universit"),
-        known_facts=facts[:16],
+        known_facts=known[:16],
         missing_critical_fields=missing,
         recent_messages=recent,
         relevant_memory=memory_lines[:5],
+        critical_verifications=verifications,
     )
 
 

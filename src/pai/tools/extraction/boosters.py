@@ -325,6 +325,85 @@ def run_deterministic_boosters(
         )
         hits.append("application.career_interest")
 
+    # Internship / work experience — high-precision only when duration + role/org cues appear
+    work = re.search(
+        r"\b(\d+)\s*[- ]?\s*month(?:s)?\s+(?:software\s+)?(?:engineering\s+)?"
+        r"(internship|intern)\b"
+        r"(?:\s+at\s+([A-Za-z0-9][\w&.\'-]{0,40}?))?"
+        r"(?=\s+(?:and|but|plus|also|,|;|\.|$)|$)",
+        raw,
+        re.I,
+    )
+    if work:
+        months = work.group(1)
+        org = (work.group(3) or "local company").strip(" .,")
+        evidence = work.group(0).strip()
+        out.append(
+            _cand(
+                "career.work_history",
+                {
+                    "organization": org[:256],
+                    "title": f"{months}-month software internship",
+                    "employment_type": "internship",
+                    "description": evidence[:500],
+                },
+                evidence=evidence,
+                source_reference=source_reference,
+                source_type=source_type,
+                confidence=0.92,
+                rationale="booster:work_internship",
+            )
+        )
+        hits.append("career.work_history")
+
+    # Language / cert exams named explicitly (CILS, CELI, IELTS already via other paths)
+    cert = re.search(
+        r"\b(CILS|CELI|TOEFL|GRE|GMAT)\b(?:\s*(B[12]|C[12]|[67]\.?\d))?",
+        raw,
+        re.I,
+    )
+    if cert:
+        name = cert.group(1).upper()
+        level = (cert.group(2) or "").strip()
+        label = f"{name} {level}".strip() if level else name
+        if name in ("CILS", "CELI"):
+            out.append(
+                _cand(
+                    "career.certifications",
+                    {"name": label, "issuer": "Italian language exam"},
+                    evidence=cert.group(0),
+                    source_reference=source_reference,
+                    source_type=source_type,
+                    confidence=0.92,
+                    rationale="booster:language_cert",
+                )
+            )
+            hits.append("career.certifications")
+
+    # Named software/ML projects
+    proj = re.search(
+        r"\b(flutter\s+app|machine\s+learning\s+classifier|ml\s+classifier|"
+        r"rest\s+apis?|open[\s-]?source\s+project)\b",
+        raw,
+        re.I,
+    )
+    if proj:
+        out.append(
+            _cand(
+                "career.projects",
+                {
+                    "name": proj.group(1).strip()[:256],
+                    "description": proj.group(0)[:500],
+                },
+                evidence=proj.group(0),
+                source_reference=source_reference,
+                source_type=source_type,
+                confidence=0.9,
+                rationale="booster:project_mention",
+            )
+        )
+        hits.append("career.projects")
+
     return out, hits
 
 

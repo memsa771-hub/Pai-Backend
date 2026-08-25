@@ -44,11 +44,18 @@ VAULT_FIELDS_THAT_AFFECT_GOALS: dict[str, list[str]] = {
     "education.highest_level": ["admission"],
     "education.records": ["admission"],
     "application.study_country": ["admission"],
+    "application.target_universities": ["admission"],
     "identity.current_status": ["admission", "job", "internship"],
     "finance.funding_status": ["admission"],
     "finance.scholarship_interest": ["admission"],
     "demographics.nationality": ["admission", "job", "internship"],
     "location.current_country": ["admission", "job", "internship"],
+    # Gap-closing profile facts (live test: these were missing → gaps never refreshed)
+    "career.work_history": ["admission", "job", "internship"],
+    "career.projects": ["admission", "job", "internship"],
+    "career.certifications": ["admission", "job", "internship"],
+    "career.skills": ["admission", "job", "internship"],
+    "mobility.passport_number": ["admission", "job", "internship"],
 }
 
 # Fields that must NOT appear on a Goal row (Vault-level only)
@@ -256,10 +263,15 @@ async def update_goal_anchors(
 async def activate_goal(
     session: AsyncSession,
     goal: Goal,
+    *,
+    conversation_id: uuid.UUID | None = None,
 ) -> None:
-    """Mark this goal active. Previous active goals are set to paused."""
-    if goal.lifecycle_status == LIFECYCLE_ACTIVE:
-        return
+    """Mark this goal active, pause siblings, and attach the thread pointer.
+
+    Always sets conversations.active_goal_id when a conversation is known.
+    If conversation_id is omitted, falls back to the person's latest active
+    conversation so typed-apply / career_interest cannot leave the pointer null.
+    """
     prev = await session.execute(
         select(Goal).where(
             Goal.person_id == goal.person_id,
@@ -272,6 +284,15 @@ async def activate_goal(
         other.status = LIFECYCLE_PAUSED
     goal.lifecycle_status = LIFECYCLE_ACTIVE
     goal.status = LIFECYCLE_ACTIVE
+
+    resolved_conversation_id = conversation_id
+    if resolved_conversation_id is None:
+        from pai.services.conversations.service import get_latest_active_conversation
+
+        conv = await get_latest_active_conversation(session, goal.person_id)
+        resolved_conversation_id = conv.id if conv is not None else None
+    if resolved_conversation_id is not None:
+        await switch_conversation_active_goal(session, resolved_conversation_id, goal.id)
 
 
 async def upsert_goal_from_anchors(
@@ -297,8 +318,10 @@ async def upsert_goal_from_anchors(
 
     if existing is not None:
         changed = await update_goal_anchors(session, existing, full_anchors, confidence=confidence)
-        if activate and existing.lifecycle_status != LIFECYCLE_ACTIVE:
-            await activate_goal(session, existing)
+        if activate:
+            await activate_goal(
+                session, existing, conversation_id=source_conversation_id
+            )
             changed = True
         if not changed:
             return existing, "reinforced"
@@ -319,7 +342,7 @@ async def upsert_goal_from_anchors(
         confidence=confidence,
     )
     if activate:
-        await activate_goal(session, goal)
+        await activate_goal(session, goal, conversation_id=source_conversation_id)
     return goal, "created"
 
 
@@ -375,7 +398,7 @@ async def enqueue_goal_intelligence_job(
         existing = await session.execute(
             select(GoalJob).where(
                 GoalJob.goal_id == goal.id,
-                GoalJob.status.in_(["pending", "running"]),
+                GoalJob.status.in_(["pending", "processing", "running"]),
             )
         )
         if existing.scalar_one_or_none() is not None:

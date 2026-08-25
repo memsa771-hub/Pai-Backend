@@ -96,10 +96,19 @@ async def list_student_goals(
     include_archived: bool = Query(False, description="Include archived goals"),
 ) -> JSONResponse:
     goals = await list_goals(session, person.id, include_archived=include_archived)
+    goal_ids = [g.id for g in goals]
+    intel_by_goal: dict = {}
+    if goal_ids:
+        intel_rows = await session.execute(
+            select(GoalIntelligence).where(GoalIntelligence.goal_id.in_(goal_ids))
+        )
+        intel_by_goal = {row.goal_id: row for row in intel_rows.scalars().all()}
     return JSONResponse(
         content=success(
             {
-                "items": [_serialize_goal(g) for g in goals],
+                "items": [
+                    _serialize_goal(g, intel_by_goal.get(g.id)) for g in goals
+                ],
                 "total": len(goals),
             }
         )
@@ -167,9 +176,8 @@ async def activate_goal_endpoint(
     if goal is None:
         raise AuthError(code="GOAL_NOT_FOUND", message="Goal not found.", status_code=404)
 
-    await activate_goal(session, goal)
     conv = await get_or_create_person_conversation(session, person, settings=settings)
-    await switch_conversation_active_goal(session, conv.id, goal.id)
+    await activate_goal(session, goal, conversation_id=conv.id)
 
     if goal.intelligence_status in (INTEL_STALE, INTEL_PENDING, None):
         await enqueue_goal_intelligence_job(session, goal)

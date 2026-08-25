@@ -236,10 +236,6 @@ async def test_resolver_creates_goal_for_life_aim(mock_session, person_id, conve
             new=AsyncMock(return_value=(created_goal, "created")),
         ),
         patch(
-            "pai.services.goals.resolver.switch_conversation_active_goal",
-            new=AsyncMock(),
-        ),
-        patch(
             "pai.services.goals.resolver.enqueue_goal_intelligence_job",
             new=AsyncMock(return_value=MagicMock()),
         ),

@@ -76,8 +76,14 @@ async def claim_next_goal_job(session: AsyncSession) -> GoalJob | None:
 def _build_vault_snapshot(person_records: dict) -> dict:
     """Extract counselor-safe profile snapshot for assessment stage."""
     snap: dict = {}
+    # Keys must match load_typed_profile_records() (camelCase for work).
     for key in (
-        "educations", "skills", "work_experiences", "certifications", "goals"
+        "educations",
+        "skills",
+        "workExperiences",
+        "projects",
+        "certifications",
+        "goals",
     ):
         records = person_records.get(key) or []
         if records:
@@ -231,6 +237,18 @@ async def process_goal_job(
         )
 
     await _save_intelligence(session, goal, intel, result)
+    # Denormalize research university/company options onto goal.anchors so the
+    # sync resolver can match "focus on Bologna" / "TUM" without creating dupes.
+    options = (result.get("research") or {}).get("options") or []
+    if isinstance(options, list) and options:
+        unis = [
+            str(item).strip()
+            for item in options
+            if isinstance(item, (str, int, float)) and str(item).strip()
+        ]
+        if unis:
+            merged = {**(goal.anchors or {}), "target_universities": unis[:8]}
+            goal.anchors = merged
     job.status = "completed"
     job.locked_at = None
 

@@ -200,11 +200,20 @@ async def process_candidates(
         applied_keys = [row.field_key for row in accepted if row.status != "pending"]
         record_vault_applied(session, person.id, applied_keys)
 
-        # Selective goal refresh: re-queue assessment for goals affected by these fields
+        # Selective goal refresh: re-queue assessment for goals affected by these fields.
+        # Include pending typed writes too — work/projects/certs are stored even when
+        # pending, and gaps must refresh when the profile changes.
+        refresh_keys = list(
+            dict.fromkeys(
+                [
+                    *[row.field_key for row in accepted],
+                ]
+            )
+        )
         try:
             from pai.services.goals.service import mark_intelligence_stale_for_vault_update
 
-            for fk in applied_keys:
+            for fk in refresh_keys:
                 await mark_intelligence_stale_for_vault_update(session, person.id, fk)
         except Exception:
             import logging as _logging

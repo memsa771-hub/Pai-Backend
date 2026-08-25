@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     # One loop per API process. person_id advisory locks keep students serialized
     # if you run `uvicorn --workers N`.
     enable_intelligence_worker: bool = Field(default=True, alias="ENABLE_INTELLIGENCE_WORKER")
+    enable_goal_worker: bool = Field(default=True, alias="ENABLE_GOAL_WORKER")
 
     # Web search (Tavily) — leave empty until you add the key; tool degrades gracefully
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")

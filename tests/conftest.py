@@ -212,6 +212,7 @@ def test_settings() -> Settings:
         ),
         ENABLE_DOCUMENT_WORKER=False,
         ENABLE_INTELLIGENCE_WORKER=False,
+        ENABLE_GOAL_WORKER=False,
         DEEPSEEK_API_KEY="",
         TAVILY_API_KEY="",
     )
@@ -287,7 +288,7 @@ async def _truncate_all(settings: Settings) -> None:
             text(
                 "TRUNCATE student_tasks, person_semantic_memories, person_events, person_decisions, conversations, messages, orchestration_runs, document_candidates, "
                 "verification_cases, document_facts, document_parties, document_analysis_runs, document_relations, "
-                "message_documents, document_jobs, document_versions, documents, person_jobs, persons, person_vaults, educations, work_experiences, "
+                "message_documents, document_jobs, document_versions, documents, person_jobs, goal_jobs, goal_intelligence, persons, person_vaults, educations, work_experiences, "
                 "projects, skills, certifications, goals, vault_values, vault_evidence, "
                 "vault_history, person_consents RESTART IDENTITY CASCADE"
             )

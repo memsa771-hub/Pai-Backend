@@ -33,6 +33,10 @@ class CounselorContext(BaseModel):
     relevant_memory: list[str] = Field(default_factory=list)
     active_tasks: list[dict[str, str]] = Field(default_factory=list)
     critical_verifications: list[dict[str, Any]] = Field(default_factory=list)
+    active_goal_id: str | None = None
+    active_goal_brief: str | None = None
+    active_goal_status: str | None = None  # ready | partial | pending | failed
+    pending_confirmations: list[str] = Field(default_factory=list)
 
     def profile_block(self) -> str:
         lines = []
@@ -50,7 +54,15 @@ class CounselorContext(BaseModel):
                     )
                     + "Ask the student to resolve this."
                 )
-        if self.goal:
+        if self.active_goal_brief:
+            lines.append(
+                f"[ACTIVE GOAL INTELLIGENCE — status:{self.active_goal_status or 'unknown'}]"
+            )
+            for brief_line in self.active_goal_brief.splitlines():
+                stripped = brief_line.strip()
+                if stripped:
+                    lines.append(f"  {stripped}")
+        elif self.goal:
             lines.append(f"goal: {self.goal}")
         if self.education:
             lines.append(f"education: {self.education}")
@@ -66,6 +78,11 @@ class CounselorContext(BaseModel):
             lines.append("memory: " + " | ".join(self.relevant_memory[:5]))
         if self.missing_critical_fields:
             lines.append("gaps: " + ", ".join(self.missing_critical_fields[:4]))
+        if self.pending_confirmations:
+            lines.append(
+                "pending confirmation (ask the student to confirm at most one): "
+                + "; ".join(self.pending_confirmations[:3])
+            )
         return "\n".join(lines) if lines else "(no stored profile yet)"
 
 
@@ -158,6 +175,57 @@ async def build_counselor_context(
             0,
             f"DISPUTED {row.get('fieldKey')}: current={row.get('existingValue')} document={row.get('incomingValue')}",
         )
+    active_goal_id: str | None = None
+    active_goal_brief: str | None = None
+    active_goal_status: str | None = None
+    pending_confirmations: list[str] = []
+    if person.vault is not None:
+        try:
+            pending_rows = await session.execute(
+                select(VaultValue.field_key, VaultValue.value).where(
+                    VaultValue.vault_id == person.vault.id,
+                    VaultValue.status == "pending_confirmation",
+                )
+            )
+            for field_key, value in pending_rows.all():
+                preview = value
+                if isinstance(preview, (dict, list)):
+                    preview = str(preview)[:80]
+                elif preview is not None:
+                    preview = str(preview)[:80]
+                else:
+                    preview = "(value pending)"
+                pending_confirmations.append(f"{field_key}={preview}")
+        except Exception:
+            import logging as _logging
+
+            _logging.getLogger(__name__).exception(
+                "Failed to load pending confirmations (non-fatal)"
+            )
+    if conversation_id is not None:
+        try:
+            from pai.services.goals.service import (
+                get_conversation_active_goal,
+                get_goal_intelligence,
+            )
+
+            active_goal = await get_conversation_active_goal(
+                session, conversation_id, person.id
+            )
+            if active_goal is not None:
+                active_goal_id = str(active_goal.id)
+                intel = await get_goal_intelligence(session, active_goal.id)
+                if intel is not None and intel.counselor_brief:
+                    active_goal_brief = intel.counselor_brief
+                    active_goal_status = intel.status
+                else:
+                    active_goal_status = active_goal.intelligence_status or "pending"
+        except Exception:
+            import logging as _logging
+
+            _logging.getLogger(__name__).exception(
+                "Failed to load active goal brief (non-fatal)"
+            )
     return CounselorContext(
         person_id=str(person.id),
         identity=identity,
@@ -172,6 +240,10 @@ async def build_counselor_context(
         recent_messages=recent,
         relevant_memory=memory_lines[:5],
         critical_verifications=verifications,
+        active_goal_id=active_goal_id,
+        active_goal_brief=active_goal_brief,
+        active_goal_status=active_goal_status,
+        pending_confirmations=pending_confirmations[:5],
     )
 
 

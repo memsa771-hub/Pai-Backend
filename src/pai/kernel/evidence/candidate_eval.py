@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.kernel.contracts.schemas import CandidateResult, VaultCandidate
 from pai.kernel.policy.verifier import policy_decision, validate_candidate
+from pai.kernel.evidence.assertion import assertion_of, is_vault_eligible
 from pai.domains.student.person.models import Person, VaultValue
 from pai.domains.student.vault.catalog import get_catalog_field
-from pai.intelligences.vault.formation import assertion_of, is_vault_eligible
 
 
 def _normalize(value: Any) -> str:

@@ -366,7 +366,8 @@ async def run_document_analysis(
 
         if applied and identity in set(rules.get("auto_apply_identity") or ("matched",)) and not truncated:
             await accept_vault_candidates(
-                session, person, applied, from_document=True, already_reconciled=True
+                session, person, applied, from_document=True, already_reconciled=True,
+                apply_order=list(policy().get("apply_order") or []),
             )
 
         pending_left = pending_left or truncated

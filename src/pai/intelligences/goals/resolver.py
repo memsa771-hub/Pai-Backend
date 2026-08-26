@@ -10,7 +10,6 @@ Decision logic:
 
 from __future__ import annotations
 
-import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pai.domains.goals.models import Goal
 from pai.domains.goals.service import (
     activate_goal,
     enqueue_goal_intelligence_job,
@@ -26,9 +26,8 @@ from pai.domains.goals.service import (
     list_goals,
     upsert_goal_from_anchors,
 )
-from pai.domains.goals.models import Goal
-
-logger = logging.getLogger(__name__)
+from pai.domains.goals.types import GoalType, GoalWriteAction
+from pai.domains.student.normalization.geo import extract_countries_from_text
 
 _LIFE_AIM = "life_aim"
 
@@ -40,82 +39,96 @@ _FOCUS_PREFIX = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class GroundedLifeAim:
+    intent: str
+    mode: str
+    supersedes: bool
+    evidence: str
+
+
 @dataclass
 class ResolverResult:
-    action: str  # "create" | "create_secondary" | "switch" | "reinforce" | "none"
+    action: str  # GoalWriteAction value
     goal: Goal | None
     intelligence_enqueued: bool
 
 
-def _classify_goal_type(intent: str, anchors: dict[str, Any]) -> str:
-    """Derive goal_type from intent text and anchor hints."""
-    lower = intent.casefold()
+def _fold(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip().casefold()
+
+
+def _span_in_message(span: str, source: str) -> bool:
+    """Evidence must be a span of the student message, not a model rewrite."""
+    ev = _fold(span)
+    src = _fold(source)
+    if len(ev) < 4 or not src:
+        return False
+    if ev in src:
+        return True
+    tokens = [tok for tok in re.findall(r"\w+", ev, flags=re.UNICODE) if len(tok) >= 2]
+    if len(tokens) < 2:
+        return False
+    pos = 0
+    for tok in tokens:
+        found = src.find(tok, pos)
+        if found < 0:
+            return False
+        pos = found + len(tok)
+    return True
+
+
+def grounded_life_aim(text: str, llm_goal: Any | None) -> GroundedLifeAim | None:
+    """LLM classified life_aim only if evidence is a span of the student text."""
+    if llm_goal is None:
+        return None
+    if (getattr(llm_goal, "kind", None) or "none") != _LIFE_AIM:
+        return None
+    evidence = (getattr(llm_goal, "evidence_text", None) or "").strip()
+    intent = (getattr(llm_goal, "intent", None) or "").strip() or evidence
+    if len(intent) < 4:
+        return None
+    span = evidence or intent
+    if not _span_in_message(span, text):
+        return None
+    mode = getattr(llm_goal, "mode", None)
+    if mode not in ("pursuing", "exploring"):
+        mode = "pursuing"
+    return GroundedLifeAim(
+        intent=intent[:240],
+        mode=mode,
+        supersedes=bool(getattr(llm_goal, "supersedes_previous", False)),
+        evidence=span[:240],
+    )
+
+
+def _classify_goal_type(intent: str, anchors: dict[str, Any], *, llm_goal: Any = None) -> str:
+    """Prefer LLM GoalExtract.goal_type; tiny keyword fallback only."""
+    hinted = getattr(llm_goal, "goal_type", None) if llm_goal is not None else None
+    if hinted:
+        return GoalType.coerce(str(hinted)).value
     if anchors.get("goal_type"):
-        return anchors["goal_type"]
-    if any(
-        kw in lower
-        for kw in (
-            "ms ",
-            "msc",
-            "bachelor",
-            "phd",
-            "mba",
-            "masters",
-            "degree",
-            "university",
-            "admission",
-        )
-    ):
-        return "admission"
-    if any(kw in lower for kw in ("internship", "intern")):
-        return "internship"
-    if any(
-        kw in lower
-        for kw in (
-            "job",
-            "swe",
-            "engineer",
-            "developer",
-            "analyst",
-            "role",
-            "position",
-            "full-time",
-        )
-    ):
-        return "job"
-    return "general"
+        return GoalType.coerce(str(anchors["goal_type"])).value
+    lower = intent.casefold()
+    if any(kw in lower for kw in ("phd", "mba", "masters", "university", "admission", "ms ", "msc", "bachelor")):
+        return GoalType.ADMISSION.value
+    if "internship" in lower or "intern" in lower:
+        return GoalType.INTERNSHIP.value
+    if any(kw in lower for kw in ("job", "full-time", "full time")):
+        return GoalType.JOB.value
+    return GoalType.GENERAL.value
 
 
 def _extract_anchors_from_intent(intent: str, goal_type: str) -> dict[str, Any]:
-    """Best-effort anchor extraction from intent string (no LLM)."""
+    """Normalize anchors from intent. Countries via student geo, not a handwritten list."""
     anchors: dict[str, Any] = {"goal_type": goal_type}
     lower = intent.casefold()
+    countries = extract_countries_from_text(intent)
+    if countries:
+        anchors["target_country"] = countries[0]
 
-    country_map = {
-        "germany": "DE",
-        "china": "CN",
-        "canada": "CA",
-        "uk": "GB",
-        "usa": "US",
-        "australia": "AU",
-        "dubai": "AE",
-        "uae": "AE",
-        "sweden": "SE",
-        "netherlands": "NL",
-        "france": "FR",
-        "turkey": "TR",
-        "singapore": "SG",
-        "malaysia": "MY",
-        "new zealand": "NZ",
-        "italy": "IT",
-    }
-    for name, code in country_map.items():
-        if name in lower:
-            anchors["target_country"] = code
-            break
-
-    if goal_type == "admission":
-        if re.search(r"\bphd\b|\bdoctor", lower):
+    if goal_type == GoalType.ADMISSION:
+        if re.search(r"\bphd\b", lower):
             anchors["degree_level"] = "phd"
         elif re.search(r"\bms\b|m\.s|msc|masters?\b", lower):
             anchors["degree_level"] = "ms"
@@ -123,21 +136,6 @@ def _extract_anchors_from_intent(intent: str, goal_type: str) -> dict[str, Any]:
             anchors["degree_level"] = "bs"
         elif re.search(r"\bmba\b", lower):
             anchors["degree_level"] = "mba"
-
-    prog_map = {
-        "cs": "computer science",
-        "computer science": "computer science",
-        "ai": "artificial intelligence",
-        "ml": "machine learning",
-        "data science": "data science",
-        "electrical engineering": "electrical engineering",
-        "mechanical engineering": "mechanical engineering",
-    }
-    for kw, prog in prog_map.items():
-        if kw in lower:
-            anchors["program"] = prog
-            break
-
     return anchors
 
 
@@ -218,18 +216,16 @@ async def resolve(
     Called synchronously inside the chat path — must be fast.
     No extra LLM call is made here.
     """
-    if llm_goal is None:
-        return ResolverResult(action="none", goal=None, intelligence_enqueued=False)
-    kind = getattr(llm_goal, "kind", "none")
-    if kind != _LIFE_AIM:
-        return ResolverResult(action="none", goal=None, intelligence_enqueued=False)
-    intent = (getattr(llm_goal, "intent", None) or "").strip()
-    supersedes = getattr(llm_goal, "supersedes_previous", False)
-    if len(intent) < 4:
-        return ResolverResult(action="none", goal=None, intelligence_enqueued=False)
+    parsed = grounded_life_aim(user_message, llm_goal)
+    if parsed is None:
+        return ResolverResult(
+            action=GoalWriteAction.NONE.value, goal=None, intelligence_enqueued=False
+        )
+    intent = parsed.intent
+    supersedes = parsed.supersedes
 
     match_text = f"{intent} {user_message or ''}"
-    goal_type = _classify_goal_type(intent, {})
+    goal_type = _classify_goal_type(intent, {}, llm_goal=llm_goal)
     anchors = _extract_anchors_from_intent(intent, goal_type)
     anchors["title"] = intent[:256]
 
@@ -242,7 +238,7 @@ async def resolve(
             session, active_goal, anchors, person_id, activate=False
         )
         return ResolverResult(
-            action="reinforce",
+            action=GoalWriteAction.REINFORCE.value,
             goal=active_goal,
             intelligence_enqueued=changed,
         )
@@ -256,7 +252,7 @@ async def resolve(
                 session, active_goal, anchors, person_id, activate=False
             )
             return ResolverResult(
-                action="reinforce",
+                action=GoalWriteAction.REINFORCE.value,
                 goal=active_goal,
                 intelligence_enqueued=changed,
             )
@@ -269,18 +265,24 @@ async def resolve(
             await activate_goal(session, mentioned, conversation_id=conversation_id)
             enqueued = await _maybe_enqueue(session, mentioned)
             return ResolverResult(
-                action="reinforce", goal=mentioned, intelligence_enqueued=enqueued
+                action=GoalWriteAction.REINFORCE.value,
+                goal=mentioned,
+                intelligence_enqueued=enqueued,
             )
         # Mentioned a different existing goal → switch when clear, else secondary
         if _is_clear_switch(intent, active_goal) or supersedes:
             await activate_goal(session, mentioned, conversation_id=conversation_id)
             enqueued = await _maybe_enqueue(session, mentioned)
             return ResolverResult(
-                action="switch", goal=mentioned, intelligence_enqueued=enqueued
+                action=GoalWriteAction.SWITCH.value,
+                goal=mentioned,
+                intelligence_enqueued=enqueued,
             )
         enqueued = await _maybe_enqueue(session, mentioned)
         return ResolverResult(
-            action="create_secondary", goal=mentioned, intelligence_enqueued=enqueued
+            action=GoalWriteAction.CREATE_SECONDARY.value,
+            goal=mentioned,
+            intelligence_enqueued=enqueued,
         )
 
     # 3. Anchor match against other goals
@@ -291,11 +293,15 @@ async def resolve(
             await activate_goal(session, secondary, conversation_id=conversation_id)
             enqueued = await _maybe_enqueue(session, secondary)
             return ResolverResult(
-                action="switch", goal=secondary, intelligence_enqueued=enqueued
+                action=GoalWriteAction.SWITCH.value,
+                goal=secondary,
+                intelligence_enqueued=enqueued,
             )
         enqueued = await _maybe_enqueue(session, secondary)
         return ResolverResult(
-            action="create_secondary", goal=secondary, intelligence_enqueued=enqueued
+            action=GoalWriteAction.CREATE_SECONDARY.value,
+            goal=secondary,
+            intelligence_enqueued=enqueued,
         )
 
     # 4. Create new goal
@@ -311,6 +317,10 @@ async def resolve(
         create_if_new=True,
     )
     enqueued_job = await enqueue_goal_intelligence_job(session, goal)
+    if action == GoalWriteAction.NONE.value or goal is None:
+        return ResolverResult(
+            action=GoalWriteAction.NONE.value, goal=None, intelligence_enqueued=False
+        )
     return ResolverResult(
         action=action,
         goal=goal,

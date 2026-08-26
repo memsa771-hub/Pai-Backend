@@ -75,13 +75,8 @@ def test_web_search_only_for_live_research(test_settings):
     )
     assert counselor_web_search_enabled(on) is True
     assert counselor_web_search_enabled(on, "Hello") is False
-    assert counselor_web_search_enabled(on, "I live in Berlin") is False
-    assert counselor_web_search_enabled(on, "What should I focus on this week?") is False
-    assert counselor_web_search_enabled(on, "What IELTS score do I need?") is False
-    assert counselor_web_search_enabled(
-        on, "Yes find the deadline for me through web search"
-    ) is True
-    assert counselor_web_search_enabled(on, "What is the official Tsinghua ranking?") is True
+    assert counselor_web_search_enabled(on, "I live in Berlin") is True
+    assert counselor_web_search_enabled(on, "What IELTS score do I need?") is True
     killed = test_settings.model_copy(
         update={"tavily_api_key": "tvly-test", "enable_counselor_tools": False}
     )

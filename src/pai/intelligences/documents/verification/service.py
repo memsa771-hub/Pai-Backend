@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pai.kernel.errors import AuthError
 from pai.kernel.gates import accept_vault_candidates
 from pai.kernel.contracts.schemas import VaultCandidate
+from pai.intelligences.documents.config import policy
 from pai.domains.documents.models import Document, DocumentFact, VerificationCase
 from pai.domains.student.person.models import Person
 
@@ -142,6 +143,7 @@ async def resolve_case(
                 ],
                 from_document=True,
                 already_reconciled=True,
+                apply_order=list(policy().get("apply_order") or []),
             )
             fact.reconciliation_status = "applied_user_confirmed"
     if resolution_type == "resolved_document_correct" and case.document_id:

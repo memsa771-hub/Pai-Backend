@@ -7,14 +7,14 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from pai.kernel.evidence.vault_apply import process_candidates
+from pai.domains.actions.service import is_fact_recording_task, process_task_proposals
+from pai.domains.goals.models import Goal
+from pai.domains.student.person.models import Education, Person
+from pai.domains.student.vault.catalog import extraction_catalog_hint
 from pai.intelligences.counselor.context import build_student_context_pack
 from pai.intelligences.counselor.routing import should_extract_facts
 from pai.kernel.contracts.schemas import TaskProposal, VaultCandidate
-from pai.domains.goals.models import Goal
-from pai.domains.student.person.models import Education, Person
-from pai.domains.actions.service import is_fact_recording_task, process_task_proposals
-from pai.domains.student.vault.catalog import extraction_catalog_hint
+from pai.kernel.evidence.vault_apply import process_candidates
 
 
 def test_pk_admissions_messages_trigger_extraction():
@@ -66,14 +66,17 @@ def test_education_payload_keeps_marks_and_rejects_orphan_gpa_fabrication():
     assert payload["degree"] == "FSc"
     assert payload["major"] == "Pre-Medical"
     assert payload["percentage"] == pytest.approx(79.73, abs=0.05)
+    assert "institution" not in payload
     assert "Primary education" not in str(payload)
+    as_degree = _education_payload("FSc Pre-Medical")
+    assert as_degree == {"degree": "FSc Pre-Medical"}
 
 
 @pytest.mark.asyncio
 async def test_education_marks_upsert_and_full_context(postgres_ready):
-    from pai.platform.security.auth.provider import ProviderUser
-    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
     from pai.domains.student.person.service import PersonBootstrapService
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.security.auth.provider import ProviderUser
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -91,9 +94,30 @@ async def test_education_marks_upsert_and_full_context(postgres_ready):
         assert person is not None
         await session.refresh(person, attribute_names=["vault"])
 
+        orphan = VaultCandidate(
+            field_key="education.program",
+            value={
+                "degree": "FSc",
+                "major": "Pre-Medical",
+                "marks_obtained": 847,
+                "marks_total": 1100,
+            },
+            confidence=0.95,
+            evidence_text="I completed FSc Pre-Medical 847/1100",
+            source_reference=str(uuid.uuid4()),
+            source_type="chat",
+            explicitness="explicit",
+        )
+        orphan_out, _ = await process_candidates(session, person, [orphan])
+        await session.commit()
+        assert orphan_out == []
+        edu_q = select(Education).where(Education.person_id == person.id)
+        assert list((await session.execute(edu_q)).scalars()) == []
+
         first = VaultCandidate(
             field_key="education.program",
             value={
+                "institution": "Punjab College",
                 "degree": "FSc",
                 "major": "Pre-Medical",
                 "marks_obtained": 847,
@@ -136,6 +160,8 @@ async def test_education_marks_upsert_and_full_context(postgres_ready):
             ).scalars()
         )
         assert len(rows) == 1
+        assert rows[0].institution == "Punjab College"
+        assert rows[0].institution != rows[0].degree
         assert rows[0].major == "Pre-Medical"
         assert rows[0].percentage == pytest.approx(79.73, abs=0.05)
 
@@ -194,9 +220,9 @@ async def test_education_marks_upsert_and_full_context(postgres_ready):
 
 @pytest.mark.asyncio
 async def test_no_fabricated_primary_education_for_bare_gpa(postgres_ready):
-    from pai.platform.security.auth.provider import ProviderUser
-    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
     from pai.domains.student.person.service import PersonBootstrapService
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.security.auth.provider import ProviderUser
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

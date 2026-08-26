@@ -110,28 +110,10 @@ def should_extract_facts(message: str) -> bool:
     return True
 
 
-_OPPORTUNITY = re.compile(
-    r"\b("
-    r"universit(?:y|ies)|programs?|programmes?|"
-    r"recommend(?:ation)?|alternatives?|options?|shortlist|roadmap|"
-    r"which (?:uni|university|degree|program|field)|"
-    r"what should i study|"
-    r"find (?:me )?(?:a |an )?(?:uni|university|program|degree|scholarship)|"
-    r"mbbs|biotech|bioinformatics|"
-    r"want admission"
-    r")\b",
-    re.I,
-)
-
-
 def counselor_web_search_enabled(settings: Settings, message: str | None = None) -> bool:
-    """Offer web_search for live facts and for recommendation / options turns."""
+    """Offer web_search; the counselor LLM decides whether to call it."""
     if not (settings.enable_counselor_tools and (settings.tavily_api_key or "").strip()):
         return False
     if message is None:
         return True
-    if is_greeting(message):
-        return False
-    if classify_turn(message) == "LIVE_RESEARCH":
-        return True
-    return bool(_OPPORTUNITY.search(message))
+    return not is_greeting(message)

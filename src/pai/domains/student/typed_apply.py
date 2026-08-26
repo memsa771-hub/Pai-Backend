@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.kernel.contracts.schemas import VaultCandidate
 from pai.domains.goals.models import Goal
+from pai.domains.student.normalization.phone import normalize_phone
 from pai.domains.student.person.models import (
     Certification,
     Education,
@@ -20,10 +20,10 @@ from pai.domains.student.person.models import (
     WorkExperience,
 )
 from pai.domains.student.person.typed_resources import SCOPE_BY_RESOURCE
-from pai.domains.student.normalization.phone import normalize_phone
 from pai.domains.student.vault.catalog import CatalogField
 from pai.domains.student.vault.completion import apply_completion_to_vault
 from pai.domains.student.vault.service import expand_scope_for_person
+from pai.kernel.contracts.schemas import VaultCandidate
 
 
 class TypedApplyResult:
@@ -44,8 +44,7 @@ def _education_payload(value: Any) -> dict[str, Any] | None:
         text = value.strip()
         if not text:
             return None
-        # "FSc Pre-Medical" / "BS Computer Science"
-        return {"degree": text, "institution": text}
+        return {"degree": text}
 
     if not isinstance(value, dict):
         return None
@@ -107,14 +106,6 @@ def _education_payload(value: Any) -> dict[str, Any] | None:
     # Need at least one identifying academic signal
     if not any(k in out for k in ("institution", "degree", "major", "gpa", "percentage")):
         return None
-
-    # Prefer a real label for institution; fall back to degree/major label (not "Primary education")
-    if "institution" not in out:
-        label = out.get("degree") or out.get("major")
-        if label:
-            out["institution"] = str(label)
-        elif out.get("gpa") is None and out.get("percentage") is None:
-            return None
     return out
 
 
@@ -235,7 +226,7 @@ async def _upsert_career_goal(
     normalized = title.strip().lower()
     result = await session.execute(
         select(Goal)
-        .where(Goal.person_id == person.id, Goal.goal_type == "career")
+        .where(Goal.person_id == person.id)
         .order_by(Goal.updated_at.desc())
     )
     rows = list(result.scalars().all())
@@ -257,14 +248,25 @@ async def _upsert_career_goal(
         row.status = "active" if vault_status != "pending" else "proposed"
         return row, "updated", old
 
-    goal = Goal(
-        person_id=person.id,
-        title=title[:256],
-        goal_type="career",
-        status="active" if vault_status != "pending" else "proposed",
+    from pai.domains.goals.service import (
+        LIFECYCLE_ACTIVE,
+        LIFECYCLE_DRAFT,
+        activate_goal,
+        create_goal,
     )
-    session.add(goal)
-    await session.flush()
+    from pai.domains.goals.types import GoalType
+
+    status = LIFECYCLE_ACTIVE if vault_status != "pending" else LIFECYCLE_DRAFT
+    goal = await create_goal(
+        session,
+        person.id,
+        title=title[:256],
+        goal_type=GoalType.GENERAL.value,
+        anchors={},
+        lifecycle_status=status,
+    )
+    if status == LIFECYCLE_ACTIVE:
+        await activate_goal(session, goal)
     return goal, "accepted", None
 
 
@@ -331,11 +333,15 @@ async def _apply_education_one(
 
     existing = await _find_education_match(session, person.id, payload)
     old_snapshot = _education_snapshot(existing) if existing else None
+    institution = (payload.get("institution") or "").strip()
+    invented = institution in (payload.get("degree"), payload.get("major"))
     if existing:
+        if invented:
+            payload = {k: v for k, v in payload.items() if k != "institution"}
         _apply_education_fields(existing, payload)
         row = existing
         status = "updated"
-    elif not payload.get("institution"):
+    elif not institution or invented:
         return TypedApplyResult(candidate.field_key, "rejected", candidate.confidence)
     else:
         row = Education(
@@ -620,23 +626,29 @@ async def apply_typed_candidate(
         title = candidate.value if isinstance(candidate.value, str) else str(candidate.value)
         # Delegate to GoalService so multi-goal logic is respected
         try:
-            from pai.domains.goals.service import upsert_goal_from_anchors, enqueue_goal_intelligence_job
-            from pai.intelligences.goals.resolver import _classify_goal_type, _extract_anchors_from_intent
+            from pai.domains.goals.service import (
+                INTEL_PENDING,
+                INTEL_STALE,
+                enqueue_goal_intelligence_job,
+                upsert_goal_from_anchors,
+            )
+            from pai.domains.goals.types import GoalType, GoalWriteAction
 
-            goal_type = _classify_goal_type(title, {})
-            anchors = _extract_anchors_from_intent(title, goal_type)
             goal, action = await upsert_goal_from_anchors(
                 session,
                 person.id,
-                goal_type=goal_type,
+                goal_type=GoalType.GENERAL.value,
                 title=title,
-                anchors=anchors,
+                anchors={"title": title[:256]},
                 activate=(vault_status != "pending"),
                 create_if_new=True,
             )
-            if action in ("created", "updated"):
+            if goal is not None and (
+                action != GoalWriteAction.REINFORCE
+                or goal.intelligence_status in (INTEL_PENDING, INTEL_STALE)
+            ):
                 await enqueue_goal_intelligence_job(session, goal)
-            old = _goal_snap(goal)
+            old = _goal_snap(goal) if goal is not None else None
             status = action
         except Exception:
             import logging as _log

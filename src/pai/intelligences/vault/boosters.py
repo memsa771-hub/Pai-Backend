@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from pai.domains.student.normalization.geo import extract_countries_from_text
-from pai.workflows.onboarding.catalog import BudgetBand
+from pai.domains.student.normalization.vocab import BudgetBand
 from pai.kernel.contracts.schemas import VaultCandidate
 
 _MARKS = re.compile(

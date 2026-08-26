@@ -8,9 +8,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pai.domains.student.normalization.geo import coerce_country
-from pai.workflows.onboarding.catalog import (
-    DEGREE_FOR_LEVEL,
-    ENUM_LABELS,
+from pai.domains.student.normalization.vocab import (
     BudgetBand,
     CurrentStatus,
     EducationLevel,
@@ -18,10 +16,14 @@ from pai.workflows.onboarding.catalog import (
     FieldOfStudy,
     Gender,
     IntakeSeason,
-    OnboardingPath,
-    PrimaryGoal,
     SkillProficiency,
     StandardizedTest,
+)
+from pai.workflows.onboarding.catalog import (
+    DEGREE_FOR_LEVEL,
+    ENUM_LABELS,
+    OnboardingPath,
+    PrimaryGoal,
 )
 from pai.domains.student.normalization.phone import normalize_phone
 

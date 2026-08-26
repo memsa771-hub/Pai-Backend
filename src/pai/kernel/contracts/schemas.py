@@ -84,6 +84,7 @@ class TaskProposal(BaseModel):
     title: str
     detail: str | None = None
     requires_confirmation: bool = False
+    kind: Literal["student_action", "profile_write"] = "student_action"
 
 
 class TaskResult(BaseModel):
@@ -118,6 +119,19 @@ class GoalExtract(BaseModel):
     mode: Literal["pursuing", "exploring"] | None = None
     supersedes_previous: bool = False
     evidence_text: str | None = None
+    goal_type: Literal["admission", "job", "internship", "general"] | None = Field(
+        default=None,
+        description="LLM classification of the life aim. Python validates against GoalType.",
+    )
+
+    @field_validator("goal_type", mode="before")
+    @classmethod
+    def _goal_type_token(cls, value: object) -> object:
+        if value in (None, ""):
+            return None
+        from pai.domains.goals.types import GoalType
+
+        return GoalType.coerce(str(value)).value
 
 
 class FactExtractionResult(BaseModel):

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.domains.memory.models import SemanticMemoryRow
 from pai.domains.student.vault.catalog import get_catalog_field
-from pai.intelligences.vault.formation import assertion_of, format_observed, is_vault_eligible
+from pai.kernel.evidence.assertion import assertion_of, format_observed, is_vault_eligible
 
 Action = Literal["insert", "strengthen", "supersede", "noop"]
 

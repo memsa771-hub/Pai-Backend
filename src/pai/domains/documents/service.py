@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.kernel.errors import AuthError
 from pai.domains.documents.models import (
     Document,
     DocumentCandidate,
@@ -14,10 +13,10 @@ from pai.domains.documents.models import (
     DocumentVersion,
     MessageDocument,
 )
-from pai.kernel.gates import accept_vault_candidates
-from pai.kernel.contracts.schemas import VaultCandidate
-from pai.domains.student.person.models import Person, PersonVault, VaultValue
 from pai.domains.documents.relations import add_relation
+from pai.domains.student.person.models import Person, PersonVault, VaultValue
+from pai.kernel.contracts.schemas import VaultCandidate
+from pai.kernel.errors import AuthError
 
 
 class DocumentNotFoundError(AuthError):
@@ -185,7 +184,7 @@ async def review_document_candidates(
     *,
     accept_ids: list[uuid.UUID],
     reject_ids: list[uuid.UUID] | None = None,
-) -> set[str]:
+) -> tuple[set[str], list[VaultCandidate]]:
     doc = await get_document_owned(session, person.id, document_id)
     reject_ids = reject_ids or []
     requested = list(dict.fromkeys([*accept_ids, *reject_ids]))
@@ -237,10 +236,6 @@ async def review_document_candidates(
                     rationale_summary=row.reasoning_summary or "",
                 )
             )
-    if to_apply:
-        await accept_vault_candidates(
-            session, person, to_apply, from_document=True, already_reconciled=True
-        )
     leftover = await session.execute(
         select(DocumentCandidate.id).where(
             DocumentCandidate.document_id == doc.id,
@@ -248,7 +243,7 @@ async def review_document_candidates(
         )
     )
     doc.status = "awaiting_review" if leftover.first() is not None else "processed"
-    return {row.field_key for row in to_apply}
+    return {row.field_key for row in to_apply}, to_apply
 
 
 async def list_document_storage_paths(

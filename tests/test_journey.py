@@ -5,8 +5,8 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from pai.intelligences.goals.resolver import grounded_life_aim
 from pai.kernel.contracts.schemas import GoalExtract
-from pai.domains.journey.extract import resolve_goal_hit
 
 
 def _extract(
@@ -32,34 +32,33 @@ def _extract(
 
 def test_english_life_aim_is_stored():
     src = "I want to study locally in FAST"
-    hit = resolve_goal_hit(src, _extract(src, intent="study locally in FAST"))
+    hit = grounded_life_aim(src, _extract(src, intent="study locally in FAST"))
     assert hit is not None
-    assert "study locally" in hit.object_label.lower()
-    assert "fast" in hit.object_label.lower()
-    assert hit.stance == "pursuing"
-    assert hit.object_key == "goal:now"
+    assert "study locally" in hit.intent.lower()
+    assert "fast" in hit.intent.lower()
+    assert hit.mode == "pursuing"
 
 
 def test_roman_urdu_life_aim_is_stored():
     src = "mujhe Germany jana hai"
-    hit = resolve_goal_hit(src, _extract(src))
+    hit = grounded_life_aim(src, _extract(src))
     assert hit is not None
-    assert "germany" in hit.object_label.lower()
+    assert "germany" in hit.intent.lower()
     src2 = "main FAST mein parhna chahta hoon"
-    hit2 = resolve_goal_hit(src2, _extract(src2))
+    hit2 = grounded_life_aim(src2, _extract(src2))
     assert hit2 is not None
-    assert "fast" in hit2.object_label.lower()
+    assert "fast" in hit2.intent.lower()
 
 
 def test_mixed_aim_and_attach_keeps_only_the_aim():
     src = "mujhe Germany jana hai, transcript baad mein bhejta hoon"
-    hit = resolve_goal_hit(
+    hit = grounded_life_aim(
         src,
         _extract(src, intent="mujhe Germany jana hai", evidence="mujhe Germany jana hai"),
     )
     assert hit is not None
-    assert "germany" in hit.object_label.lower()
-    assert "bhejta" not in hit.object_label.lower()
+    assert "germany" in hit.intent.lower()
+    assert "bhejta" not in hit.intent.lower()
 
 
 def test_turn_actions_are_not_goals():
@@ -72,7 +71,7 @@ def test_turn_actions_are_not_goals():
         ("I'll send it later", "I'll send it later"),
     )
     for source, intent in cases:
-        hit = resolve_goal_hit(
+        hit = grounded_life_aim(
             source,
             _extract(source, kind="turn_action", intent=intent, evidence=intent),
         )
@@ -88,8 +87,8 @@ def test_stated_true_without_life_aim_kind_is_ignored():
         mode="pursuing",
         evidence_text=src,
     )
-    assert resolve_goal_hit(src, lying) is None
-    assert resolve_goal_hit(src, None) is None
+    assert grounded_life_aim(src, lying) is None
+    assert grounded_life_aim(src, None) is None
 
 
 def test_model_cannot_invent_a_goal_not_in_the_message():
@@ -99,7 +98,7 @@ def test_model_cannot_invent_a_goal_not_in_the_message():
         intent="study in Germany",
         evidence="study in Germany",
     )
-    assert resolve_goal_hit(src, invented) is None
+    assert grounded_life_aim(src, invented) is None
 
 
 def test_questions_and_greetings_are_not_goals():
@@ -111,35 +110,35 @@ def test_questions_and_greetings_are_not_goals():
         "Suggest universities that are best matched for me",
         "COkay lock in USTC and STJU",
     ):
-        assert resolve_goal_hit(src, _extract(src, kind="none", intent=None, evidence="")) is None
+        assert grounded_life_aim(src, _extract(src, kind="none", intent=None, evidence="")) is None
 
 
 def test_exploring_and_pivot_come_from_the_classifier():
     src = "I am considering an internship in Dubai"
-    hit = resolve_goal_hit(
+    hit = grounded_life_aim(
         src,
         _extract(src, intent="an internship in Dubai", mode="exploring"),
     )
     assert hit is not None
-    assert hit.stance == "exploring"
+    assert hit.mode == "exploring"
     later = "I want to study internationally not local"
-    pivot = resolve_goal_hit(
+    pivot = grounded_life_aim(
         later,
         _extract(later, intent="study internationally not local", pivot=True),
     )
     assert pivot is not None
-    assert pivot.reason == "pivot"
+    assert pivot.supersedes is True
 
 
 @pytest.mark.asyncio
 async def test_goal_pivot_keeps_history(postgres_ready):
-    from pai.platform.security.auth.provider import ProviderUser
-    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
     from pai.domains.goals.service import create_goal, get_active_goal, list_goals
     from pai.domains.journey.models import PersonEvent
     from pai.domains.journey.service import record_goal_event
     from pai.domains.student.person.models import Person
     from pai.domains.student.person.service import PersonBootstrapService
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.security.auth.provider import ProviderUser
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

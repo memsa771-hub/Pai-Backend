@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from pai.domains.student.normalization.geo import country_codes_from_value
-from pai.workflows.onboarding.catalog import BudgetBand
+from pai.domains.student.normalization.vocab import BudgetBand
 from pai.kernel.contracts.schemas import OBSERVED_FIELD_KEY, VaultCandidate
 from pai.domains.student.vault.catalog import VAULT_CATALOG, get_catalog_field
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pai.kernel.contracts.schemas import OBSERVED_FIELD_KEY, VaultCandidate
 from pai.domains.student.vault.catalog import get_catalog_field
-from pai.intelligences.vault.formation import assertion_of
+from pai.kernel.evidence.assertion import assertion_of
 
 
 def validate_candidate(candidate: VaultCandidate) -> VaultCandidate | None:

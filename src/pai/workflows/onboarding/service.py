@@ -26,6 +26,8 @@ from pai.workflows.onboarding.contracts import (
     OnboardingSubmit,
 )
 from pai.domains.goals.models import Goal
+from pai.domains.goals.service import enqueue_goal_intelligence_job, upsert_goal_from_anchors
+from pai.domains.goals.types import GoalWriteAction
 from pai.domains.student.person.models import Education, Person, Skill, WorkExperience
 from pai.domains.student.vault.service import VaultService, grow_vault_schema
 
@@ -319,26 +321,21 @@ class OnboardingService:
         goal_key = body.primaryGoal.value
         title = (body.goalDetail or PRIMARY_GOAL_TITLES[goal_key])[:256]
         goal_type = GOAL_TYPE_FOR_PRIMARY[goal_key]
-        row = (
-            None
-            if person.onboarding_completed_at is None
-            else await self._first_goal(session, person)
+        anchors: dict[str, Any] = {"goal_type": goal_type, "title": title}
+        if body.studyCountry:
+            anchors["target_country"] = body.studyCountry
+        goal, action = await upsert_goal_from_anchors(
+            session,
+            person.id,
+            goal_type=goal_type,
+            title=title,
+            anchors=anchors,
+            activate=True,
         )
-        if row is None:
-            session.add(
-                Goal(
-                    person_id=person.id,
-                    goal_type=goal_type,
-                    title=title,
-                    description=goal_key,
-                    status="active",
-                )
-            )
-        else:
-            row.title = title
-            row.goal_type = goal_type
-            row.description = goal_key
-            row.status = "active"
+        if goal is not None:
+            goal.description = goal_key
+            if action != GoalWriteAction.REINFORCE:
+                await enqueue_goal_intelligence_job(session, goal)
         if person.vault:
             scopes = list(person.vault.applicable_scopes or [])
             if "application" not in scopes:

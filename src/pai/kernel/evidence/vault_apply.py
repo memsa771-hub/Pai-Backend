@@ -15,7 +15,6 @@ from pai.kernel.policy.verifier import (
     verification_level_for,
 )
 from pai.domains.student.typed_apply import apply_typed_candidate
-from pai.intelligences.documents.config import policy
 from pai.domains.student.person.models import Person, VaultEvidence, VaultHistory, VaultValue
 from pai.domains.student.vault.catalog import get_catalog_field
 from pai.domains.student.vault.completion import apply_completion_to_vault
@@ -119,13 +118,14 @@ async def process_candidates(
     *,
     from_document: bool = False,
     already_reconciled: bool = False,
+    apply_order: list[str] | None = None,
 ) -> tuple[list[VaultApplyResult], list[VaultCandidate]]:
     accepted: list[VaultApplyResult] = []
     pending: list[VaultCandidate] = []
     mutated = False
     ordered = candidates
-    if from_document or already_reconciled:
-        order = {key: idx for idx, key in enumerate(policy().get("apply_order") or [])}
+    if apply_order:
+        order = {key: idx for idx, key in enumerate(apply_order)}
         ordered = sorted(candidates, key=lambda c: order.get(c.field_key, len(order)))
     for raw in ordered:
         candidate = validate_candidate(raw)

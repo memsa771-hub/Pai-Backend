@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.domains.goals.models import Goal, GoalIntelligence, GoalJob
+from pai.domains.goals.types import GoalType, GoalWriteAction
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ async def create_goal(
 ) -> Goal:
     """Create a brand-new goal record. Caller commits."""
     _assert_no_vault_keys(anchors)
+    goal_type = GoalType.coerce(goal_type).value
     goal = Goal(
         person_id=person_id,
         goal_type=goal_type,
@@ -306,13 +308,12 @@ async def upsert_goal_from_anchors(
     confidence: float | None = None,
     activate: bool = True,
     create_if_new: bool = True,
-) -> tuple[Goal, str]:
+) -> tuple[Goal | None, str]:
     """
-    Find-or-create logic for goal resolver.
-
-    Returns (goal, action) where action is one of:
-      "reinforced" | "updated" | "created" | "no_match"
+    Find-or-create. Returns (goal, GoalWriteAction value).
+    Switch is decided by the resolver when pointing at a different existing goal.
     """
+    goal_type = GoalType.coerce(goal_type).value
     full_anchors = {"goal_type": goal_type, **anchors}
     existing = await find_matching_goal(session, person_id, full_anchors)
 
@@ -322,14 +323,12 @@ async def upsert_goal_from_anchors(
             await activate_goal(
                 session, existing, conversation_id=source_conversation_id
             )
-            changed = True
-        if not changed:
-            return existing, "reinforced"
-        existing.intelligence_status = INTEL_STALE
-        return existing, "updated"
+        if changed:
+            existing.intelligence_status = INTEL_STALE
+        return existing, GoalWriteAction.REINFORCE.value
 
     if not create_if_new:
-        return None, "no_match"  # type: ignore[return-value]
+        return None, GoalWriteAction.NONE.value
 
     goal = await create_goal(
         session,
@@ -343,7 +342,8 @@ async def upsert_goal_from_anchors(
     )
     if activate:
         await activate_goal(session, goal, conversation_id=source_conversation_id)
-    return goal, "created"
+    action = GoalWriteAction.CREATE if activate else GoalWriteAction.CREATE_SECONDARY
+    return goal, action.value
 
 
 async def switch_conversation_active_goal(

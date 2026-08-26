@@ -1,41 +1,28 @@
-"""Closed vocabularies for onboarding dropdowns (ISO countries + PAI goal paths)."""
+"""Onboarding form catalog: path/goal choices and dropdown labels."""
 
 from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
 
+from pai.domains.goals.types import GoalType
 from pai.domains.student.normalization.geo import country_options
+from pai.domains.student.normalization.vocab import (
+    BudgetBand,
+    CurrentStatus,
+    EducationLevel,
+    EmploymentType,
+    FieldOfStudy,
+    Gender,
+    IntakeSeason,
+    SkillProficiency,
+    StandardizedTest,
+)
 
 
 class OnboardingPath(StrEnum):
     manual = "manual"
     cv = "cv"
-
-
-class Gender(StrEnum):
-    male = "male"
-    female = "female"
-    non_binary = "non_binary"
-    prefer_not_to_say = "prefer_not_to_say"
-    other = "other"
-
-
-class CurrentStatus(StrEnum):
-    student = "student"
-    graduate = "graduate"
-    professional = "professional"
-    job_seeker = "job_seeker"
-    other = "other"
-
-
-class EducationLevel(StrEnum):
-    high_school = "high_school"
-    diploma = "diploma"
-    bachelor = "bachelor"
-    master = "master"
-    phd = "phd"
-    other = "other"
 
 
 class PrimaryGoal(StrEnum):
@@ -44,67 +31,6 @@ class PrimaryGoal(StrEnum):
     admission = "admission"
     professional = "professional"
     journey_tracker = "journey_tracker"
-
-
-class FieldOfStudy(StrEnum):
-    computer_science = "computer_science"
-    software_engineering = "software_engineering"
-    data_science = "data_science"
-    artificial_intelligence = "artificial_intelligence"
-    engineering = "engineering"
-    business = "business"
-    medicine = "medicine"
-    law = "law"
-    arts_humanities = "arts_humanities"
-    social_sciences = "social_sciences"
-    natural_sciences = "natural_sciences"
-    other = "other"
-
-
-class IntakeSeason(StrEnum):
-    fall = "fall"
-    spring = "spring"
-    summer = "summer"
-    winter = "winter"
-    rolling = "rolling"
-
-
-class BudgetBand(StrEnum):
-    limited = "limited"
-    moderate = "moderate"
-    comfortable = "comfortable"
-    fully_funded = "fully_funded"
-
-
-class SkillProficiency(StrEnum):
-    beginner = "beginner"
-    intermediate = "intermediate"
-    advanced = "advanced"
-    expert = "expert"
-
-
-class EmploymentType(StrEnum):
-    internship = "internship"
-    part_time = "part_time"
-    full_time = "full_time"
-    contract = "contract"
-    freelance = "freelance"
-    other = "other"
-
-
-class StandardizedTest(StrEnum):
-    ielts = "ielts"
-    toefl = "toefl"
-    pte = "pte"
-    duolingo = "duolingo"
-    gre = "gre"
-    gmat = "gmat"
-    sat = "sat"
-    act = "act"
-    net = "net"
-    ecat = "ecat"
-    mdcat = "mdcat"
-    other = "other"
 
 
 ENUM_LABELS: dict[str, dict[str, str]] = {
@@ -201,11 +127,11 @@ ENUM_LABELS: dict[str, dict[str, str]] = {
 PRIMARY_GOAL_TITLES = ENUM_LABELS["primaryGoal"]
 
 GOAL_TYPE_FOR_PRIMARY: dict[str, str] = {
-    "exploring": "exploration",
-    "placement": "career",
-    "admission": "application",
-    "professional": "career",
-    "journey_tracker": "tracking",
+    "exploring": GoalType.GENERAL.value,
+    "placement": GoalType.JOB.value,
+    "admission": GoalType.ADMISSION.value,
+    "professional": GoalType.JOB.value,
+    "journey_tracker": GoalType.GENERAL.value,
 }
 
 DEGREE_FOR_LEVEL: dict[str, str] = {

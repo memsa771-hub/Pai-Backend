@@ -16,7 +16,9 @@ from pai.domains.memory.formation import apply_memory_drafts, drafts_from_turn
 from pai.domains.memory.service import PersonMemoryService
 from pai.intelligences.counselor.agents import FactExtractionAgent, StudentConversationAgent
 from pai.intelligences.planner import plan_next_actions
-from pai.kernel.gates import accept_actions, accept_vault_candidates, evaluate_candidates_batch
+from pai.kernel.gates import accept_vault_candidates, evaluate_candidates_batch
+from pai.domains.actions.service import process_task_proposals
+from pai.domains.goals.types import GoalWriteAction
 from pai.intelligences.counselor.checkpoint import get_graph_checkpointer
 from pai.intelligences.counselor.context import (
     build_counselor_context,
@@ -481,7 +483,7 @@ class PAIOrchestrator:
         assert self._session and self._person
         proposals = plan_next_actions(state)
         if proposals:
-            results = await accept_actions(
+            results = await process_task_proposals(
                 self._session,
                 self._person,
                 proposals,
@@ -521,15 +523,15 @@ class PAIOrchestrator:
                 llm_goal=llm_goal,
                 user_message=text,
             )
-            if resolver_result.action == "none" or resolver_result.goal is None:
+            if resolver_result.action == GoalWriteAction.NONE.value or resolver_result.goal is None:
                 return False
             kind = {
-                "create": "goal.created",
-                "create_secondary": "goal.created",
-                "switch": "goal.changed",
-                "reinforce": "goal.changed",
+                GoalWriteAction.CREATE.value: "goal.created",
+                GoalWriteAction.CREATE_SECONDARY.value: "goal.created",
+                GoalWriteAction.SWITCH.value: "goal.changed",
+                GoalWriteAction.REINFORCE.value: "goal.changed",
             }.get(resolver_result.action)
-            if kind and resolver_result.action != "reinforce":
+            if kind and resolver_result.action != GoalWriteAction.REINFORCE.value:
                 await record_goal_event(
                     self._session,
                     self._person.id,

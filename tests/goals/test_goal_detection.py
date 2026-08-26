@@ -17,12 +17,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pai.kernel.contracts.schemas import GoalExtract
 from pai.intelligences.goals.resolver import (
     _classify_goal_type,
     _extract_anchors_from_intent,
     resolve,
 )
+from pai.kernel.contracts.schemas import GoalExtract
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "detection_cases.json"
 
@@ -110,7 +110,7 @@ def test_no_goal_messages_produce_no_intent() -> None:
         ("bachelor in computer science", "admission"),
         ("SWE internship in Dubai", "internship"),
         ("full time job as data scientist", "job"),
-        ("software engineer role at Google", "job"),
+        ("software engineer role at Google", "general"),
         ("MBA in UK", "admission"),
         ("something completely unknown", "general"),
     ],
@@ -198,6 +198,26 @@ async def test_resolver_none_when_turn_action(mock_session, person_id, conversat
 
 
 @pytest.mark.asyncio
+async def test_resolver_none_when_evidence_not_in_message(mock_session, person_id, conversation_id):
+    llm_goal = GoalExtract(
+        kind="life_aim",
+        intent="study in Germany",
+        mode="pursuing",
+        stated=True,
+        evidence_text="study in Germany",
+    )
+    result = await resolve(
+        mock_session,
+        person_id,
+        conversation_id,
+        llm_goal=llm_goal,
+        user_message="yeh attach karunga",
+    )
+    assert result.action == "none"
+    assert result.goal is None
+
+
+@pytest.mark.asyncio
 async def test_resolver_creates_goal_for_life_aim(mock_session, person_id, conversation_id):
     """A life_aim with sufficient intent should trigger goal creation."""
     import uuid
@@ -233,7 +253,7 @@ async def test_resolver_creates_goal_for_life_aim(mock_session, person_id, conve
         ),
         patch(
             "pai.intelligences.goals.resolver.upsert_goal_from_anchors",
-            new=AsyncMock(return_value=(created_goal, "created")),
+            new=AsyncMock(return_value=(created_goal, "create")),
         ),
         patch(
             "pai.intelligences.goals.resolver.enqueue_goal_intelligence_job",
@@ -247,5 +267,5 @@ async def test_resolver_creates_goal_for_life_aim(mock_session, person_id, conve
             llm_goal=llm_goal,
             user_message="I want to do MS CS in Germany",
         )
-    assert result.action in ("created", "reinforced", "switch", "create_secondary", "updated")
+    assert result.action == "create"
     assert result.goal is not None

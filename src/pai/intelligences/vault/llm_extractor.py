@@ -77,7 +77,8 @@ class OmnibusLLMExtractor:
                                 "PAI is global: copy names the student used; do not assume "
                                 "Pakistan or any default university list. Classify current_goal.kind "
                                 "as life_aim, turn_action, or none (any language, including Roman "
-                                "Urdu). evidence_text must be a verbatim span of the source. "
+                                "Urdu). Set current_goal.goal_type to admission, job, internship, "
+                                "or general when kind is life_aim. evidence_text must be a verbatim span of the source. "
                                 "Never write counselor replies. Return JSON only."
                             ),
                         ),

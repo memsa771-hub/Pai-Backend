@@ -4,14 +4,23 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from sqlalchemy import select
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.interfaces.api.dependencies import get_db, require_onboarding_complete
-from pai.intelligences.documents.config import taxonomy as load_taxonomy
+from pai.domains.documents.models import Document, DocumentJob
+from pai.domains.documents.service import (
+    enqueue_reprocess,
+    get_document_owned,
+    list_document_candidates,
+    list_document_storage_paths,
+    list_documents,
+    mark_document_deleted,
+    review_document_candidates,
+)
+from pai.intelligences.documents.config import policy, taxonomy as load_taxonomy
 from pai.intelligences.documents.evidence.attention import attention_state, journey_criticality
 from pai.intelligences.documents.ingest import create_document_upload
 from pai.intelligences.documents.verification.service import (
@@ -20,17 +29,9 @@ from pai.intelligences.documents.verification.service import (
     public_case,
     resolve_case,
 )
-from pai.domains.documents.models import Document, DocumentJob
-from pai.domains.documents.service import (
-    list_document_storage_paths,
-    mark_document_deleted,
-    enqueue_reprocess,
-    get_document_owned,
-    list_document_candidates,
-    list_documents,
-    review_document_candidates,
-)
+from pai.interfaces.api.dependencies import get_db, require_onboarding_complete
 from pai.interfaces.api.schemas import success
+from pai.kernel.gates import accept_vault_candidates
 from pai.platform.storage.supabase import SupabaseStorageProvider
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -241,13 +242,22 @@ async def review_document(
     session: Annotated[AsyncSession, Depends(get_db)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    applied = await review_document_candidates(
+    applied, to_apply = await review_document_candidates(
         session,
         person,
         document_id,
         accept_ids=body.acceptCandidateIds,
         reject_ids=body.rejectCandidateIds,
     )
+    if to_apply:
+        await accept_vault_candidates(
+            session,
+            person,
+            to_apply,
+            from_document=True,
+            already_reconciled=True,
+            apply_order=list(policy().get("apply_order") or []),
+        )
     if applied:
         await close_open_cases_for_fields(
             session,

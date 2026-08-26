@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import uuid
 
 from sqlalchemy import select
@@ -12,26 +11,15 @@ from pai.domains.actions.models import StudentTask
 
 _ACTIVE = ("proposed", "accepted", "in_progress")
 
-# Tasks must be student actions (prep NET, submit app) — never "record what you just said".
-_FACT_RECORDING_TASK = re.compile(
-    r"^\s*(record|save|add|update|store|enter|fill\s*in|capture)\b.*"
-    r"\b(education|fsc|pre[\s-]?medical|degree|gpa|marks|profile|vault|fact|goal|"
-    r"information|detail|data)\b",
-    re.I,
-)
 
-
-def is_fact_recording_task(title: str, detail: str | None = None) -> bool:
+def is_fact_recording_task(title: str, detail: str | None = None, *, kind: str | None = None) -> bool:
+    if kind == "profile_write":
+        return True
     text = f"{title} {detail or ''}".strip()
     if not text:
         return True
-    if _FACT_RECORDING_TASK.search(title or ""):
-        return True
-    # Common LLM patterns after failed ingestion
-    lowered = title.lower()
-    if "record your" in lowered or "save your" in lowered or "add your" in lowered:
-        return True
-    return False
+    lowered = (title or "").lower()
+    return lowered.startswith("record your") or lowered.startswith("save your")
 
 
 async def list_tasks_for_person(
@@ -68,7 +56,7 @@ async def process_task_proposals(
         if not key or key in titles:
             results.append(TaskResult(title=p.title, status="duplicate", detail=p.detail))
             continue
-        if is_fact_recording_task(p.title, p.detail):
+        if is_fact_recording_task(p.title, p.detail, kind=p.kind):
             results.append(
                 TaskResult(
                     title=p.title,

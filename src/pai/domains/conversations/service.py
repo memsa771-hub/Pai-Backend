@@ -25,7 +25,6 @@ async def create_conversation(
     session.add(row)
     await session.commit()
     await session.refresh(row)
-    await ensure_thread_opening(session, person, row.id, settings=settings)
     return row
 
 
@@ -85,7 +84,6 @@ async def list_person_messages(
     included so the UI stays one merged PAI transcript.
     """
     conv = await get_or_create_person_conversation(session, person, settings=settings)
-    await ensure_thread_opening(session, person, conv.id, settings=settings)
     total = int(
         await session.scalar(
             select(func.count())
@@ -153,6 +151,13 @@ async def begin_chat_turn(
     return msg, run
 
 
+async def count_person_messages(session: AsyncSession, person_id: uuid.UUID) -> int:
+    n = await session.scalar(
+        select(func.count()).select_from(Message).where(Message.person_id == person_id)
+    )
+    return int(n or 0)
+
+
 async def save_assistant_message(
     session: AsyncSession,
     person: Person,
@@ -181,39 +186,6 @@ async def save_assistant_message(
     await session.commit()
     await session.refresh(msg)
     return msg
-
-
-async def ensure_thread_opening(
-    session: AsyncSession,
-    person: Person,
-    conversation_id: uuid.UUID,
-    *,
-    settings=None,
-) -> Message | None:
-    """If this person has no messages yet, PAI speaks first from Vault facts."""
-    from pai.config import get_settings
-    from pai.intelligences.counselor.context import build_student_context_pack, compose_opening
-
-    n = await session.scalar(
-        select(func.count()).select_from(Message).where(Message.person_id == person.id)
-    )
-    if n:
-        return None
-    pack = await build_student_context_pack(
-        session,
-        person,
-        conversation_id=conversation_id,
-        settings=settings or get_settings(),
-    )
-    return await save_assistant_message(
-        session,
-        person,
-        conversation_id,
-        compose_opening(pack),
-        provider="system",
-        model="opening.v1",
-        update_title=False,
-    )
 
 
 async def start_orchestration_run(

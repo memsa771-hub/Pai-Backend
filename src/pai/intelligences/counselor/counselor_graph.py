@@ -2,140 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from collections.abc import AsyncIterator
-from typing import Any, Literal, TypedDict
-
-from langgraph.graph import END, StateGraph
+from typing import Any
 
 from pai.config import Settings
-from pai.platform.llm.gateway import LLMGateway
-from pai.platform.llm.schemas import LLMMessage, LLMResponse, LLMToolCall, LLMToolCallFunction
 from pai.domains.memory.service import PersonMemoryService
 from pai.intelligences.counselor.prompts import render_template
-from pai.intelligences.counselor.routing import counseling_reply_max_tokens
-from pai.kernel.contracts.schemas import ConversationResult
-from pai.intelligences.counselor.tooling import ToolContext
 from pai.intelligences.counselor.registry import ToolRegistry, build_default_registry
-
-logger = logging.getLogger(__name__)
-
-
-class CounselorToolState(TypedDict, total=False):
-    messages: list[dict[str, Any]]
-    round: int
-    max_rounds: int
-    final: ConversationResult | None
-    tool_trace: list[dict[str, Any]]
-    pending_tool_calls: list[dict[str, Any]]
-
-
-def build_counselor_tool_graph(
-    *,
-    gateway: LLMGateway,
-    settings: Settings,
-    registry: ToolRegistry,
-    tool_ctx: ToolContext,
-) -> Any:
-    """LangGraph ReAct loop: reason → tools → reason → structured reply."""
-
-    async def agent_node(state: CounselorToolState) -> dict[str, Any]:
-        round_n = int(state.get("round") or 0)
-        max_rounds = int(state.get("max_rounds") or settings.counselor_max_tool_rounds)
-        raw_messages = list(state.get("messages") or [])
-        messages = [_dict_to_llm_message(m) for m in raw_messages]
-
-        if round_n >= max_rounds:
-            result = await _coerce_or_finalize(
-                gateway, messages, messages[-1].content if messages else ""
-            )
-            return {"final": result, "round": round_n + 1, "pending_tool_calls": []}
-
-        response = await gateway.run(
-            task="student_conversation",
-            messages=messages,
-            temperature=0.3,
-            tools=registry.openai_tools(),
-            tool_choice="auto",
-        )
-        assert isinstance(response, LLMResponse)
-
-        if response.has_tool_calls:
-            assistant_msg = {
-                "role": "assistant",
-                "content": response.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in response.tool_calls
-                ],
-            }
-            return {
-                "messages": raw_messages + [assistant_msg],
-                "round": round_n + 1,
-                "pending_tool_calls": assistant_msg["tool_calls"],
-                "final": None,
-            }
-
-        result = await _coerce_or_finalize(gateway, messages, response.content)
-        return {
-            "messages": raw_messages + [{"role": "assistant", "content": result.reply}],
-            "final": result,
-            "round": round_n + 1,
-            "pending_tool_calls": [],
-        }
-
-    async def tools_node(state: CounselorToolState) -> dict[str, Any]:
-        pending = list(state.get("pending_tool_calls") or [])
-        raw_messages = list(state.get("messages") or [])
-        trace: list[dict[str, Any]] = list(state.get("tool_trace") or [])
-
-        async def _run_one(raw_tc: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-            tc = _normalize_tool_call(raw_tc)
-            result = await registry.execute(tc.function.name, tc.function.arguments, tool_ctx)
-            return (
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "name": tc.function.name,
-                    "content": result.content,
-                },
-                {"tool": tc.function.name, "ok": result.ok, "preview": result.content[:240]},
-            )
-
-        pairs = await asyncio.gather(*[_run_one(raw_tc) for raw_tc in pending]) if pending else []
-        tool_messages = [item[0] for item in pairs]
-        trace.extend(item[1] for item in pairs)
-        return {
-            "messages": raw_messages + list(tool_messages),
-            "tool_trace": trace,
-            "pending_tool_calls": [],
-        }
-
-    def route_after_agent(state: CounselorToolState) -> Literal["tools", "end"]:
-        if state.get("final") is not None:
-            return "end"
-        if state.get("pending_tool_calls"):
-            return "tools"
-        return "end"
-
-    graph = StateGraph(CounselorToolState)
-    graph.add_node("agent", agent_node)
-    graph.add_node("tools", tools_node)
-    graph.set_entry_point("agent")
-    graph.add_conditional_edges(
-        "agent",
-        route_after_agent,
-        {"tools": "tools", "end": END},
-    )
-    graph.add_edge("tools", "agent")
-    return graph.compile()
+from pai.intelligences.counselor.routing import counseling_reply_max_tokens
+from pai.intelligences.counselor.tooling import ToolContext
+from pai.kernel.contracts.schemas import ConversationResult
+from pai.platform.llm.gateway import LLMGateway
+from pai.platform.llm.schemas import LLMMessage, LLMResponse, LLMToolCall, LLMToolCallFunction
 
 
 def counselor_seed_messages(prompt_vars: dict[str, Any]) -> list[dict[str, Any]]:
@@ -314,19 +192,6 @@ def _dict_to_llm_message(raw: dict[str, Any]) -> LLMMessage:
     )
 
 
-async def _finalize_structured(
-    gateway: LLMGateway, messages: list[LLMMessage]
-) -> ConversationResult:
-    out = await gateway.run(
-        task="student_conversation",
-        messages=messages,
-        output_schema=ConversationResult,
-        temperature=0.4,
-    )
-    assert isinstance(out, ConversationResult)
-    return out
-
-
 def _first_json_object(text: str) -> str | None:
     start = text.find("{")
     if start < 0:
@@ -409,12 +274,3 @@ def _result_from_text(content: str) -> ConversationResult | None:
     if not reply:
         return None
     return ConversationResult(reply=reply)
-
-
-async def _coerce_or_finalize(
-    gateway: LLMGateway, messages: list[LLMMessage], content: str
-) -> ConversationResult:
-    parsed = _result_from_text(content)
-    if parsed is not None:
-        return parsed
-    return await _finalize_structured(gateway, messages)

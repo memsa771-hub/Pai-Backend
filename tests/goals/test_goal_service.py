@@ -41,6 +41,15 @@ def test_vault_keys_accepted_for_valid_anchors():
     _assert_no_vault_keys({"target_country": "DE", "degree_level": "ms"})
 
 
+def test_goal_type_aliases_match_intelligence_vocabulary():
+    from pai.domains.goals.types import GoalType
+
+    assert GoalType.coerce("application") is GoalType.ADMISSION
+    assert GoalType.coerce("career") is GoalType.JOB
+    assert GoalType.coerce("exploration") is GoalType.GENERAL
+    assert GoalType.coerce("admission") is GoalType.ADMISSION
+
+
 # ── Anchor similarity ─────────────────────────────────────────────────────────
 
 

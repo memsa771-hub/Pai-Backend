@@ -20,12 +20,21 @@ from pai.intelligences.counselor.followup import handle_user_message, _payload_f
 from pai.intelligences.counselor.orchestrator import PAIOrchestrator
 from pai.domains.conversations.models import OrchestrationRun
 from pai.domains.conversations.service import begin_chat_turn, save_assistant_message
+from pai.intelligences.counselor.opening import ensure_thread_opening
 from pai.platform.jobs.queue import enqueue_intelligence
 from pai.domains.memory.service import PersonMemoryService
 from pai.domains.student.person.models import Person
 from pai.interfaces.api.schemas import ApiErrorResponse, success
 
 chat_router = APIRouter(prefix="/api/v1", tags=["chat"])
+
+
+async def _person_conversation(session, person, settings):
+    conv = await conv_svc.get_or_create_person_conversation(
+        session, person, settings=settings
+    )
+    await ensure_thread_opening(session, person, conv.id, settings=settings)
+    return conv
 
 
 class ChatRequest(BaseModel):
@@ -97,9 +106,7 @@ async def chat(
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    conv = await conv_svc.get_or_create_person_conversation(
-        session, person, settings=settings
-    )
+    conv = await _person_conversation(session, person, settings)
     user_msg, run = await begin_chat_turn(session, person, conv.id, body.message)
     if body.attachmentIds:
         await attach_documents_to_message(
@@ -137,9 +144,7 @@ async def chat_stream(
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
 ) -> StreamingResponse:
-    conv = await conv_svc.get_or_create_person_conversation(
-        session, person, settings=settings
-    )
+    conv = await _person_conversation(session, person, settings)
     user_msg, run = await begin_chat_turn(session, person, conv.id, body.message)
     if body.attachmentIds:
         await attach_documents_to_message(
@@ -264,6 +269,7 @@ async def get_chat_messages(
         description="Skip this many messages from the start. Omit to load the latest page.",
     ),
 ) -> JSONResponse:
+    await _person_conversation(session, person, settings)
     rows, total, skip, conv = await conv_svc.list_person_messages(
         session, person, settings=settings, limit=limit, offset=offset
     )

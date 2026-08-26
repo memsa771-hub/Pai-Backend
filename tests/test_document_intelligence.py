@@ -1,8 +1,8 @@
-from pai.services.document_intelligence.classification.taxonomy import evidence_eligible
-from pai.services.document_intelligence.identity.names import names_match
-from pai.services.document_intelligence.reconciliation.engine import ReconcileInput, reconcile
-from pai.services.document_intelligence.security.validation import sniff_mime
-from pai.services.documents.policy import classify_document_type, vault_extraction_policy
+from pai.intelligences.documents.classification.taxonomy import evidence_eligible
+from pai.intelligences.documents.identity.names import names_match
+from pai.intelligences.documents.reconciliation.engine import ReconcileInput, reconcile
+from pai.intelligences.documents.security.validation import sniff_mime
+from pai.domains.documents.policy import classify_document_type, vault_extraction_policy
 
 
 def test_generated_docs_are_not_evidence():
@@ -87,21 +87,23 @@ def test_likely_match_cannot_auto_apply():
 
 
 def test_classify_uses_ocr_text_when_filename_is_generic():
-    from pai.services.document_intelligence.classification.taxonomy import classify_from_name
-    from pai.services.document_intelligence.classification.taxonomy import type_meta
-    from pai.services.documents.policy import classify_document_type
+    from pai.intelligences.documents.classification.taxonomy import classify_from_name
+    from pai.intelligences.documents.classification.taxonomy import type_meta
+    from pai.domains.documents.policy import classify_document_type
 
     assert classify_document_type("passport-scan.png") == "passport"
     assert classify_from_name("scan.jpg") == "other"
     assert classify_from_name("scan.jpg", text="Republic of Pakistan Passport") == "passport"
-    assert classify_from_name("scan.jpg", hint="resume", text="Official Transcript CGPA") == "transcript"
-    assert classify_from_name("x.pdf", text="statement of purpose") == "sop"
+    assert classify_from_name("scan.jpg", hint="resume", text="Official Transcript CGPA") == "resume"
+    assert classify_from_name("scan.jpg", text="Official Transcript CGPA") == "transcript"
+    assert classify_from_name("my-sop.pdf") == "sop"
+    assert classify_from_name("x.pdf", text="statement of purpose") != "sop"
     assert type_meta("transcript")["extractor"] == "transcript"
     assert type_meta("lor")["party_roles"] == ["subject", "author"]
 
 
 def test_transcript_gpa_shape_attaches_to_education_payload():
-    from pai.ingestion.typed_apply import _education_payload
+    from pai.domains.student.typed_apply import _education_payload
 
     payload = _education_payload({"value": 3.5, "scale": 4.0, "type": "cumulative"})
     assert payload is not None
@@ -113,8 +115,8 @@ def test_transcript_gpa_shape_attaches_to_education_payload():
 def test_openai_vision_is_the_ocr_provider():
     from types import SimpleNamespace
 
-    from pai.services.document_intelligence.providers.factory import ocr_provider
-    from pai.services.document_intelligence.providers.openai_vision import (
+    from pai.intelligences.documents.providers.factory import ocr_provider
+    from pai.intelligences.documents.providers.openai_vision import (
         OpenAIVisionProvider,
         pages_for_vision,
     )
@@ -145,7 +147,7 @@ def test_openai_vision_is_the_ocr_provider():
 def test_pdf_pages_are_rasterized_and_not_silently_truncated():
     import fitz
 
-    from pai.services.document_intelligence.providers.openai_vision import pages_for_vision
+    from pai.intelligences.documents.providers.openai_vision import pages_for_vision
 
     pdf = fitz.open()
     pdf.new_page().insert_text((72, 72), "Page one CGPA 3.50")
@@ -164,7 +166,7 @@ def test_pdf_pages_are_rasterized_and_not_silently_truncated():
 
 
 def test_evidence_must_appear_in_digitized_text():
-    from pai.services.document_intelligence.evidence.grounding import evidence_grounded, page_for_span
+    from pai.intelligences.documents.evidence.grounding import evidence_grounded, page_for_span
 
     text = "Student Name: Musawir Khan\nCGPA: 2.50 / 4.00"
     assert evidence_grounded("CGPA: 2.50 / 4.00", text) is True
@@ -207,7 +209,7 @@ def test_low_quality_ocr_cannot_auto_apply():
 
 
 def test_counselor_profile_surfaces_critical_verification():
-    from pai.orchestration.context import CounselorContext
+    from pai.intelligences.counselor.context import CounselorContext
 
     ctx = CounselorContext(
         person_id="p1",
@@ -228,8 +230,8 @@ def test_counselor_profile_surfaces_critical_verification():
 
 
 def test_missing_page_markers_do_not_fabricate_provenance():
-    from pai.services.document_intelligence.evidence.grounding import page_for_span
-    from pai.services.document_intelligence.providers.openai_vision import _merge_usage, _split_pages
+    from pai.intelligences.documents.evidence.grounding import page_for_span
+    from pai.intelligences.documents.providers.openai_vision import _merge_usage, _split_pages
 
     marked = _split_pages("===PAGE 1===\nAlpha\n===PAGE 2===\nCGPA 3.50\n", [1, 2])
     assert marked == [{"page": 1, "text": "Alpha"}, {"page": 2, "text": "CGPA 3.50"}]

@@ -4,11 +4,11 @@ import uuid
 
 import pytest
 
-from pai.services.memory.service import PersonMemoryService
-from pai.orchestration.prompts import validate_prompt_templates
-from pai.tools.base import ToolContext
-from pai.tools.registry import build_default_registry
-from pai.tools.web_search import WebSearchTool
+from pai.domains.memory.service import PersonMemoryService
+from pai.intelligences.counselor.prompts import validate_prompt_templates
+from pai.intelligences.counselor.tooling import ToolContext
+from pai.intelligences.counselor.registry import build_default_registry
+from pai.capabilities.search.tool import WebSearchTool
 
 
 def test_prompt_templates_validate():

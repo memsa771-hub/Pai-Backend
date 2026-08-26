@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pai.orchestration.schemas import VaultCandidate
-from pai.services.memory.formation import (
+from pai.kernel.contracts.schemas import VaultCandidate
+from pai.domains.memory.formation import (
     apply_draft,
     drafts_from_turn,
     format_for_recall,

@@ -7,9 +7,9 @@ import uuid
 import pytest
 from pydantic import BaseModel
 
-from pai.llm.gateway import LLMGateway
-from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
-from pai.orchestration.schemas import ConversationResult, VaultCandidate
+from pai.platform.llm.gateway import LLMGateway
+from pai.platform.llm.schemas import LLMMessage, LLMRequest, LLMResponse
+from pai.kernel.contracts.schemas import ConversationResult, VaultCandidate
 
 
 class _MockLLM:
@@ -87,11 +87,11 @@ def test_chat_llm_failure_leaves_user_message(vault_client, onboarded_user, test
 
     gateway = LLMGateway(test_settings)
     gateway.register_provider("deepseek", FailLLM())
-    from pai.orchestration.orchestrator import PAIOrchestrator
+    from pai.intelligences.counselor.orchestrator import PAIOrchestrator
 
     orch = PAIOrchestrator(test_settings, gateway=gateway)
     monkeypatch.setattr(
-        "pai.ingestion.chat.PAIOrchestrator",
+        "pai.intelligences.counselor.followup.PAIOrchestrator",
         lambda settings, gateway=None: orch,
     )
     resp = client.post(

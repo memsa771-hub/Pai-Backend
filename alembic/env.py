@@ -8,14 +8,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from pai.data.base import Base
-import pai.services.person.models  # noqa: F401
-import pai.services.conversations.models  # noqa: F401
-import pai.services.documents.models  # noqa: F401
-import pai.services.tasks.models  # noqa: F401
-import pai.services.memory.models  # noqa: F401
-import pai.services.journey.models  # noqa: F401
-import pai.services.jobs.models  # noqa: F401
+from pai.platform.database.base import Base
+import pai.domains.student.person.models  # noqa: F401
+import pai.domains.conversations.models  # noqa: F401
+import pai.domains.documents.models  # noqa: F401
+import pai.domains.actions.models  # noqa: F401
+import pai.domains.memory.models  # noqa: F401
+import pai.domains.journey.models  # noqa: F401
+import pai.platform.jobs.models  # noqa: F401
 
 config = context.config
 

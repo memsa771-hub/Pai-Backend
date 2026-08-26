@@ -6,12 +6,12 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from pai.llm.gateway import LLMGateway
-from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
-from pai.llm.providers.deepseek import LLMProviderError
-from pai.orchestration.prompts import render_template, validate_prompt_templates
-from pai.orchestration.schemas import ConversationResult, FactExtractionResult, VaultCandidate
-from pai.orchestration.verifier import policy_decision, validate_candidate
+from pai.platform.llm.gateway import LLMGateway
+from pai.platform.llm.schemas import LLMMessage, LLMRequest, LLMResponse
+from pai.platform.llm.providers.deepseek import LLMProviderError
+from pai.intelligences.counselor.prompts import render_template, validate_prompt_templates
+from pai.kernel.contracts.schemas import ConversationResult, FactExtractionResult, VaultCandidate
+from pai.kernel.policy.verifier import policy_decision, validate_candidate
 
 
 class RecordingMockProvider:
@@ -52,7 +52,7 @@ def test_prompt_render_student_conversation():
         profile_block="goal: MS CS in Germany",
     )
     assert "goal: MS CS in Germany" in text
-    from pai.tools.extraction.llm_extractor import _render as render_intel
+    from pai.intelligences.vault.llm_extractor import _render as render_intel
 
     extract = render_intel(
         "omnibus.v1.jinja2",
@@ -69,7 +69,7 @@ def test_prompt_render_student_conversation():
     assert "PAI" in system
     assert "web_search" in system
     assert "two paths" in system.lower()
-    from pai.services.vault.catalog import extraction_catalog_hint
+    from pai.domains.student.vault.catalog import extraction_catalog_hint
 
     full = render_intel(
         "omnibus.v1.jinja2",
@@ -120,7 +120,7 @@ def test_gateway_provider_switch_without_changing_orchestration(test_settings):
             output_schema=ConversationResult,
         )
     )
-    gateway._settings.llm_default_provider = "other"
+    gateway._settings = test_settings.model_copy(update={"llm_default_provider": "other"})
     out_b = asyncio.run(
         gateway.run(
             task="student_conversation",
@@ -133,7 +133,7 @@ def test_gateway_provider_switch_without_changing_orchestration(test_settings):
 
 
 def test_deepseek_invalid_structured_json(test_settings, monkeypatch):
-    from pai.llm.providers.deepseek import DeepSeekProvider
+    from pai.platform.llm.providers.deepseek import DeepSeekProvider
 
     settings = test_settings.model_copy(update={"deepseek_api_key": "test-key"})
     provider = DeepSeekProvider(settings)
@@ -192,8 +192,8 @@ def test_policy_sensitive_requires_confirmation():
 
 def test_chat_message_with_mock_counselor(onboarded_user, test_settings, monkeypatch):
     from tests.test_pai_orchestration import SchemaRoutingMockProvider
-    from pai.orchestration.orchestrator import PAIOrchestrator
-    from pai.orchestration.schemas import VaultCandidate as OrchVaultCandidate
+    from pai.intelligences.counselor.orchestrator import PAIOrchestrator
+    from pai.kernel.contracts.schemas import VaultCandidate as OrchVaultCandidate
 
     client, headers, _ = onboarded_user
     mock = SchemaRoutingMockProvider(
@@ -218,7 +218,7 @@ def test_chat_message_with_mock_counselor(onboarded_user, test_settings, monkeyp
     gateway.register_provider("deepseek", mock)
     orchestrator = PAIOrchestrator(test_settings, gateway=gateway)
     monkeypatch.setattr(
-        "pai.ingestion.chat.PAIOrchestrator",
+        "pai.intelligences.counselor.followup.PAIOrchestrator",
         lambda settings, gateway=None: orchestrator,
     )
     resp = client.post(
@@ -310,10 +310,10 @@ def test_claim_job_skip_locked(postgres_ready, test_settings):
     import asyncio
     from datetime import UTC, datetime
 
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.documents.models import Document, DocumentJob
-    from pai.services.documents.service import claim_next_job
-    from pai.services.person.models import Person
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.documents.models import Document, DocumentJob
+    from pai.domains.documents.service import claim_next_job
+    from pai.domains.student.person.models import Person
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

@@ -10,13 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.core.errors import CsrfError, InvalidTokenError, OnboardingIncompleteError
-from pai.auth.provider import AuthProvider
-from pai.auth.service import AuthService
-from pai.data.db import get_session_factory
+from pai.platform.security.auth.provider import AuthProvider
+from pai.platform.security.auth.service import AuthService
+from pai.platform.database.db import get_session_factory
 from pai.openapi import BEARER_DESCRIPTION
-from pai.services.person.models import Person
-from pai.services.person.service import get_person_by_auth
-from pai.auth.jwt import validate_access_token
+from pai.domains.student.person.models import Person
+from pai.domains.student.person.service import get_person_by_auth
+from pai.platform.security.auth.jwt import validate_access_token
 
 _bearer = HTTPBearer(
     auto_error=False,

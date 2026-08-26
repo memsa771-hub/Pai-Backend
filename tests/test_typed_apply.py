@@ -7,16 +7,16 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from pai.ingestion.vault_apply import process_candidates
-from pai.orchestration.schemas import VaultCandidate
-from pai.services.person.models import Education, Person, Skill, VaultValue, WorkExperience
+from pai.kernel.evidence.vault_apply import process_candidates
+from pai.kernel.contracts.schemas import VaultCandidate
+from pai.domains.student.person.models import Education, Person, Skill, VaultValue, WorkExperience
 
 
 @pytest.mark.asyncio
 async def test_education_gpa_typed_apply(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.service import PersonBootstrapService
-    from pai.auth.provider import ProviderUser
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.service import PersonBootstrapService
+    from pai.platform.security.auth.provider import ProviderUser
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -75,9 +75,9 @@ async def test_education_gpa_typed_apply(postgres_ready):
 
 @pytest.mark.asyncio
 async def test_passport_pending_sensitive(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.service import PersonBootstrapService
-    from pai.auth.provider import ProviderUser
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.service import PersonBootstrapService
+    from pai.platform.security.auth.provider import ProviderUser
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -120,9 +120,9 @@ async def test_passport_pending_sensitive(postgres_ready):
 
 @pytest.mark.asyncio
 async def test_cv_skills_and_work_fill_typed_vault(postgres_ready):
-    from pai.auth.provider import ProviderUser
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.service import PersonBootstrapService
+    from pai.platform.security.auth.provider import ProviderUser
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.service import PersonBootstrapService
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

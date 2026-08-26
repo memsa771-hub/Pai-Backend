@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pai.services.goals.pipeline import _BRIEF_MAX_LINES
+from pai.intelligences.goals.pipeline import _BRIEF_MAX_LINES
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_pipeline_produces_ready_summary_synchronously():
             resp.content = "Goal: MS CS Germany\nFit: moderate\nBlocking: IELTS\nStep: Register IELTS"
         return resp
 
-    from pai.services.goals.pipeline import run_full_pipeline
+    from pai.intelligences.goals.pipeline import run_full_pipeline
 
     gateway = MagicMock()
     gateway.run = AsyncMock(side_effect=rotating_response)

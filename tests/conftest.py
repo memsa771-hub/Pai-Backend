@@ -12,7 +12,7 @@ from pai.core.errors import (
     IncorrectPasswordError,
     UserNotFoundError,
 )
-from pai.auth.provider import (
+from pai.platform.security.auth.provider import (
     GenericActionResult,
     ProviderSession,
     ProviderUser,
@@ -268,7 +268,7 @@ def _run_migrations(database_url: str) -> None:
 async def _ping_db(settings: Settings) -> None:
     from sqlalchemy import text
 
-    from pai.data.db import get_engine, reset_engine_for_tests
+    from pai.platform.database.db import get_engine, reset_engine_for_tests
 
     reset_engine_for_tests()
     engine = get_engine(settings)
@@ -279,7 +279,7 @@ async def _ping_db(settings: Settings) -> None:
 async def _truncate_all(settings: Settings) -> None:
     from sqlalchemy import text
 
-    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
 
     reset_engine_for_tests()
     factory = get_session_factory(settings)
@@ -318,7 +318,7 @@ def vault_client(postgres_ready: Settings, fake_provider: FakeAuthProvider):
     from fastapi.testclient import TestClient
 
     from pai.app import create_app
-    from pai.data.db import reset_engine_for_tests
+    from pai.platform.database.db import reset_engine_for_tests
 
     reset_engine_for_tests()
     asyncio.run(_truncate_all(postgres_ready))

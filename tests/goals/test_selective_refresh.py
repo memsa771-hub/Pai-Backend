@@ -12,12 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from pai.services.goals.service import (
+from pai.domains.goals.service import (
     INTEL_STALE,
     VAULT_FIELDS_THAT_AFFECT_GOALS,
     mark_intelligence_stale_for_vault_update,
 )
-from pai.services.person.models import Goal
+from pai.domains.student.person.models import Goal
 
 
 def _mock_goal(goal_type: str) -> Goal:
@@ -47,7 +47,7 @@ async def test_test_score_update_marks_admission_stale():
     session.add = MagicMock()
 
     with patch(
-        "pai.services.goals.service.enqueue_goal_intelligence_job",
+        "pai.domains.goals.service.enqueue_goal_intelligence_job",
         new=AsyncMock(return_value=MagicMock()),
     ) as mock_enqueue:
         affected = await mark_intelligence_stale_for_vault_update(
@@ -67,7 +67,7 @@ async def test_unrelated_field_does_not_touch_goals():
     session = AsyncMock()
 
     with patch(
-        "pai.services.goals.service.enqueue_goal_intelligence_job",
+        "pai.domains.goals.service.enqueue_goal_intelligence_job",
         new=AsyncMock(),
     ) as mock_enqueue:
         affected = await mark_intelligence_stale_for_vault_update(
@@ -95,7 +95,7 @@ async def test_two_goals_only_affected_one_refreshed():
     session.execute = AsyncMock(return_value=result_mock)
 
     with patch(
-        "pai.services.goals.service.enqueue_goal_intelligence_job",
+        "pai.domains.goals.service.enqueue_goal_intelligence_job",
         new=AsyncMock(return_value=MagicMock()),
     ) as mock_enqueue:
         affected = await mark_intelligence_stale_for_vault_update(

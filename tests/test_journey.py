@@ -5,8 +5,8 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from pai.orchestration.schemas import GoalExtract
-from pai.services.journey.extract import GoalHit, resolve_goal_hit
+from pai.kernel.contracts.schemas import GoalExtract
+from pai.domains.journey.extract import GoalHit, resolve_goal_hit
 
 
 def _extract(
@@ -133,12 +133,12 @@ def test_exploring_and_pivot_come_from_the_classifier():
 
 @pytest.mark.asyncio
 async def test_goal_pivot_keeps_history(postgres_ready):
-    from pai.auth.provider import ProviderUser
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.journey.models import PersonDecision
-    from pai.services.journey.service import apply_goal_hit, list_goal_versions
-    from pai.services.person.models import Person
-    from pai.services.person.service import PersonBootstrapService
+    from pai.platform.security.auth.provider import ProviderUser
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.journey.models import PersonDecision
+    from pai.domains.journey.service import apply_goal_hit, list_goal_versions
+    from pai.domains.student.person.models import Person
+    from pai.domains.student.person.service import PersonBootstrapService
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

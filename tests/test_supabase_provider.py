@@ -12,7 +12,7 @@ from pai.core.errors import (
     ProviderUnavailableError,
     UserNotFoundError,
 )
-from pai.auth.supabase import SupabaseAuthProvider
+from pai.platform.security.auth.supabase import SupabaseAuthProvider
 
 
 @pytest.fixture

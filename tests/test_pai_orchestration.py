@@ -7,25 +7,25 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pai.llm.gateway import LLMGateway
-from pai.llm.schemas import LLMMessage, LLMRequest, LLMResponse
-from pai.orchestration.agents import FactExtractionAgent, StudentConversationAgent
-from pai.orchestration.orchestrator import PAIOrchestrator
-from pai.orchestration.routing import (
+from pai.platform.llm.gateway import LLMGateway
+from pai.platform.llm.schemas import LLMMessage, LLMRequest, LLMResponse
+from pai.intelligences.counselor.agents import FactExtractionAgent, StudentConversationAgent
+from pai.intelligences.counselor.orchestrator import PAIOrchestrator
+from pai.intelligences.counselor.routing import (
     classify_turn,
     counseling_reply_max_tokens,
     counselor_web_search_enabled,
     is_greeting,
     should_extract_facts,
 )
-from pai.orchestration.schemas import (
+from pai.kernel.contracts.schemas import (
     ConversationResult,
     FactExtractionResult,
     TaskProposal,
     VaultCandidate,
 )
-from pai.orchestration.candidate_eval import evaluate_candidate_with_context
-from pai.orchestration.verifier import validate_candidate
+from pai.kernel.evidence.candidate_eval import evaluate_candidate_with_context
+from pai.kernel.policy.verifier import validate_candidate
 
 
 class SchemaRoutingMockProvider:
@@ -167,8 +167,8 @@ def test_invalid_llm_field_rejected_before_vault():
 
 @pytest.mark.asyncio
 async def test_evaluate_sensitive_pending(postgres_ready, test_settings):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.models import Person, PersonVault
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.models import Person, PersonVault
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -247,7 +247,7 @@ def test_mock_provider_replace_deepseek(test_settings):
 
 
 def test_tool_loop_reuses_plain_reply_without_second_llm():
-    from pai.orchestration.counselor_graph import _result_from_text
+    from pai.intelligences.counselor.counselor_graph import _result_from_text
 
     out = _result_from_text("Here's a simple next step for your applications.")
     assert out is not None
@@ -256,7 +256,7 @@ def test_tool_loop_reuses_plain_reply_without_second_llm():
 
 
 def test_counselor_json_preamble_does_not_leak_into_reply():
-    from pai.orchestration.counselor_graph import _result_from_text
+    from pai.intelligences.counselor.counselor_graph import _result_from_text
 
     leaked = """Based on the search results, I can now give Musawir a grounded comparison. Let me craft the response.
 
@@ -280,13 +280,13 @@ def test_counselor_json_preamble_does_not_leak_into_reply():
 
 
 def test_llm_call_budget_constants():
-    from pai.orchestration.orchestrator import MAX_LLM_CALLS_PER_TURN
+    from pai.intelligences.counselor.orchestrator import MAX_LLM_CALLS_PER_TURN
 
     assert MAX_LLM_CALLS_PER_TURN == 2
 
 
 def test_chat_graph_replies_without_waiting_on_extract_chain():
-    from pai.orchestration.graph import build_pai_graph
+    from pai.intelligences.counselor.graph import build_pai_graph
 
     graph = build_pai_graph(MagicMock())
     assert "serve_turn" in graph.nodes
@@ -295,7 +295,7 @@ def test_chat_graph_replies_without_waiting_on_extract_chain():
 
 
 def test_counselor_context_is_compact():
-    from pai.orchestration.context import CounselorContext
+    from pai.intelligences.counselor.context import CounselorContext
 
     ctx = CounselorContext(
         person_id="p1",
@@ -308,7 +308,7 @@ def test_counselor_context_is_compact():
     assert "MS CS in Germany" in block
     assert "applicable_vault_fields" not in block
     assert "typed_profile_summary" not in block
-    from pai.llm.stream_parse import delta_from_sse_line
+    from pai.platform.llm.stream_parse import delta_from_sse_line
 
     assert delta_from_sse_line('data: {"choices":[{"delta":{"content":"Based"}}]}') == "Based"
     assert delta_from_sse_line("data: [DONE]") is None
@@ -357,10 +357,10 @@ def test_vault_candidate_fields_roundtrip():
 
 def test_duplicate_tasks_prevented(postgres_ready, test_settings):
     import asyncio
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.models import Person
-    from pai.services.tasks.service import process_task_proposals
-    from pai.orchestration.schemas import TaskProposal
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.models import Person
+    from pai.domains.actions.service import process_task_proposals
+    from pai.kernel.contracts.schemas import TaskProposal
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

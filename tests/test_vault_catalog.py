@@ -1,5 +1,5 @@
-from pai.services.vault.catalog import CATALOG_VERSION, GUIDANCE_SCOPES, get_catalog_field
-from pai.services.vault.service import grow_vault_schema
+from pai.domains.student.vault.catalog import CATALOG_VERSION, GUIDANCE_SCOPES, get_catalog_field
+from pai.domains.student.vault.service import grow_vault_schema
 
 
 def test_vault_catalog_covers_guidance_core():

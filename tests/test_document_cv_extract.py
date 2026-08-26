@@ -5,10 +5,10 @@ from __future__ import annotations
 import io
 import zipfile
 
-from pai.services.documents.text import extract_text_from_bytes
-from pai.orchestration.schemas import VaultCandidate
-from pai.orchestration.verifier import policy_decision, validate_candidate
-from pai.services.vault.catalog import extraction_catalog_hint, get_catalog_field
+from pai.domains.documents.text import extract_text_from_bytes
+from pai.kernel.contracts.schemas import VaultCandidate
+from pai.kernel.policy.verifier import policy_decision, validate_candidate
+from pai.domains.student.vault.catalog import extraction_catalog_hint, get_catalog_field
 
 
 def _docx_with_text(text: str) -> bytes:
@@ -82,7 +82,7 @@ def test_cv_career_candidates_validate():
 
 
 def test_omnibus_cv_prompt_asks_for_full_resume():
-    from pai.tools.extraction.llm_extractor import _render
+    from pai.intelligences.vault.llm_extractor import _render
 
     text = _render(
         "omnibus.v1.jinja2",

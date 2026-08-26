@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from pai.tools.extraction.boosters import run_deterministic_boosters
-from pai.tools.extraction.merge import merge_candidates
-from pai.tools.extraction.normalize import normalize_candidates
-from pai.tools.extraction.service import VaultIntelligenceService
-from pai.orchestration.schemas import VaultCandidate
+from pai.intelligences.vault.boosters import run_deterministic_boosters
+from pai.intelligences.vault.merge import merge_candidates
+from pai.intelligences.vault.normalize import normalize_candidates
+from pai.intelligences.vault.service import VaultIntelligenceService
+from pai.kernel.contracts.schemas import VaultCandidate
 
 
 def test_boosters_catch_marks_stream_countries_and_cgpa():
@@ -104,7 +104,7 @@ def test_merge_prefers_booster_on_marks():
 
 
 def test_vault_intel_registers_future_sources(test_settings):
-    from pai.llm.gateway import LLMGateway
+    from pai.platform.llm.gateway import LLMGateway
 
     gw = LLMGateway(test_settings)
     svc = VaultIntelligenceService(gw)
@@ -116,7 +116,7 @@ def test_vault_intel_registers_future_sources(test_settings):
 
 
 def test_grounding_keeps_verbatim_and_drops_hallucination():
-    from pai.tools.extraction.ground import ground_candidates
+    from pai.intelligences.vault.ground import ground_candidates
 
     source = "I want to study locally in FAST"
     kept = VaultCandidate(
@@ -138,7 +138,7 @@ def test_grounding_keeps_verbatim_and_drops_hallucination():
 
 
 def test_grounding_drops_empty_evidence():
-    from pai.tools.extraction.ground import ground_candidates
+    from pai.intelligences.vault.ground import ground_candidates
 
     source = "I want Germany"
     blank = VaultCandidate(
@@ -212,9 +212,9 @@ def test_merge_keeps_distinct_jobs_and_observed():
 
 
 def test_partition_keeps_negation_attribution_and_other_out_of_vault():
-    from pai.orchestration.candidate_eval import evaluate_candidate
-    from pai.orchestration.verifier import policy_decision
-    from pai.tools.extraction.formation import partition_candidates
+    from pai.kernel.evidence.candidate_eval import evaluate_candidate
+    from pai.kernel.policy.verifier import policy_decision
+    from pai.intelligences.vault.formation import partition_candidates
 
     negated = VaultCandidate(
         field_key="application.study_country",
@@ -278,8 +278,8 @@ def test_partition_keeps_negation_attribution_and_other_out_of_vault():
 
 
 def test_omnibus_prompt_is_recall_first_not_summarize():
-    from pai.services.vault.catalog import extraction_catalog_hint
-    from pai.tools.extraction.llm_extractor import _render
+    from pai.domains.student.vault.catalog import extraction_catalog_hint
+    from pai.intelligences.vault.llm_extractor import _render
 
     text = _render(
         "omnibus.v1.jinja2",

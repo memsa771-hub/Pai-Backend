@@ -7,13 +7,13 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from pai.ingestion.vault_apply import process_candidates
-from pai.orchestration.context import build_student_context_pack
-from pai.orchestration.routing import should_extract_facts
-from pai.orchestration.schemas import TaskProposal, VaultCandidate
-from pai.services.person.models import Education, Goal, Person
-from pai.services.tasks.service import is_fact_recording_task, process_task_proposals
-from pai.services.vault.catalog import extraction_catalog_hint
+from pai.kernel.evidence.vault_apply import process_candidates
+from pai.intelligences.counselor.context import build_student_context_pack
+from pai.intelligences.counselor.routing import should_extract_facts
+from pai.kernel.contracts.schemas import TaskProposal, VaultCandidate
+from pai.domains.student.person.models import Education, Goal, Person
+from pai.domains.actions.service import is_fact_recording_task, process_task_proposals
+from pai.domains.student.vault.catalog import extraction_catalog_hint
 
 
 def test_pk_admissions_messages_trigger_extraction():
@@ -51,7 +51,7 @@ def test_fact_recording_tasks_are_rejected():
 
 
 def test_education_payload_keeps_marks_and_rejects_orphan_gpa_fabrication():
-    from pai.ingestion.typed_apply import _education_payload
+    from pai.domains.student.typed_apply import _education_payload
 
     payload = _education_payload(
         {
@@ -70,9 +70,9 @@ def test_education_payload_keeps_marks_and_rejects_orphan_gpa_fabrication():
 
 @pytest.mark.asyncio
 async def test_education_marks_upsert_and_full_context(postgres_ready):
-    from pai.auth.provider import ProviderUser
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.service import PersonBootstrapService
+    from pai.platform.security.auth.provider import ProviderUser
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.service import PersonBootstrapService
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -193,9 +193,9 @@ async def test_education_marks_upsert_and_full_context(postgres_ready):
 
 @pytest.mark.asyncio
 async def test_no_fabricated_primary_education_for_bare_gpa(postgres_ready):
-    from pai.auth.provider import ProviderUser
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.service import PersonBootstrapService
+    from pai.platform.security.auth.provider import ProviderUser
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.service import PersonBootstrapService
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

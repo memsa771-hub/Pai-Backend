@@ -13,25 +13,18 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from pai.api.auth import account_router
-from pai.api.auth import router as auth_router
-from pai.api.chat import chat_router
-from pai.api.documents import router as documents_router
-from pai.api.goals import goals_router
-from pai.api.onboarding import router as onboarding_router
-from pai.api.person import router as person_router
-from pai.api.vault import router as vault_router
 from pai.config import Settings, get_settings
 from pai.core.errors import AuthError
-from pai.data.db import warmup_database
-from pai.services.documents.worker import document_worker_loop
-from pai.services.goals.worker import goal_worker_loop
-from pai.services.jobs.worker import intelligence_worker_loop
-from pai.llm.gateway import LLMGateway
+from pai.platform.database.db import warmup_database
+from pai.interfaces.api import include_routers
+from pai.interfaces.workers.documents import document_worker_loop
+from pai.interfaces.workers.goals import goal_worker_loop
+from pai.interfaces.workers.intelligence import intelligence_worker_loop
+from pai.platform.llm.gateway import LLMGateway
 from pai.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
-from pai.orchestration.checkpoint import close_graph_checkpointer, init_graph_checkpointer
-from pai.orchestration.prompts import validate_prompt_templates
-from pai.auth.supabase import SupabaseAuthProvider
+from pai.intelligences.counselor.checkpoint import close_graph_checkpointer, init_graph_checkpointer
+from pai.intelligences.counselor.prompts import validate_prompt_templates
+from pai.platform.security.auth.supabase import SupabaseAuthProvider
 from pai.schemas import error, humanize_validation_error, success
 
 logger = logging.getLogger(__name__)
@@ -208,14 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return JSONResponse(content=success({"status": "ready"}))
 
-    app.include_router(auth_router)
-    app.include_router(account_router)
-    app.include_router(person_router)
-    app.include_router(onboarding_router)
-    app.include_router(vault_router)
-    app.include_router(chat_router)
-    app.include_router(documents_router)
-    app.include_router(goals_router)
+    include_routers(app)
     return app
 
 

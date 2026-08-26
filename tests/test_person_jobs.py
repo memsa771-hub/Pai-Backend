@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import uuid
 
-from pai.orchestration.schemas import TaskProposal
-from pai.services.jobs.queue import (
+from pai.kernel.contracts.schemas import TaskProposal
+from pai.platform.jobs.queue import (
     _CLAIM_SQL,
     claim_next_person_job,
     enqueue_intelligence,
     needs_intelligence,
 )
-from pai.services.person.models import Person
+from pai.domains.student.person.models import Person
 
 
 def test_needs_intelligence_skips_greetings():
@@ -27,8 +27,8 @@ def test_claim_sql_locks_the_student_not_just_the_job_row():
 
 
 def test_claim_serializes_one_student(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.conversations.models import Conversation
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.conversations.models import Conversation
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -95,8 +95,8 @@ def test_claim_serializes_one_student(postgres_ready):
 
 
 def test_two_connections_cannot_claim_same_student(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.conversations.models import Conversation
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.conversations.models import Conversation
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pai.orchestration.schemas import GoalExtract
-from pai.services.goals.resolver import (
+from pai.kernel.contracts.schemas import GoalExtract
+from pai.domains.goals.resolver import (
     _classify_goal_type,
     _extract_anchors_from_intent,
     resolve,
@@ -224,19 +224,19 @@ async def test_resolver_creates_goal_for_life_aim(mock_session, person_id, conve
 
     with (
         patch(
-            "pai.services.goals.resolver.get_conversation_active_goal",
+            "pai.domains.goals.resolver.get_conversation_active_goal",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "pai.services.goals.resolver.find_matching_goal",
+            "pai.domains.goals.resolver.find_matching_goal",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "pai.services.goals.resolver.upsert_goal_from_anchors",
+            "pai.domains.goals.resolver.upsert_goal_from_anchors",
             new=AsyncMock(return_value=(created_goal, "created")),
         ),
         patch(
-            "pai.services.goals.resolver.enqueue_goal_intelligence_job",
+            "pai.domains.goals.resolver.enqueue_goal_intelligence_job",
             new=AsyncMock(return_value=MagicMock()),
         ),
     ):

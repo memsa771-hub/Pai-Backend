@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pai.services.conversations.service import get_or_create_person_conversation
-from pai.orchestration.context import build_known_facts
+from pai.domains.conversations.service import get_or_create_person_conversation
+from pai.intelligences.counselor.context import build_known_facts
 
 
 def test_known_facts_lists_education_and_country():
@@ -43,7 +43,7 @@ def test_known_facts_lists_education_and_country():
 
 
 def test_opening_uses_vault_facts_not_country_lists():
-    from pai.orchestration.context import compose_opening
+    from pai.intelligences.counselor.context import compose_opening
 
     text = compose_opening(
         {
@@ -65,7 +65,7 @@ def test_opening_uses_vault_facts_not_country_lists():
 
 
 def test_opening_keeps_facts_without_duplicate_goal():
-    from pai.orchestration.context import compose_opening
+    from pai.intelligences.counselor.context import compose_opening
 
     text = compose_opening(
         {
@@ -91,7 +91,7 @@ def test_opening_keeps_facts_without_duplicate_goal():
 
 
 def test_opening_without_profile_still_introduces_pai():
-    from pai.orchestration.context import compose_opening
+    from pai.intelligences.counselor.context import compose_opening
 
     text = compose_opening({"identity": {}, "known_facts": []})
     assert "PAI" in text
@@ -99,7 +99,7 @@ def test_opening_without_profile_still_introduces_pai():
 
 
 def test_chat_starters_use_study_country():
-    from pai.orchestration.context import build_chat_starters, chat_stay_payload
+    from pai.intelligences.counselor.context import build_chat_starters, chat_stay_payload
 
     pack = {
         "known_facts": [
@@ -120,10 +120,10 @@ def test_chat_starters_use_study_country():
 
 @pytest.mark.asyncio
 async def test_person_always_gets_the_same_conversation(postgres_ready):
-    from pai.auth.provider import ProviderUser
-    from pai.data.db import get_session_factory, reset_engine_for_tests
-    from pai.services.person.models import Person
-    from pai.services.person.service import PersonBootstrapService
+    from pai.platform.security.auth.provider import ProviderUser
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
+    from pai.domains.student.person.models import Person
+    from pai.domains.student.person.service import PersonBootstrapService
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

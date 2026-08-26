@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pai.services.goals.service import (
+from pai.domains.goals.service import (
     _assert_no_vault_keys,
     _anchor_match_score,
     find_matching_goal,
@@ -26,7 +26,7 @@ from pai.services.goals.service import (
     INTEL_STALE,
     VAULT_FIELDS_THAT_AFFECT_GOALS,
 )
-from pai.services.person.models import Goal
+from pai.domains.student.person.models import Goal
 
 
 # ── Vault key guard ───────────────────────────────────────────────────────────

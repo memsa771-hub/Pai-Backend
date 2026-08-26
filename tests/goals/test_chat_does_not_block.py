@@ -52,11 +52,11 @@ async def test_resolver_failure_does_not_block_response():
     from unittest.mock import AsyncMock, patch
 
     with patch(
-        "pai.services.goals.resolver.resolve",
+        "pai.domains.goals.resolver.resolve",
         new=AsyncMock(side_effect=RuntimeError("resolver exploded")),
     ):
         # Simulate the _capture_goal wrapper — it catches resolver exceptions
-        from pai.services.journey.service import apply_goal_from_message
+        from pai.domains.journey.service import apply_goal_from_message
 
         # _capture_goal in orchestrator wraps resolver in try/except
         # so this should not raise:
@@ -72,10 +72,10 @@ async def test_resolver_failure_does_not_block_response():
             person_id = _uuid.uuid4()
             conversation_id = _uuid.uuid4()
             with patch(
-                "pai.services.goals.resolver.get_conversation_active_goal",
+                "pai.domains.goals.resolver.get_conversation_active_goal",
                 new=AsyncMock(side_effect=RuntimeError("resolver exploded")),
             ):
-                from pai.services.goals.resolver import resolve
+                from pai.domains.goals.resolver import resolve
 
                 try:
                     await resolve(
@@ -108,12 +108,12 @@ def test_enqueue_intelligence_goal_job_does_not_run_inline():
     # This is a sync assertion: the function returns a job object staged for
     # background processing, never runs the pipeline inline.
     import asyncio
-    from pai.services.goals.service import enqueue_goal_intelligence_job
+    from pai.domains.goals.service import enqueue_goal_intelligence_job
 
     async def _run():
         # No "processing" job exists → should create one
         with patch(
-            "pai.services.goals.service.select",
+            "pai.domains.goals.service.select",
             wraps=__import__("sqlalchemy", fromlist=["select"]).select,
         ):
             result_mock = MagicMock()
@@ -134,7 +134,7 @@ def test_enqueue_intelligence_goal_job_does_not_run_inline():
 
 def test_counselor_context_works_without_intelligence():
     """CounselorContext.profile_block() must work when active_goal_brief is None."""
-    from pai.orchestration.context import CounselorContext
+    from pai.intelligences.counselor.context import CounselorContext
 
     ctx = CounselorContext(
         person_id="test-person",
@@ -151,7 +151,7 @@ def test_counselor_context_works_without_intelligence():
 
 def test_counselor_context_injects_brief_when_ready():
     """When active_goal_brief is present, it replaces the legacy goal line."""
-    from pai.orchestration.context import CounselorContext
+    from pai.intelligences.counselor.context import CounselorContext
 
     brief = "Goal: MS CS in Germany\nFit: strong\nNext: Take IELTS"
     ctx = CounselorContext(

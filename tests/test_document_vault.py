@@ -8,10 +8,10 @@ import uuid
 from sqlalchemy import delete, func, select
 
 from pai.core.errors import AuthError
-from pai.services.conversations.models import Conversation, Message
-from pai.services.documents.models import Document, DocumentCandidate, DocumentJob
-from pai.services.documents.policy import classify_document_type, vault_extraction_policy
-from pai.services.documents.service import (
+from pai.domains.conversations.models import Conversation, Message
+from pai.domains.documents.models import Document, DocumentCandidate, DocumentJob
+from pai.domains.documents.policy import classify_document_type, vault_extraction_policy
+from pai.domains.documents.service import (
     attach_documents_to_message,
     attachment_note_for_message,
     create_document_upload,
@@ -20,7 +20,7 @@ from pai.services.documents.service import (
     review_document_candidates,
     DocumentIdentityUnresolvedError,
 )
-from pai.services.person.models import Person
+from pai.domains.student.person.models import Person
 
 
 async def _delete_person(session, person: Person) -> None:
@@ -48,7 +48,7 @@ class _FakeStorage:
 
 
 def test_ai_generated_upload_skips_extract_job(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -99,7 +99,7 @@ def test_ai_generated_upload_skips_extract_job(postgres_ready):
 
 
 def test_chat_attachment_links_vault_document(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -151,7 +151,7 @@ def test_chat_attachment_links_vault_document(postgres_ready):
 
 
 def test_review_can_reject_candidates(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)
@@ -206,7 +206,7 @@ def test_review_can_reject_candidates(postgres_ready):
 
 
 def test_identity_mismatch_blocks_candidate_accept(postgres_ready):
-    from pai.data.db import get_session_factory, reset_engine_for_tests
+    from pai.platform.database.db import get_session_factory, reset_engine_for_tests
 
     reset_engine_for_tests()
     factory = get_session_factory(postgres_ready)

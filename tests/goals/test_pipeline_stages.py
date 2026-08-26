@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pai.services.goals.pipeline import (
+from pai.intelligences.goals.pipeline import (
     _BRIEF_MAX_LINES,
     build_counselor_brief,
     run_assessment_stage,

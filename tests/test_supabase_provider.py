@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from pai.config import Settings
-from pai.core.errors import (
+from pai.kernel.errors import (
     EmailAlreadyInUseError,
     IncorrectPasswordError,
     ProviderUnavailableError,

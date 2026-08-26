@@ -11,7 +11,7 @@ import httpx
 from jose import JWTError, jwk, jwt
 
 from pai.config import Settings
-from pai.core.errors import InvalidTokenError
+from pai.kernel.errors import InvalidTokenError
 
 logger = logging.getLogger(__name__)
 

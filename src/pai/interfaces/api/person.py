@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.platform.security.auth.provider import AuthProvider
-from pai.dependencies import (
+from pai.interfaces.api.dependencies import (
     get_auth_provider,
     get_db,
     get_validated_access_token,
@@ -24,8 +24,8 @@ from pai.domains.student.person.typed_resources import (
     list_resources,
     update_resource,
 )
-from pai.phone import normalize_phone
-from pai.schemas import success
+from pai.domains.student.normalization.phone import normalize_phone
+from pai.interfaces.api.schemas import success
 
 router = APIRouter(prefix="/api/v1/person", tags=["person"])
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 
-from pai.core.errors import AuthError, EmailNotVerifiedError, InvalidTokenError
+from pai.kernel.errors import AuthError, EmailNotVerifiedError, InvalidTokenError
 from pai.platform.security.auth.provider import AuthProvider, ProviderSession, ProviderUser
 
 

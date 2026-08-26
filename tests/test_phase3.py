@@ -312,7 +312,7 @@ def test_claim_job_skip_locked(postgres_ready, test_settings):
 
     from pai.platform.database.db import get_session_factory, reset_engine_for_tests
     from pai.domains.documents.models import Document, DocumentJob
-    from pai.domains.documents.service import claim_next_job
+    from pai.intelligences.documents.workers.analysis_worker import claim_next_job
     from pai.domains.student.person.models import Person
 
     reset_engine_for_tests()

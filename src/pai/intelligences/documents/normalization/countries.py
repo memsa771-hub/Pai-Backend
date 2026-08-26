@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pai.geo import coerce_country
+from pai.domains.student.normalization.geo import coerce_country
 
 
 def normalize_country_code(value: str | None) -> str | None:

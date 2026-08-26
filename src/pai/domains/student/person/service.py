@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from pai.config import Settings, get_settings
-from pai.core.errors import (
+from pai.kernel.errors import (
     EmailNotVerifiedError,
     PersonNotFoundError,
     VersionConflictError,

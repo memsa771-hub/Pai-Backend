@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.core.errors import (
+from pai.kernel.errors import (
     ConsentRequiredError,
     FieldNotEditableError,
     UnknownFieldError,

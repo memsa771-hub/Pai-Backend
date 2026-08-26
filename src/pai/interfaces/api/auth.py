@@ -8,11 +8,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.core.errors import AuthError, PersonNotFoundError
+from pai.kernel.errors import AuthError, PersonNotFoundError
 from pai.platform.security.auth.provider import ProviderUser
 from pai.platform.security.auth.service import AuthService, SessionBundle
 from pai.platform.database.db import get_session_factory
-from pai.dependencies import (
+from pai.interfaces.api.dependencies import (
     get_db,
     get_pai,
     get_validated_access_token,
@@ -26,7 +26,7 @@ from pai.domains.student.person.service import (
     get_person_by_auth,
     soft_delete_person_data,
 )
-from pai.schemas import (
+from pai.interfaces.api.schemas import (
     ApiErrorResponse,
     ApiSuccessResponse,
     EmailOnlyRequest,
@@ -165,7 +165,7 @@ async def refresh_tokens(
 ) -> JSONResponse:
     refresh_token = request.cookies.get(settings.refresh_cookie_name)
     if not refresh_token:
-        from pai.core.errors import InvalidTokenError
+        from pai.kernel.errors import InvalidTokenError
 
         raise InvalidTokenError("Refresh token cookie is missing.")
     bundle = await service.refresh(refresh_token)

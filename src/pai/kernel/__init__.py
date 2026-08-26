@@ -1,1 +1,1 @@
-"""Shared contracts, evidence, policy, workflow, events, safety."""
+"""Shared contracts, evidence, policy, workflow, and errors."""

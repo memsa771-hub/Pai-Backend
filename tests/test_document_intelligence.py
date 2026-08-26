@@ -1,15 +1,14 @@
-from pai.intelligences.documents.classification.taxonomy import evidence_eligible
+from pai.intelligences.documents.classification.taxonomy import classify_from_name, evidence_eligible
 from pai.intelligences.documents.identity.names import names_match
 from pai.intelligences.documents.reconciliation.engine import ReconcileInput, reconcile
 from pai.intelligences.documents.security.validation import sniff_mime
-from pai.domains.documents.policy import classify_document_type, vault_extraction_policy
 
 
 def test_generated_docs_are_not_evidence():
     assert evidence_eligible(source_type="ai_generated", document_type="resume") is False
     assert evidence_eligible(source_type="onboarding", document_type="sop") is False
     assert evidence_eligible(source_type="document_vault", document_type="transcript") is True
-    assert vault_extraction_policy("ai_generated") == "disabled"
+    assert evidence_eligible(source_type="ai_generated", document_type="other") is False
 
 
 def test_identity_mismatch_is_deterministic():
@@ -89,9 +88,8 @@ def test_likely_match_cannot_auto_apply():
 def test_classify_uses_ocr_text_when_filename_is_generic():
     from pai.intelligences.documents.classification.taxonomy import classify_from_name
     from pai.intelligences.documents.classification.taxonomy import type_meta
-    from pai.domains.documents.policy import classify_document_type
 
-    assert classify_document_type("passport-scan.png") == "passport"
+    assert classify_from_name("passport-scan.png") == "passport"
     assert classify_from_name("scan.jpg") == "other"
     assert classify_from_name("scan.jpg", text="Republic of Pakistan Passport") == "passport"
     assert classify_from_name("scan.jpg", hint="resume", text="Official Transcript CGPA") == "resume"

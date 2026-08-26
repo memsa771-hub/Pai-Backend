@@ -7,14 +7,14 @@ import uuid
 
 from sqlalchemy import delete, func, select
 
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.domains.conversations.models import Conversation, Message
 from pai.domains.documents.models import Document, DocumentCandidate, DocumentJob
-from pai.domains.documents.policy import classify_document_type, vault_extraction_policy
+from pai.intelligences.documents.classification.taxonomy import classify_from_name, evidence_eligible
+from pai.intelligences.documents.ingest import create_document_upload
 from pai.domains.documents.service import (
     attach_documents_to_message,
     attachment_note_for_message,
-    create_document_upload,
     enqueue_reprocess,
     list_document_candidates,
     review_document_candidates,
@@ -29,17 +29,17 @@ async def _delete_person(session, person: Person) -> None:
 
 
 def test_classify_resume_from_filename():
-    assert classify_document_type("Musawir-CV-2027.pdf") == "resume"
-    assert classify_document_type("official-transcript.pdf") == "transcript"
-    assert classify_document_type("ielts-trf.pdf") == "ielts"
-    assert classify_document_type("notes.pdf") == "other"
-    assert classify_document_type("file.pdf", "sop") == "sop"
+    assert classify_from_name("Musawir-CV-2027.pdf") == "resume"
+    assert classify_from_name("official-transcript.pdf") == "transcript"
+    assert classify_from_name("ielts-trf.pdf") == "ielts"
+    assert classify_from_name("notes.pdf") == "other"
+    assert classify_from_name("file.pdf", "sop") == "sop"
 
 
 def test_ai_generated_never_auto_writes_vault():
-    assert vault_extraction_policy("ai_generated") == "disabled"
-    assert vault_extraction_policy("onboarding") == "extract"
-    assert vault_extraction_policy("chat_attachment") == "extract"
+    assert evidence_eligible(source_type="ai_generated", document_type="other") is False
+    assert evidence_eligible(source_type="onboarding", document_type="other") is True
+    assert evidence_eligible(source_type="chat_attachment", document_type="other") is True
 
 
 class _FakeStorage:

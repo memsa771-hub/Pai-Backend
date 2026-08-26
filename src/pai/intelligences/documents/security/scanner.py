@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pai.config import Settings
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 
 
 class ScanResult:

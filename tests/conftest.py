@@ -6,7 +6,7 @@ import pytest
 from jose import jwt
 
 from pai.config import Settings
-from pai.core.errors import (
+from pai.kernel.errors import (
     EmailAlreadyInUseError,
     EmailNotVerifiedError,
     IncorrectPasswordError,
@@ -63,7 +63,7 @@ class FakeAuthProvider:
     async def refresh(self, refresh_token: str) -> ProviderSession:
         access = self.refresh_to_access.get(refresh_token)
         if not access:
-            from pai.core.errors import InvalidTokenError
+            from pai.kernel.errors import InvalidTokenError
 
             raise InvalidTokenError()
         session = self.sessions[access]
@@ -93,7 +93,7 @@ class FakeAuthProvider:
         resolved_email = code.replace("ticket:", "")
         user = self.users.get(resolved_email) or self.users.get(email)
         if not user:
-            from pai.core.errors import InvalidTokenError
+            from pai.kernel.errors import InvalidTokenError
 
             raise InvalidTokenError()
         user["verified"] = True
@@ -109,7 +109,7 @@ class FakeAuthProvider:
     async def reset_password(self, ticket: str, new_password: str) -> GenericActionResult:
         email = ticket.replace("passwordReset:", "")
         if email not in self.users:
-            from pai.core.errors import InvalidTokenError
+            from pai.kernel.errors import InvalidTokenError
 
             raise InvalidTokenError()
         self.users[email]["password"] = new_password
@@ -118,7 +118,7 @@ class FakeAuthProvider:
     async def change_password(self, access_token: str, new_password: str) -> GenericActionResult:
         session = self.sessions.get(access_token)
         if not session:
-            from pai.core.errors import InvalidTokenError
+            from pai.kernel.errors import InvalidTokenError
 
             raise InvalidTokenError()
         for user in self.users.values():
@@ -130,7 +130,7 @@ class FakeAuthProvider:
         self.get_user_calls += 1
         session = self.sessions.get(access_token)
         if not session:
-            from pai.core.errors import InvalidTokenError
+            from pai.kernel.errors import InvalidTokenError
 
             raise InvalidTokenError()
         return session.user
@@ -138,7 +138,7 @@ class FakeAuthProvider:
     async def delete_user(self, access_token: str) -> None:
         session = self.sessions.get(access_token)
         if not session:
-            from pai.core.errors import InvalidTokenError
+            from pai.kernel.errors import InvalidTokenError
 
             raise InvalidTokenError()
         self.deleted.append(session.user.id)

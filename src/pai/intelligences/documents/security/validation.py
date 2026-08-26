@@ -6,7 +6,7 @@ import zipfile
 from io import BytesIO
 
 from pai.config import Settings
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.intelligences.documents.config import taxonomy
 
 

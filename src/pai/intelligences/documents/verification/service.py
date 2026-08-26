@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.kernel.workflow.gate import accept_vault_candidates
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.domains.documents.models import Document, DocumentFact, VerificationCase

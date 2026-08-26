@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.domains.conversations.models import Conversation, Message, OrchestrationRun
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.domains.student.person.models import Person
 
 

@@ -1,1 +1,0 @@
-"""Application records. Persistence only."""

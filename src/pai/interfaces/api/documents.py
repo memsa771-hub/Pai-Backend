@@ -10,17 +10,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.dependencies import get_db, require_onboarding_complete
+from pai.interfaces.api.dependencies import get_db, require_onboarding_complete
 from pai.intelligences.documents.config import taxonomy as load_taxonomy
+from pai.intelligences.documents.evidence.attention import attention_state, journey_criticality
+from pai.intelligences.documents.ingest import create_document_upload
 from pai.intelligences.documents.verification.service import (
+    close_open_cases_for_fields,
     list_open_cases,
     public_case,
     resolve_case,
 )
-from pai.domains.documents.models import DocumentJob
+from pai.domains.documents.models import Document, DocumentJob
 from pai.domains.documents.service import (
-    _public_document,
-    create_document_upload,
     delete_document,
     enqueue_reprocess,
     get_document_owned,
@@ -28,7 +29,7 @@ from pai.domains.documents.service import (
     list_documents,
     review_document_candidates,
 )
-from pai.schemas import success
+from pai.interfaces.api.schemas import success
 from pai.platform.storage.supabase import SupabaseStorageProvider
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -46,6 +47,36 @@ class VerificationResolveRequest(BaseModel):
 
 def _storage(settings: Settings) -> SupabaseStorageProvider:
     return SupabaseStorageProvider(settings)
+
+
+def _public_document(doc: Document, *, open_cases: int = 0) -> dict:
+    attention = attention_state(doc, open_cases=open_cases)
+    return {
+        "id": str(doc.id),
+        "title": doc.title or doc.original_filename,
+        "filename": doc.original_filename,
+        "documentType": doc.document_type or "other",
+        "category": doc.category,
+        "sourceType": doc.source_type,
+        "createdBy": doc.created_by,
+        "processingStatus": doc.status,
+        "status": doc.status,
+        "verificationStatus": doc.verification_status,
+        "lifecycleStatus": doc.lifecycle_status,
+        "trustLevel": doc.trust_level,
+        "identityStatus": doc.identity_status,
+        "authenticityStatus": doc.authenticity_status,
+        "baseCriticality": doc.base_criticality,
+        "journeyCriticality": journey_criticality(doc, attention=attention),
+        "attentionState": attention,
+        "evidenceEligible": doc.evidence_eligible,
+        "sizeBytes": doc.size_bytes,
+        "mimeType": doc.mime_type,
+        "currentVersionId": str(doc.current_version_id) if doc.current_version_id else None,
+        "vaultExtractionPolicy": doc.vault_extraction_policy,
+        "createdAt": doc.created_at.isoformat() if doc.created_at else None,
+        "updatedAt": doc.updated_at.isoformat() if doc.updated_at else None,
+    }
 
 
 @router.post("")
@@ -148,7 +179,9 @@ async def delete_document_api(
 ) -> JSONResponse:
     storage = _storage(settings)
     try:
-        await delete_document(session, person, document_id, storage)
+        paths = await delete_document(session, person, document_id)
+        for path in paths:
+            await storage.delete_object(path)
     finally:
         await storage.aclose()
     return JSONResponse(content=success({"message": "Document deleted."}))
@@ -205,13 +238,21 @@ async def review_document(
     session: Annotated[AsyncSession, Depends(get_db)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    await review_document_candidates(
+    applied = await review_document_candidates(
         session,
         person,
         document_id,
         accept_ids=body.acceptCandidateIds,
         reject_ids=body.rejectCandidateIds,
     )
+    if applied:
+        await close_open_cases_for_fields(
+            session,
+            person_id=person.id,
+            document_id=document_id,
+            field_keys=applied,
+        )
+        await session.commit()
     return JSONResponse(content=success({"message": "Review applied."}))
 
 

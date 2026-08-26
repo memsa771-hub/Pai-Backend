@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.core.errors import PersonNotFoundError
+from pai.kernel.errors import PersonNotFoundError
 from pai.domains.student.person.models import (
     Certification,
     Education,

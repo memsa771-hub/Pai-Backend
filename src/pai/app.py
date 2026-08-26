@@ -14,18 +14,18 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from pai.config import Settings, get_settings
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.platform.database.db import warmup_database
 from pai.interfaces.api import include_routers
 from pai.interfaces.workers.documents import document_worker_loop
 from pai.interfaces.workers.goals import goal_worker_loop
 from pai.interfaces.workers.intelligence import intelligence_worker_loop
 from pai.platform.llm.gateway import LLMGateway
-from pai.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
+from pai.interfaces.api.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
 from pai.intelligences.counselor.checkpoint import close_graph_checkpointer, init_graph_checkpointer
 from pai.intelligences.counselor.prompts import validate_prompt_templates
 from pai.platform.security.auth.supabase import SupabaseAuthProvider
-from pai.schemas import error, humanize_validation_error, success
+from pai.interfaces.api.schemas import error, humanize_validation_error, success
 
 logger = logging.getLogger(__name__)
 

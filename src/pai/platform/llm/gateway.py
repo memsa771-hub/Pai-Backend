@@ -24,7 +24,7 @@ class LLMGateway:
         name = self._settings.llm_default_provider
         provider = self._providers.get(name)
         if provider is None:
-            from pai.core.errors import AuthError
+            from pai.kernel.errors import AuthError
 
             raise AuthError(
                 code="LLM_NOT_CONFIGURED",

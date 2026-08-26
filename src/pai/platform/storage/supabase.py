@@ -5,7 +5,7 @@ import uuid
 import httpx
 
 from pai.config import Settings
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 
 
 class StorageAccessError(AuthError):

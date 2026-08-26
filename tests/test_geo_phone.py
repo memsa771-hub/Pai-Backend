@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from pai.geo import coerce_country, country_codes_from_value, extract_countries_from_text
-from pai.phone import normalize_phone
+from pai.domains.student.normalization.geo import coerce_country, country_codes_from_value, extract_countries_from_text
+from pai.domains.student.normalization.phone import normalize_phone
 
 
 def test_coerce_country_accepts_iso_and_exonyms():

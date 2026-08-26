@@ -20,7 +20,7 @@ from pai.domains.student.person.models import (
     WorkExperience,
 )
 from pai.domains.student.person.typed_resources import SCOPE_BY_RESOURCE
-from pai.phone import normalize_phone
+from pai.domains.student.normalization.phone import normalize_phone
 from pai.domains.student.vault.catalog import CatalogField
 from pai.domains.student.vault.completion import apply_completion_to_vault
 from pai.domains.student.vault.service import expand_scope_for_person

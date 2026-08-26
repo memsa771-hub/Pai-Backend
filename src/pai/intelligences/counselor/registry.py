@@ -6,7 +6,7 @@ from typing import Any
 
 from pai.intelligences.counselor.tooling import ToolContext, ToolResult, ToolSpec
 from pai.intelligences.counselor.memory_tools import RememberInsightTool, RecallSemanticMemoryTool
-from pai.capabilities.search.tool import WebSearchTool
+from pai.intelligences.counselor.web_search import WebSearchTool
 
 logger = logging.getLogger(__name__)
 

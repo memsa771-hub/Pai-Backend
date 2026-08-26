@@ -15,7 +15,7 @@ from pai.config import Settings, get_settings
 from pai.domains.conversations import service as conv_svc
 from pai.domains.documents.service import attach_documents_to_message
 from pai.platform.database.db import get_session_factory
-from pai.dependencies import get_db, require_onboarding_complete
+from pai.interfaces.api.dependencies import get_db, require_onboarding_complete
 from pai.intelligences.counselor.followup import handle_user_message, _payload_from_state
 from pai.intelligences.counselor.orchestrator import PAIOrchestrator
 from pai.domains.conversations.models import OrchestrationRun
@@ -23,7 +23,7 @@ from pai.domains.conversations.service import begin_chat_turn, save_assistant_me
 from pai.platform.jobs.queue import enqueue_intelligence
 from pai.domains.memory.service import PersonMemoryService
 from pai.domains.student.person.models import Person
-from pai.schemas import ApiErrorResponse, success
+from pai.interfaces.api.schemas import ApiErrorResponse, success
 
 chat_router = APIRouter(prefix="/api/v1", tags=["chat"])
 

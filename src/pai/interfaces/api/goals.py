@@ -16,8 +16,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.dependencies import get_db, require_onboarding_complete
-from pai.schemas import ApiErrorResponse, success
+from pai.interfaces.api.dependencies import get_db, require_onboarding_complete
+from pai.interfaces.api.schemas import ApiErrorResponse, success
 from pai.domains.conversations.service import get_or_create_person_conversation
 from pai.config import Settings, get_settings
 from pai.domains.goals.service import (
@@ -145,7 +145,7 @@ async def get_goal_detail(
     session: Annotated[AsyncSession, Depends(get_db)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    from pai.core.errors import AuthError
+    from pai.kernel.errors import AuthError
 
     goal = await get_goal_by_id(session, goal_id, person.id)
     if goal is None:
@@ -169,7 +169,7 @@ async def activate_goal_endpoint(
     settings: Annotated[Settings, Depends(get_settings)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    from pai.core.errors import AuthError
+    from pai.kernel.errors import AuthError
     from pai.domains.goals.service import enqueue_goal_intelligence_job, INTEL_STALE, INTEL_PENDING
 
     goal = await get_goal_by_id(session, goal_id, person.id)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from jose import jwt
 
-from pai.core.errors import InvalidTokenError
+from pai.kernel.errors import InvalidTokenError
 from pai.platform.security.auth.jwt import reset_jwks_cache_for_tests, validate_access_token
 
 

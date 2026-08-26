@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.config import Settings
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.domains.documents.models import (
     Document,
     DocumentCandidate,
@@ -16,40 +14,10 @@ from pai.domains.documents.models import (
     DocumentVersion,
     MessageDocument,
 )
-from pai.intelligences.documents.classification.classifier import classify_document
-from pai.intelligences.documents.classification.taxonomy import (
-    evidence_eligible,
-    normalize_created_by,
-    normalize_source_type,
-)
-from pai.intelligences.documents.evidence.attention import attention_state, journey_criticality
-from pai.intelligences.documents.security.scanner import scan_bytes
-from pai.intelligences.documents.security.validation import validate_upload_bytes
 from pai.kernel.workflow.gate import accept_vault_candidates
-from pai.intelligences.documents.verification.service import close_open_cases_for_fields
-from pai.platform.jobs.lease import reclaim_expired_leases
-from pai.platform.llm.gateway import LLMGateway
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.domains.student.person.models import Person, PersonVault, VaultValue
-from pai.platform.storage.supabase import SupabaseStorageProvider
 from pai.domains.documents.relations import add_relation
-_DOC_JOB_LOCK_NS = 87423092
-_CLAIM_SQL = """
-SELECT c.id
-FROM document_jobs AS c
-WHERE c.status = 'pending'
-  AND c.available_at <= :now
-  AND NOT EXISTS (
-      SELECT 1
-      FROM document_jobs AS p
-      WHERE p.document_id = c.document_id
-        AND p.status = 'processing'
-  )
-  AND pg_try_advisory_xact_lock(:lock_ns, hashtext(c.document_id::text))
-ORDER BY c.created_at
-FOR UPDATE SKIP LOCKED
-LIMIT 1
-"""
 
 
 class DocumentNotFoundError(AuthError):
@@ -64,111 +32,6 @@ class DocumentIdentityUnresolvedError(AuthError):
             message="Resolve whether this document belongs to you before accepting extracted facts.",
             status_code=409,
         )
-
-
-def _public_document(doc: Document, *, open_cases: int = 0) -> dict:
-    attention = attention_state(doc, open_cases=open_cases)
-    return {
-        "id": str(doc.id),
-        "title": doc.title or doc.original_filename,
-        "filename": doc.original_filename,
-        "documentType": doc.document_type or "other",
-        "category": doc.category,
-        "sourceType": doc.source_type,
-        "createdBy": doc.created_by,
-        "processingStatus": doc.status,
-        "status": doc.status,
-        "verificationStatus": doc.verification_status,
-        "lifecycleStatus": doc.lifecycle_status,
-        "trustLevel": doc.trust_level,
-        "identityStatus": doc.identity_status,
-        "authenticityStatus": doc.authenticity_status,
-        "baseCriticality": doc.base_criticality,
-        "journeyCriticality": journey_criticality(doc, attention=attention),
-        "attentionState": attention,
-        "evidenceEligible": doc.evidence_eligible,
-        "sizeBytes": doc.size_bytes,
-        "mimeType": doc.mime_type,
-        "currentVersionId": str(doc.current_version_id) if doc.current_version_id else None,
-        "vaultExtractionPolicy": doc.vault_extraction_policy,
-        "createdAt": doc.created_at.isoformat() if doc.created_at else None,
-        "updatedAt": doc.updated_at.isoformat() if doc.updated_at else None,
-    }
-
-
-async def create_document_upload(
-    session: AsyncSession,
-    settings: Settings,
-    person: Person,
-    *,
-    filename: str,
-    content_type: str,
-    data: bytes,
-    storage: SupabaseStorageProvider,
-    source_type: str = "document_vault",
-    document_type: str | None = None,
-    created_by: str = "student",
-    title: str | None = None,
-) -> Document:
-    mime = validate_upload_bytes(filename, content_type, data, settings)
-    await scan_bytes(data, filename=filename, settings=settings)
-    source = normalize_source_type(source_type)
-    actor = normalize_created_by(created_by)
-    classified = classify_document(filename=filename, hint=document_type, source_type=source)
-    eligible = evidence_eligible(source_type=source, document_type=classified["document_type"])
-    policy = "extract" if eligible else "disabled"
-    doc_id = uuid.uuid4()
-    version_id = uuid.uuid4()
-    path = f"{person.id}/{doc_id}/{version_id}/{filename}"
-    await storage.upload_private(path, data, mime)
-    digest = hashlib.sha256(data).hexdigest()
-    doc = Document(
-        id=doc_id,
-        person_id=person.id,
-        title=(title or filename)[:256],
-        document_type=classified["document_type"],
-        category=classified["category"],
-        source_type=source,
-        created_by=actor,
-        base_criticality=classified["base_criticality"],
-        evidence_eligible=eligible,
-        vault_extraction_policy=policy,
-        trust_level=classified["trust_level"],
-        storage_path=path,
-        original_filename=filename,
-        mime_type=mime,
-        size_bytes=len(data),
-        status="uploaded",
-        lifecycle_status="draft" if source == "ai_generated" else "active",
-    )
-    session.add(doc)
-    await session.flush()
-    version = DocumentVersion(
-        id=version_id,
-        document_id=doc.id,
-        version_number=1,
-        storage_path=path,
-        original_filename=filename,
-        mime_type=mime,
-        size_bytes=len(data),
-        sha256=digest,
-        created_by=actor,
-    )
-    session.add(version)
-    await session.flush()
-    doc.current_version_id = version.id
-    session.add(
-        DocumentJob(
-            document_id=doc.id,
-            document_version_id=version.id,
-            person_id=person.id,
-            idempotency_key=f"extract-{version.id}",
-            status="pending",
-        )
-    )
-    await session.commit()
-    await session.refresh(doc)
-    return doc
 
 
 async def enqueue_reprocess(session: AsyncSession, person_id: uuid.UUID, document_id: uuid.UUID) -> None:
@@ -284,42 +147,6 @@ async def _current_vault_values(
     return {key: value for key, value in result.all()}
 
 
-async def process_document_job(
-    session: AsyncSession,
-    settings: Settings,
-    job: DocumentJob,
-    *,
-    storage: SupabaseStorageProvider,
-    gateway: LLMGateway,
-) -> None:
-    from pai.intelligences.documents.pipeline import run_document_analysis
-
-    await run_document_analysis(session, settings, job, storage=storage, gateway=gateway)
-
-
-async def claim_next_job(session: AsyncSession) -> DocumentJob | None:
-    await reclaim_expired_leases(session, DocumentJob)
-    now = datetime.now(UTC)
-    result = await session.execute(
-        text(_CLAIM_SQL),
-        {"now": now, "lock_ns": _DOC_JOB_LOCK_NS},
-    )
-    job_id = result.scalar_one_or_none()
-    if job_id is None:
-        await session.commit()
-        return None
-    job = await session.get(DocumentJob, job_id)
-    if job is None:
-        await session.commit()
-        return None
-    job.status = "processing"
-    job.locked_at = now
-    job.attempts += 1
-    await session.commit()
-    await session.refresh(job)
-    return job
-
-
 async def list_document_candidates(
     session: AsyncSession, person: Person, document_id: uuid.UUID
 ) -> list[dict]:
@@ -358,7 +185,7 @@ async def review_document_candidates(
     *,
     accept_ids: list[uuid.UUID],
     reject_ids: list[uuid.UUID] | None = None,
-) -> None:
+) -> set[str]:
     doc = await get_document_owned(session, person.id, document_id)
     reject_ids = reject_ids or []
     requested = list(dict.fromkeys([*accept_ids, *reject_ids]))
@@ -411,12 +238,8 @@ async def review_document_candidates(
                 )
             )
     if to_apply:
-        await accept_vault_candidates(session, person, to_apply, from_document=True, already_reconciled=True)
-        await close_open_cases_for_fields(
-            session,
-            person_id=person.id,
-            document_id=doc.id,
-            field_keys={row.field_key for row in to_apply},
+        await accept_vault_candidates(
+            session, person, to_apply, from_document=True, already_reconciled=True
         )
     leftover = await session.execute(
         select(DocumentCandidate.id).where(
@@ -426,22 +249,21 @@ async def review_document_candidates(
     )
     doc.status = "awaiting_review" if leftover.first() is not None else "processed"
     await session.commit()
+    return {row.field_key for row in to_apply}
 
 
 async def delete_document(
     session: AsyncSession,
     person: Person,
     document_id: uuid.UUID,
-    storage: SupabaseStorageProvider,
-) -> None:
+) -> list[str]:
     doc = await get_document_owned(session, person.id, document_id)
     versions = await session.execute(
         select(DocumentVersion).where(DocumentVersion.document_id == doc.id)
     )
     paths = {doc.storage_path}
     paths.update(row.storage_path for row in versions.scalars())
-    for path in paths:
-        await storage.delete_object(path)
     doc.deleted_at = datetime.now(UTC)
     doc.status = "deleted"
     await session.commit()
+    return [path for path in paths if path]

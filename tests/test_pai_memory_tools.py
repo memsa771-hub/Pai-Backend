@@ -8,7 +8,7 @@ from pai.domains.memory.service import PersonMemoryService
 from pai.intelligences.counselor.prompts import validate_prompt_templates
 from pai.intelligences.counselor.tooling import ToolContext
 from pai.intelligences.counselor.registry import build_default_registry
-from pai.capabilities.search.tool import WebSearchTool
+from pai.intelligences.counselor.web_search import WebSearchTool
 
 
 def test_prompt_templates_validate():

@@ -38,7 +38,7 @@ async def apply_vault_candidate(
     verification_level: str,
     recompute_completion: bool = True,
 ) -> VaultApplyResult:
-    from pai.core.errors import UnknownFieldError
+    from pai.kernel.errors import UnknownFieldError
 
     field = get_catalog_field(candidate.field_key)
     if field is None or person.vault is None:

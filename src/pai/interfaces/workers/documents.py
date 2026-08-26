@@ -1,56 +1,8 @@
-from __future__ import annotations
+"""Start/consume the document intelligence worker."""
 
-import asyncio
-import logging
+from pai.intelligences.documents.workers.analysis_worker import (
+    document_worker_loop,
+    run_document_worker_once,
+)
 
-from pai.config import Settings, get_settings
-from pai.platform.database.db import get_session_factory
-from pai.domains.documents.models import DocumentJob
-from pai.domains.documents.service import claim_next_job, process_document_job
-from pai.platform.jobs.lease import apply_failure
-from pai.platform.llm.gateway import LLMGateway
-from pai.platform.storage.supabase import SupabaseStorageProvider
-
-logger = logging.getLogger(__name__)
-
-
-async def run_document_worker_once(settings: Settings | None = None) -> bool:
-    settings = settings or get_settings()
-    factory = get_session_factory(settings)
-    storage = SupabaseStorageProvider(settings)
-    gateway = LLMGateway(settings)
-    async with factory() as session:
-        job = await claim_next_job(session)
-        if job is None:
-            return False
-        try:
-            await process_document_job(session, settings, job, storage=storage, gateway=gateway)
-            await session.commit()
-        except Exception as exc:
-            logger.exception("Document job failed")
-            await session.rollback()
-            job = await session.get(DocumentJob, job.id)
-            if job:
-                apply_failure(job, exc)
-                await session.commit()
-    return True
-
-
-async def document_worker_loop(settings: Settings, stop_event: asyncio.Event) -> None:
-    while not stop_event.is_set():
-        try:
-            processed = await run_document_worker_once(settings)
-            if not processed:
-                await asyncio.sleep(2.0)
-        except OSError as exc:
-            # Transient DNS / network blips to Supabase pooler (common on Windows).
-            logger.warning("Document worker DB unreachable (%s); retrying…", exc)
-            await asyncio.sleep(15.0)
-        except Exception as exc:
-            msg = str(exc).lower()
-            if "getaddrinfo" in msg or "connect" in msg or "timeout" in msg:
-                logger.warning("Document worker connection issue (%s); retrying…", exc)
-                await asyncio.sleep(15.0)
-            else:
-                logger.exception("Document worker iteration error")
-                await asyncio.sleep(5.0)
+__all__ = ["document_worker_loop", "run_document_worker_once"]

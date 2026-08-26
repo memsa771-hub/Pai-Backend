@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 
-from pai.geo import country_options
+from pai.domains.student.normalization.geo import country_options
 
 
 class OnboardingPath(StrEnum):

@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from pai.geo import coerce_country
+from pai.domains.student.normalization.geo import coerce_country
 from pai.domains.onboarding.enums import (
     DEGREE_FOR_LEVEL,
     ENUM_LABELS,
@@ -23,7 +23,7 @@ from pai.domains.onboarding.enums import (
     SkillProficiency,
     StandardizedTest,
 )
-from pai.phone import normalize_phone
+from pai.domains.student.normalization.phone import normalize_phone
 
 PATH_CHOICES = [
     {

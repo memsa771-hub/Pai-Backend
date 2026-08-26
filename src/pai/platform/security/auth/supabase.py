@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 
 from pai.config import Settings
-from pai.core.errors import (
+from pai.kernel.errors import (
     AuthError,
     EmailAlreadyInUseError,
     EmailNotVerifiedError,

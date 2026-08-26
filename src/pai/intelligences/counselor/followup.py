@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from pai.config import Settings
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.domains.conversations.models import Message, OrchestrationRun
 from pai.domains.conversations.service import save_assistant_message
 from pai.platform.database.db import get_session_factory

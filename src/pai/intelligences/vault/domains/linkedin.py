@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.intelligences.vault.types import ExtractionBundle, ExtractionRequest, SourceKind
 from pai.platform.llm.gateway import LLMGateway
 

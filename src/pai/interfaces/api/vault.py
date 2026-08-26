@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.dependencies import get_db, resolve_person_from_token
-from pai.schemas import success
+from pai.interfaces.api.dependencies import get_db, resolve_person_from_token
+from pai.interfaces.api.schemas import success
 from pai.domains.student.vault.catalog import CATALOG_VERSION, VAULT_CATALOG
 from pai.domains.student.vault.completion import build_vault_status
 from pai.domains.student.vault.service import VaultService

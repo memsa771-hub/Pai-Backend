@@ -5,12 +5,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.dependencies import get_db, resolve_person_from_token
+from pai.interfaces.api.dependencies import get_db, resolve_person_from_token
 from pai.platform.llm.gateway import LLMGateway
 from pai.domains.onboarding.schema import OnboardingSubmit
 from pai.domains.onboarding.service import OnboardingService
 from pai.domains.student.person.models import Person
-from pai.schemas import ApiErrorResponse, success
+from pai.interfaces.api.schemas import ApiErrorResponse, success
 from pai.platform.storage.supabase import SupabaseStorageProvider
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["onboarding"])

@@ -9,7 +9,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from pai.config import Settings
-from pai.core.errors import AuthError
+from pai.kernel.errors import AuthError
 from pai.platform.llm.stream_parse import delta_from_sse_line
 from pai.platform.llm.schemas import (
     LLMMessage,

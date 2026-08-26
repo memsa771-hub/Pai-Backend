@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.core.errors import AuthError, ValidationFailedError
+from pai.kernel.errors import AuthError, ValidationFailedError
 from pai.domains.onboarding.enums import (
     COUNTRY_FIELDS,
     GOAL_TYPE_FOR_PRIMARY,
@@ -141,7 +141,8 @@ class OnboardingService:
         self._require_vault(person)
         person.onboarding_path = "cv"
         from pai.domains.documents.models import DocumentJob
-        from pai.domains.documents.service import create_document_upload, process_document_job
+        from pai.intelligences.documents.ingest import create_document_upload
+        from pai.intelligences.documents.workers.analysis_worker import process_document_job
 
         doc = await create_document_upload(
             session,

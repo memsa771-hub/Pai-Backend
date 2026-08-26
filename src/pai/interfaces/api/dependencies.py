@@ -9,11 +9,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.core.errors import CsrfError, InvalidTokenError, OnboardingIncompleteError
+from pai.kernel.errors import CsrfError, InvalidTokenError, OnboardingIncompleteError
 from pai.platform.security.auth.provider import AuthProvider
 from pai.platform.security.auth.service import AuthService
 from pai.platform.database.db import get_session_factory
-from pai.openapi import BEARER_DESCRIPTION
+from pai.interfaces.api.openapi import BEARER_DESCRIPTION
 from pai.domains.student.person.models import Person
 from pai.domains.student.person.service import get_person_by_auth
 from pai.platform.security.auth.jwt import validate_access_token

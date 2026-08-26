@@ -274,8 +274,11 @@ def test_cv_upload_completes_onboarding_without_form(verified_user, monkeypatch)
         del session, settings, storage, gateway
         job.status = "completed"
 
-    monkeypatch.setattr("pai.domains.documents.service.create_document_upload", fake_upload)
-    monkeypatch.setattr("pai.domains.documents.service.process_document_job", fake_process)
+    monkeypatch.setattr("pai.intelligences.documents.ingest.create_document_upload", fake_upload)
+    monkeypatch.setattr(
+        "pai.intelligences.documents.workers.analysis_worker.process_document_job",
+        fake_process,
+    )
 
     res = client.post(
         "/api/v1/onboarding/cv",

@@ -6,7 +6,7 @@ import re
 import uuid
 from typing import Any
 
-from pai.geo import extract_countries_from_text
+from pai.domains.student.normalization.geo import extract_countries_from_text
 from pai.domains.onboarding.enums import BudgetBand
 from pai.kernel.contracts.schemas import VaultCandidate
 

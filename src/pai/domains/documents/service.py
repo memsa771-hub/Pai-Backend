@@ -14,7 +14,7 @@ from pai.domains.documents.models import (
     DocumentVersion,
     MessageDocument,
 )
-from pai.kernel.workflow.gate import accept_vault_candidates
+from pai.kernel.gates import accept_vault_candidates
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.domains.student.person.models import Person, PersonVault, VaultValue
 from pai.domains.documents.relations import add_relation

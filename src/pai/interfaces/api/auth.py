@@ -19,7 +19,7 @@ from pai.interfaces.api.dependencies import (
     require_csrf,
     validate_access_token,
 )
-from pai.domains.onboarding.service import onboarding_public_status
+from pai.workflows.onboarding.service import onboarding_public_status
 from pai.domains.student.person.models import Person
 from pai.domains.student.person.service import (
     PersonBootstrapService,

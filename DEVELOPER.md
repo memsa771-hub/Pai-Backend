@@ -29,7 +29,8 @@ src/pai/
   interfaces/            # HTTP API, background worker loops
     api/                 # Routes + FastAPI deps, OpenAPI, HTTP schemas
     workers/             # Start/consume loops only
-  kernel/                # Shared errors, contracts, evidence, policy, write gate
+  workflows/             # Cross-domain processes (onboarding today)
+  kernel/                # Shared errors, contracts, evidence, policy, write gates
   intelligences/         # Reasoning: counselor, vault, documents, goals, research, planner
   domains/               # Persistent truth: student, conversations, documents, goals, …
   capabilities/          # Generic actions (search today)
@@ -39,6 +40,19 @@ tests/
 ```
 
 Do not add code under old trees (`api/`, `services/`, `orchestration/`, `tools/`, `llm/`, `data/`, `ingestion/`, `auth/`, `core/`). Those folders were removed.
+
+Mental model:
+
+```text
+Interface receives
+  → Workflow coordinates when needed
+  → Intelligence thinks
+  → Kernel validates (write gates)
+  → Domain owns truth
+  → Capability acts
+  → Integration connects outside
+  → Platform powers everything
+```
 
 ## Run locally
 
@@ -61,6 +75,7 @@ Authorize with **accessToken only** (no `Bearer` prefix in the Swagger box).
 - `GET /api/v1/chat/messages` loads history (paginated)
 - `POST /api/v1/chat` and `POST /api/v1/chat/stream` return as soon as the counselor finishes; Vault/goal intelligence is queued in the background (`intelligencePending`)
 - Canonical current goal lives in `domains/goals`. Journey only records goal created/changed/paused/completed events.
+- Onboarding is a workflow (`workflows/onboarding`), not a domain. The HTTP route stays at `interfaces/api/onboarding.py`.
 
 ## Key modules
 
@@ -68,6 +83,7 @@ Authorize with **accessToken only** (no `Bearer` prefix in the Swagger box).
 |---------|------|
 | Chat entry | `pai/interfaces/api/chat.py` |
 | Auth deps / JWT / onboarding gate | `pai/interfaces/api/dependencies.py` |
+| Onboarding process | `pai/workflows/onboarding/` |
 | Turn graph | `pai/intelligences/counselor/` |
 | Vault learn | `pai/intelligences/vault/` (sources: chat, document, …) |
 | Document ingest | `pai/intelligences/documents/ingest.py` |
@@ -75,7 +91,7 @@ Authorize with **accessToken only** (no `Bearer` prefix in the Swagger box).
 | Goal records | `pai/domains/goals/` |
 | Goal reasoning | `pai/intelligences/goals/` |
 | Live web facts | `pai/intelligences/research/` → `pai/capabilities/search/` |
-| Vault writes | `pai/kernel/evidence/vault_apply.py`, `pai/domains/student/typed_apply.py` |
+| Vault writes | `pai/kernel/gates/`, `pai/kernel/evidence/vault_apply.py`, `pai/domains/student/typed_apply.py` |
 | Catalog | `pai/domains/student/vault/catalog.py` |
 
 ## Docker

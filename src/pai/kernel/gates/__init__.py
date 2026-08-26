@@ -1,4 +1,7 @@
-"""Kernel write gate. Intelligences propose; this validates; domains persist."""
+"""Write gates. Intelligences propose; this validates; domains persist.
+
+Not a process engine — cross-domain processes live in pai.workflows.
+"""
 
 from pai.domains.actions.service import process_task_proposals as accept_actions
 from pai.kernel.evidence.vault_apply import process_candidates as accept_vault_candidates

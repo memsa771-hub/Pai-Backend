@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.kernel.errors import AuthError
-from pai.kernel.workflow.gate import accept_vault_candidates
+from pai.kernel.gates import accept_vault_candidates
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.domains.documents.models import Document, DocumentFact, VerificationCase
 from pai.domains.student.person.models import Person

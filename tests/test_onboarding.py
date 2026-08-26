@@ -4,8 +4,8 @@ import pytest
 from conftest import ONBOARDING_PAYLOAD
 from pydantic import ValidationError
 
-from pai.domains.onboarding.enums import field_enum_catalog
-from pai.domains.onboarding.schema import PATH_CHOICES, OnboardingSubmit
+from pai.workflows.onboarding.catalog import field_enum_catalog
+from pai.workflows.onboarding.contracts import PATH_CHOICES, OnboardingSubmit
 
 
 def test_enum_catalog_exposes_dropdown_ids():

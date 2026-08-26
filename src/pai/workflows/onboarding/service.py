@@ -10,14 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
 from pai.kernel.errors import AuthError, ValidationFailedError
-from pai.domains.onboarding.enums import (
+from pai.workflows.onboarding.catalog import (
     COUNTRY_FIELDS,
     GOAL_TYPE_FOR_PRIMARY,
     PRIMARY_GOAL_TITLES,
     PrimaryGoal,
     field_enum_catalog,
 )
-from pai.domains.onboarding.schema import (
+from pai.workflows.onboarding.contracts import (
     CONDITIONAL_FIELDS,
     ONBOARDING_PURPOSE,
     OPTIONAL_FIELDS,

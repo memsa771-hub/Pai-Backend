@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pai.config import Settings, get_settings
 from pai.interfaces.api.dependencies import get_db, resolve_person_from_token
 from pai.platform.llm.gateway import LLMGateway
-from pai.domains.onboarding.schema import OnboardingSubmit
-from pai.domains.onboarding.service import OnboardingService
+from pai.workflows.onboarding.contracts import OnboardingSubmit
+from pai.workflows.onboarding.service import OnboardingService
 from pai.domains.student.person.models import Person
 from pai.interfaces.api.schemas import ApiErrorResponse, success
 from pai.platform.storage.supabase import SupabaseStorageProvider

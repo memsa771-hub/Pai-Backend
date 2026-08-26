@@ -16,7 +16,7 @@ from pai.domains.memory.formation import apply_memory_drafts, drafts_from_turn
 from pai.domains.memory.service import PersonMemoryService
 from pai.intelligences.counselor.agents import FactExtractionAgent, StudentConversationAgent
 from pai.intelligences.planner import plan_next_actions
-from pai.kernel.workflow.gate import accept_actions, accept_vault_candidates, evaluate_candidates_batch
+from pai.kernel.gates import accept_actions, accept_vault_candidates, evaluate_candidates_batch
 from pai.intelligences.counselor.checkpoint import get_graph_checkpointer
 from pai.intelligences.counselor.context import (
     build_counselor_context,

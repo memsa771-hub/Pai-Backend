@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
-from pai.kernel.workflow.gate import accept_vault_candidates
+from pai.kernel.gates import accept_vault_candidates
 from pai.platform.llm.gateway import LLMGateway
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.intelligences.documents.classification.classifier import classify_document

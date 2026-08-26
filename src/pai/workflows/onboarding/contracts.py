@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pai.domains.student.normalization.geo import coerce_country
-from pai.domains.onboarding.enums import (
+from pai.workflows.onboarding.catalog import (
     DEGREE_FOR_LEVEL,
     ENUM_LABELS,
     BudgetBand,

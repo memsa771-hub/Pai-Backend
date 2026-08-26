@@ -26,7 +26,7 @@ from pai.domains.goals.service import (
     list_goals,
     upsert_goal_from_anchors,
 )
-from pai.domains.student.person.models import Goal
+from pai.domains.goals.models import Goal
 
 logger = logging.getLogger(__name__)
 

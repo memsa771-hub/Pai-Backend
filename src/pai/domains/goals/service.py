@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.domains.student.person.models import Goal, GoalIntelligence, GoalJob
+from pai.domains.goals.models import Goal, GoalIntelligence, GoalJob
 
 logger = logging.getLogger(__name__)
 
@@ -441,3 +441,34 @@ async def mark_intelligence_stale_for_vault_update(
             session, goal, kind="assessment_refresh", force=False
         )
     return goals
+
+
+def goal_to_public(goal: Goal | None) -> dict[str, Any] | None:
+    if goal is None:
+        return None
+    mode = "pursuing" if goal.lifecycle_status == LIFECYCLE_ACTIVE else (goal.lifecycle_status or "active")
+    return {
+        "intent": goal.title,
+        "mode": mode,
+        "goalType": goal.goal_type,
+        "goalId": str(goal.id),
+        "reason": None,
+        "updatedAt": goal.updated_at.isoformat() if goal.updated_at else None,
+    }
+
+
+async def goal_fact_lines(session: AsyncSession, person_id: uuid.UUID) -> list[str]:
+    """Counselor-facing current/previous goal lines. Goal domain is the source of truth."""
+    current = await get_active_goal(session, person_id)
+    others = [
+        g
+        for g in await list_goals(session, person_id, include_archived=True)
+        if current is None or g.id != current.id
+    ]
+    lines: list[str] = []
+    if current is not None:
+        lines.append(f"Current goal ({current.goal_type}): {current.title}")
+    if others:
+        prev = others[0]
+        lines.append(f"Previous goal: {prev.title} — do not keep executing this plan")
+    return lines

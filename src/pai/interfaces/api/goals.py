@@ -28,7 +28,7 @@ from pai.domains.goals.service import (
     list_goals,
     switch_conversation_active_goal,
 )
-from pai.domains.student.person.models import Goal, GoalIntelligence
+from pai.domains.goals.models import Goal, GoalIntelligence
 
 goals_router = APIRouter(prefix="/api/v1/goals", tags=["goals"])
 

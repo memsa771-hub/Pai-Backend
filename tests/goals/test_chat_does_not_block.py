@@ -52,12 +52,9 @@ async def test_resolver_failure_does_not_block_response():
     from unittest.mock import AsyncMock, patch
 
     with patch(
-        "pai.domains.goals.resolver.resolve",
+        "pai.intelligences.goals.resolver.resolve",
         new=AsyncMock(side_effect=RuntimeError("resolver exploded")),
     ):
-        # Simulate the _capture_goal wrapper — it catches resolver exceptions
-        from pai.domains.journey.service import apply_goal_from_message
-
         # _capture_goal in orchestrator wraps resolver in try/except
         # so this should not raise:
         session = AsyncMock()
@@ -72,10 +69,10 @@ async def test_resolver_failure_does_not_block_response():
             person_id = _uuid.uuid4()
             conversation_id = _uuid.uuid4()
             with patch(
-                "pai.domains.goals.resolver.get_conversation_active_goal",
+                "pai.intelligences.goals.resolver.get_conversation_active_goal",
                 new=AsyncMock(side_effect=RuntimeError("resolver exploded")),
             ):
-                from pai.domains.goals.resolver import resolve
+                from pai.intelligences.goals.resolver import resolve
 
                 try:
                     await resolve(

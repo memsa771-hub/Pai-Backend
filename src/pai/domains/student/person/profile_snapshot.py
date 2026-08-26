@@ -8,10 +8,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pai.domains.goals.models import Goal
 from pai.domains.student.person.models import (
     Certification,
     Education,
-    Goal,
     Project,
     Skill,
     WorkExperience,

@@ -505,36 +505,48 @@ class PAIOrchestrator:
 
     async def _capture_goal(self, text: str, *, llm_goal) -> bool:
         assert self._session and self._person
-        # Legacy journey decision (keeps PersonDecision chain intact)
-        from pai.domains.journey.service import apply_goal_from_message
+        if self._run is None:
+            return False
+        conversation_id = getattr(self._run, "conversation_id", None)
+        if conversation_id is None:
+            return False
+        try:
+            from pai.domains.journey.service import record_goal_event
+            from pai.intelligences.goals.resolver import resolve as resolve_goal
 
-        journey_changed = await apply_goal_from_message(
-            self._session, self._person.id, text, llm_goal=llm_goal
-        )
-        # New goal-centric resolver — runs only if we have a conversation context
-        if self._run is not None:
-            conversation_id = getattr(self._run, "conversation_id", None)
-            if conversation_id is not None:
-                try:
-                    from pai.domains.goals.resolver import resolve as resolve_goal
-
-                    resolver_result = await resolve_goal(
-                        self._session,
-                        self._person.id,
-                        conversation_id,
-                        llm_goal=llm_goal,
-                        user_message=text,
-                    )
-                    if resolver_result.action != "none":
-                        logger.debug(
-                            "Goal resolver: action=%s goal_id=%s enqueued=%s",
-                            resolver_result.action,
-                            resolver_result.goal.id if resolver_result.goal else None,
-                            resolver_result.intelligence_enqueued,
-                        )
-                except Exception:
-                    logger.exception("Goal resolver failed (non-fatal)")
-        return journey_changed
+            resolver_result = await resolve_goal(
+                self._session,
+                self._person.id,
+                conversation_id,
+                llm_goal=llm_goal,
+                user_message=text,
+            )
+            if resolver_result.action == "none" or resolver_result.goal is None:
+                return False
+            kind = {
+                "create": "goal.created",
+                "create_secondary": "goal.created",
+                "switch": "goal.changed",
+                "reinforce": "goal.changed",
+            }.get(resolver_result.action)
+            if kind and resolver_result.action != "reinforce":
+                await record_goal_event(
+                    self._session,
+                    self._person.id,
+                    kind=kind,
+                    title=resolver_result.goal.title,
+                    goal_id=resolver_result.goal.id,
+                )
+            logger.debug(
+                "Goal resolver: action=%s goal_id=%s enqueued=%s",
+                resolver_result.action,
+                resolver_result.goal.id,
+                resolver_result.intelligence_enqueued,
+            )
+            return True
+        except Exception:
+            logger.exception("Goal resolver failed (non-fatal)")
+            return False
 
     async def _inject_goal_facts(self, state: PAIState) -> None:
         assert self._session and self._person

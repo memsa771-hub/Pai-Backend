@@ -78,21 +78,25 @@ async def run_document_worker_once(settings: Settings | None = None) -> bool:
     factory = get_session_factory(settings)
     storage = SupabaseStorageProvider(settings)
     gateway = LLMGateway(settings)
-    async with factory() as session:
-        job = await claim_next_job(session)
-        if job is None:
-            return False
-        try:
-            await process_document_job(session, settings, job, storage=storage, gateway=gateway)
-            await session.commit()
-        except Exception as exc:
-            logger.exception("Document job failed")
-            await session.rollback()
-            job = await session.get(DocumentJob, job.id)
-            if job:
-                apply_failure(job, exc)
+    try:
+        async with factory() as session:
+            job = await claim_next_job(session)
+            if job is None:
+                return False
+            try:
+                await process_document_job(session, settings, job, storage=storage, gateway=gateway)
                 await session.commit()
-    return True
+            except Exception as exc:
+                logger.exception("Document job failed")
+                await session.rollback()
+                job = await session.get(DocumentJob, job.id)
+                if job:
+                    apply_failure(job, exc)
+                    await session.commit()
+        return True
+    finally:
+        await gateway.aclose()
+        await storage.aclose()
 
 
 async def document_worker_loop(settings: Settings, stop_event: asyncio.Event) -> None:

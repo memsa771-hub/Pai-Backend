@@ -9,10 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.kernel.contracts.schemas import VaultCandidate
+from pai.domains.goals.models import Goal
 from pai.domains.student.person.models import (
     Certification,
     Education,
-    Goal,
     Person,
     Project,
     Skill,
@@ -621,7 +621,7 @@ async def apply_typed_candidate(
         # Delegate to GoalService so multi-goal logic is respected
         try:
             from pai.domains.goals.service import upsert_goal_from_anchors, enqueue_goal_intelligence_job
-            from pai.domains.goals.resolver import _classify_goal_type, _extract_anchors_from_intent
+            from pai.intelligences.goals.resolver import _classify_goal_type, _extract_anchors_from_intent
 
             goal_type = _classify_goal_type(title, {})
             anchors = _extract_anchors_from_intent(title, goal_type)

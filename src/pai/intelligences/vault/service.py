@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from pai.intelligences.vault.domains.chat import ChatSourceDomain
-from pai.intelligences.vault.domains.document import DocumentSourceDomain
-from pai.intelligences.vault.domains.linkedin import LinkedInSourceDomain
-from pai.intelligences.vault.domains.social import SocialSourceDomain
+from pai.intelligences.vault.sources.chat import ChatSourceDomain
+from pai.intelligences.vault.sources.document import DocumentSourceDomain
+from pai.intelligences.vault.sources.linkedin import LinkedInSourceDomain
+from pai.intelligences.vault.sources.social import SocialSourceDomain
 from pai.intelligences.vault.types import (
     ExtractionBundle,
     ExtractionRequest,

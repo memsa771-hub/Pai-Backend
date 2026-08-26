@@ -25,7 +25,8 @@ from pai.domains.onboarding.schema import (
     REQUIRED_FIELDS,
     OnboardingSubmit,
 )
-from pai.domains.student.person.models import Education, Goal, Person, Skill, WorkExperience
+from pai.domains.goals.models import Goal
+from pai.domains.student.person.models import Education, Person, Skill, WorkExperience
 from pai.domains.student.vault.service import VaultService, grow_vault_schema
 
 

@@ -11,7 +11,8 @@ from pai.kernel.evidence.vault_apply import process_candidates
 from pai.intelligences.counselor.context import build_student_context_pack
 from pai.intelligences.counselor.routing import should_extract_facts
 from pai.kernel.contracts.schemas import TaskProposal, VaultCandidate
-from pai.domains.student.person.models import Education, Goal, Person
+from pai.domains.goals.models import Goal
+from pai.domains.student.person.models import Education, Person
 from pai.domains.actions.service import is_fact_recording_task, process_task_proposals
 from pai.domains.student.vault.catalog import extraction_catalog_hint
 

@@ -17,6 +17,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from pai.config import Settings
+from pai.intelligences.research.service import ResearchResult, research_query
 from pai.platform.llm.gateway import LLMGateway
 from pai.platform.llm.schemas import LLMMessage
 
@@ -100,44 +102,77 @@ async def run_research_stage(
     goal_type: str,
     goal_title: str,
     anchors: dict[str, Any],
+    settings: Settings | None = None,
+    live_research: ResearchResult | None = None,
 ) -> dict[str, Any]:
     """
-    Produce structured requirements, options, eligibility rules, deadlines.
-
-    Input:  goal anchors
-    Output: research JSON object
+    Ground requirements/options/deadlines in live Research Intelligence, then
+    structure those hits. Does not invent universities or costs from the LLM.
     """
+    empty = {
+        "requirements": [],
+        "options": [],
+        "eligibility_rules": [],
+        "deadlines": [],
+        "typical_cost": "unknown",
+        "notes": "Live research unavailable.",
+        "sources": [],
+        "_error": True,
+    }
+    live = live_research
+    if live is None:
+        api_key = ((settings.tavily_api_key if settings is not None else "") or "").strip()
+        if not api_key:
+            empty["notes"] = "Live research unavailable: TAVILY_API_KEY is not configured."
+            return empty
+        query_parts = [goal_title, goal_type, _goal_guidance(goal_type)["research_focus"]]
+        for key in ("program", "degree_level", "target_country", "role", "target_company"):
+            val = anchors.get(key)
+            if val:
+                query_parts.append(str(val))
+        live = await research_query(
+            query=" ".join(query_parts),
+            api_key=api_key,
+            search_depth=settings.tavily_search_depth,
+            max_results=settings.tavily_max_results,
+        )
+    if not live.ok or not (live.hits or live.summary):
+        empty["notes"] = live.error or "No live research results."
+        return empty
+
+    sources = [{"title": h.title, "url": h.url} for h in live.hits]
     guidance = _goal_guidance(goal_type)
     system = (
-        "You are an expert counselor assistant that produces structured research "
-        "about student goals. Return ONLY valid JSON — no prose outside the JSON. "
-        "Be concise and factual."
+        "You structure live web research for a counselor. Return ONLY valid JSON. "
+        "Use only facts present in the provided search evidence. "
+        "Do not invent universities, deadlines, costs, or requirements."
     )
-    anchor_str = json.dumps(anchors, ensure_ascii=False)
     user = f"""Goal: {goal_title}
 Type: {goal_type}
-Anchors: {anchor_str}
 Research focus: {guidance['research_focus']}
 
+Live search evidence:
+{live.as_counselor_text()}
+
 Return a JSON object with these keys:
-- "requirements": list of key requirements (strings)
-- "options": list of top 3 realistic options or universities/companies (strings)
-- "eligibility_rules": list of eligibility conditions (strings)
-- "deadlines": list of relevant deadlines or timelines (strings)
-- "typical_cost": string estimate of cost or salary range
-- "notes": any important caveats (string)
+- "requirements": list of key requirements found in the evidence (strings)
+- "options": list of universities/companies/options found in the evidence (strings)
+- "eligibility_rules": list of eligibility conditions found in the evidence (strings)
+- "deadlines": list of deadlines or timelines found in the evidence (strings)
+- "typical_cost": string estimate from the evidence, or "unknown"
+- "notes": caveats grounded in the evidence (string)
 """
     result = await _llm_json(gateway, system, user, max_tokens=1200)
     if not result:
         return {
-            "requirements": [],
-            "options": [],
-            "eligibility_rules": [],
-            "deadlines": [],
-            "typical_cost": "unknown",
-            "notes": "Research unavailable.",
+            **empty,
             "_error": True,
+            "options": [h.title for h in live.hits[:3]],
+            "notes": (live.summary or live.as_counselor_text())[:500],
+            "sources": sources,
         }
+    result["sources"] = sources
+    result.pop("_error", None)
     return result
 
 
@@ -361,6 +396,8 @@ async def run_full_pipeline(
     goal_title: str,
     anchors: dict[str, Any],
     vault_snapshot: dict[str, Any],
+    settings: Settings | None = None,
+    live_research: ResearchResult | None = None,
 ) -> dict[str, Any]:
     """
     Run all 4 stages sequentially and return the full intelligence object.
@@ -368,7 +405,12 @@ async def run_full_pipeline(
     Failures in individual stages produce partial output — pipeline continues.
     """
     research = await run_research_stage(
-        gateway, goal_type=goal_type, goal_title=goal_title, anchors=anchors
+        gateway,
+        goal_type=goal_type,
+        goal_title=goal_title,
+        anchors=anchors,
+        settings=settings,
+        live_research=live_research,
     )
     assessment = await run_assessment_stage(
         gateway,

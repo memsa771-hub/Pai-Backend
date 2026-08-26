@@ -9,6 +9,7 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 
 from pai.platform.database.base import Base
+import pai.domains.goals.models  # noqa: F401
 import pai.domains.student.person.models  # noqa: F401
 import pai.domains.conversations.models  # noqa: F401
 import pai.domains.documents.models  # noqa: F401

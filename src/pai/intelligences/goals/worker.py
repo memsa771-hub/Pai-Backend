@@ -20,7 +20,7 @@ from pai.config import Settings, get_settings
 from pai.platform.database.db import get_session_factory
 from pai.platform.llm.gateway import LLMGateway
 from pai.platform.jobs.lease import MAX_ATTEMPTS, apply_failure
-from pai.domains.student.person.models import Goal, GoalIntelligence, GoalJob
+from pai.domains.goals.models import Goal, GoalIntelligence, GoalJob
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +233,7 @@ async def process_goal_job(
             goal_title=goal.title,
             anchors=anchors,
             vault_snapshot=vault_snapshot,
+            settings=settings,
         )
 
     await _save_intelligence(session, goal, intel, result)

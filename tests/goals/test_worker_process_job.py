@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pai.intelligences.goals.pipeline import _BRIEF_MAX_LINES
+from pai.intelligences.goals.pipeline import _BRIEF_MAX_LINES, run_full_pipeline
+from pai.intelligences.research.service import ResearchHit, ResearchResult
 
 
 @pytest.mark.asyncio
@@ -46,6 +47,12 @@ async def test_pipeline_produces_ready_summary_synchronously():
         goal_title="MS CS in Germany",
         anchors={"target_country": "DE", "degree_level": "ms"},
         vault_snapshot={"educations": [{"gpa": 3.6}]},
+        live_research=ResearchResult(
+            ok=True,
+            query="MS CS Germany",
+            summary="TU Berlin IELTS 6.5",
+            hits=[ResearchHit("TU Berlin", "https://example.edu", "IELTS 6.5")],
+        ),
     )
 
     # Status check

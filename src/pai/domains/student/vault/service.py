@@ -326,10 +326,10 @@ class VaultService:
     async def _load_typed_summary(self, session: AsyncSession, person_id: uuid.UUID) -> dict[str, str]:
         from sqlalchemy import func
 
+        from pai.domains.goals.models import Goal
         from pai.domains.student.person.models import (
             Certification,
             Education,
-            Goal,
             Project,
             Skill,
             WorkExperience,

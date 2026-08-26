@@ -17,10 +17,10 @@ from pai.kernel.errors import (
     VersionConflictError,
 )
 from pai.platform.security.auth.provider import ProviderUser
+from pai.domains.goals.models import Goal
 from pai.domains.student.person.models import (
     Certification,
     Education,
-    Goal,
     Person,
     PersonConsent,
     PersonVault,

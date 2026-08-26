@@ -22,7 +22,8 @@ from pai.intelligences.documents.verification.service import (
 )
 from pai.domains.documents.models import Document, DocumentJob
 from pai.domains.documents.service import (
-    delete_document,
+    list_document_storage_paths,
+    mark_document_deleted,
     enqueue_reprocess,
     get_document_owned,
     list_document_candidates,
@@ -179,9 +180,11 @@ async def delete_document_api(
 ) -> JSONResponse:
     storage = _storage(settings)
     try:
-        paths = await delete_document(session, person, document_id)
+        paths = await list_document_storage_paths(session, person, document_id)
         for path in paths:
             await storage.delete_object(path)
+        await mark_document_deleted(session, person, document_id)
+        await session.commit()
     finally:
         await storage.aclose()
     return JSONResponse(content=success({"message": "Document deleted."}))
@@ -252,7 +255,7 @@ async def review_document(
             document_id=document_id,
             field_keys=applied,
         )
-        await session.commit()
+    await session.commit()
     return JSONResponse(content=success({"message": "Review applied."}))
 
 

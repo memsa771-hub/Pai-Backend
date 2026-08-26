@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from pai.kernel.contracts.schemas import GoalExtract
-from pai.domains.journey.extract import GoalHit, resolve_goal_hit
+from pai.domains.journey.extract import resolve_goal_hit
 
 
 def _extract(
@@ -135,8 +135,9 @@ def test_exploring_and_pivot_come_from_the_classifier():
 async def test_goal_pivot_keeps_history(postgres_ready):
     from pai.platform.security.auth.provider import ProviderUser
     from pai.platform.database.db import get_session_factory, reset_engine_for_tests
-    from pai.domains.journey.models import PersonDecision
-    from pai.domains.journey.service import apply_goal_hit, list_goal_versions
+    from pai.domains.goals.service import create_goal, get_active_goal, list_goals
+    from pai.domains.journey.models import PersonEvent
+    from pai.domains.journey.service import record_goal_event
     from pai.domains.student.person.models import Person
     from pai.domains.student.person.service import PersonBootstrapService
 
@@ -154,32 +155,39 @@ async def test_goal_pivot_keeps_history(postgres_ready):
         boot = await PersonBootstrapService(postgres_ready).bootstrap(session, user)
         person = await session.get(Person, uuid.UUID(boot["person"]["id"]))
         assert person is not None
-        first = GoalHit(
-            object_key="goal:now",
-            object_label="study locally in FAST",
-            stance="pursuing",
-            reason=None,
-            evidence="I want to study locally in FAST",
+        first = await create_goal(
+            session,
+            person.id,
+            goal_type="admission",
+            title="study locally in FAST",
+            anchors={"goal_type": "admission"},
+            lifecycle_status="active",
         )
-        later = GoalHit(
-            object_key="goal:now",
-            object_label="study internationally not local",
-            stance="pursuing",
-            reason="pivot",
-            evidence="I want to study internationally not local",
+        await record_goal_event(
+            session, person.id, kind="goal.created", title=first.title, goal_id=first.id
         )
-        await apply_goal_hit(session, person.id, first)
+        first.lifecycle_status = "paused"
+        later = await create_goal(
+            session,
+            person.id,
+            goal_type="admission",
+            title="study internationally not local",
+            anchors={"goal_type": "admission", "target_country": "DE"},
+            lifecycle_status="active",
+        )
+        await record_goal_event(
+            session, person.id, kind="goal.changed", title=later.title, goal_id=later.id
+        )
         await session.commit()
-        await apply_goal_hit(session, person.id, later)
-        await session.commit()
-        versions = await list_goal_versions(session, person.id)
-        assert len(versions) == 2
-        current = next(row for row in versions if row.status == "active")
-        previous = next(row for row in versions if row.status == "superseded")
-        assert current.version == 2
-        assert "international" in current.object_label.lower()
-        assert "locally" in previous.object_label.lower()
+        current = await get_active_goal(session, person.id)
+        assert current is not None
+        assert "international" in current.title.lower()
+        paused = [g for g in await list_goals(session, person.id, include_archived=True) if g.lifecycle_status == "paused"]
+        assert paused and "locally" in paused[0].title.lower()
         result = await session.execute(
-            select(PersonDecision).where(PersonDecision.person_id == person.id)
+            select(PersonEvent).where(
+                PersonEvent.person_id == person.id,
+                PersonEvent.kind.in_(("goal.created", "goal.changed")),
+            )
         )
-        assert {row.status for row in result.scalars().all()} == {"active", "superseded"}
+        assert {row.kind for row in result.scalars().all()} == {"goal.created", "goal.changed"}

@@ -19,6 +19,22 @@ from pai.intelligences.goals.pipeline import (
     run_planning_stage,
     run_research_stage,
 )
+from pai.intelligences.research.service import ResearchHit, ResearchResult
+
+
+def _live_research() -> ResearchResult:
+    return ResearchResult(
+        ok=True,
+        query="MS CS Germany",
+        summary="TU Berlin MS CS typically wants IELTS 6.5 and a bachelor degree.",
+        hits=[
+            ResearchHit(
+                title="TU Berlin",
+                url="https://example.edu/cs",
+                snippet="IELTS 6.5. Bachelor required. Deadline January 15. Tuition 0-500 EUR.",
+            )
+        ],
+    )
 
 
 def _fake_gateway(response_json: dict | list | None = None, text: str = "") -> MagicMock:
@@ -60,6 +76,7 @@ async def test_research_stage_returns_structured_output():
         goal_type="admission",
         goal_title="MS CS in Germany",
         anchors={"target_country": "DE", "degree_level": "ms"},
+        live_research=_live_research(),
     )
     assert "requirements" in result
     assert isinstance(result["requirements"], list)
@@ -251,6 +268,7 @@ async def test_full_pipeline_produces_ready_summary():
         goal_title="MS CS in Germany",
         anchors={"target_country": "DE", "degree_level": "ms"},
         vault_snapshot={"educations": [{"gpa": 3.6}]},
+        live_research=_live_research(),
     )
     assert result["status"] == "ready"
     assert result["counselor_brief"]

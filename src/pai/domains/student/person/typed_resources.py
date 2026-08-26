@@ -7,10 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.kernel.errors import PersonNotFoundError
+from pai.domains.goals.models import Goal
 from pai.domains.student.person.models import (
     Certification,
     Education,
-    Goal,
     Person,
     Project,
     Skill,

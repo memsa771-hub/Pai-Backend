@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pai.integrations.connectors.tavily import tavily_search
+from pai.integrations.search import web_search
 
 
 async def search(
@@ -15,7 +15,7 @@ async def search(
     max_results: int,
     topic: str = "general",
 ) -> dict[str, Any]:
-    return await tavily_search(
+    return await web_search(
         query=query,
         api_key=api_key,
         search_depth=search_depth,

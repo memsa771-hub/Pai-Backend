@@ -26,7 +26,7 @@ from pai.domains.goals.service import (
     INTEL_STALE,
     VAULT_FIELDS_THAT_AFFECT_GOALS,
 )
-from pai.domains.student.person.models import Goal
+from pai.domains.goals.models import Goal
 
 
 # ── Vault key guard ───────────────────────────────────────────────────────────

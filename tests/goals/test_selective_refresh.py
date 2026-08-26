@@ -17,7 +17,7 @@ from pai.domains.goals.service import (
     VAULT_FIELDS_THAT_AFFECT_GOALS,
     mark_intelligence_stale_for_vault_update,
 )
-from pai.domains.student.person.models import Goal
+from pai.domains.goals.models import Goal
 
 
 def _mock_goal(goal_type: str) -> Goal:

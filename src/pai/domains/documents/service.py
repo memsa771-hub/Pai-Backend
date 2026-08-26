@@ -248,11 +248,10 @@ async def review_document_candidates(
         )
     )
     doc.status = "awaiting_review" if leftover.first() is not None else "processed"
-    await session.commit()
     return {row.field_key for row in to_apply}
 
 
-async def delete_document(
+async def list_document_storage_paths(
     session: AsyncSession,
     person: Person,
     document_id: uuid.UUID,
@@ -263,7 +262,14 @@ async def delete_document(
     )
     paths = {doc.storage_path}
     paths.update(row.storage_path for row in versions.scalars())
+    return [path for path in paths if path]
+
+
+async def mark_document_deleted(
+    session: AsyncSession,
+    person: Person,
+    document_id: uuid.UUID,
+) -> None:
+    doc = await get_document_owned(session, person.id, document_id)
     doc.deleted_at = datetime.now(UTC)
     doc.status = "deleted"
-    await session.commit()
-    return [path for path in paths if path]

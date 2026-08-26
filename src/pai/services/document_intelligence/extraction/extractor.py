@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from pydantic import BaseModel
 
 from pai.llm.gateway import LLMGateway
@@ -14,6 +16,8 @@ from pai.services.document_intelligence.extraction.schemas import passport as pa
 from pai.services.document_intelligence.extraction.schemas import resume as resume_schema
 from pai.services.document_intelligence.extraction.schemas import test_score as test_schema
 from pai.services.document_intelligence.extraction.schemas import transcript as transcript_schema
+
+logger = logging.getLogger(__name__)
 
 # Schema modules stay in code; which type uses which schema lives in taxonomy.json.
 _SCHEMAS: dict[str, tuple[type[BaseModel], object]] = {
@@ -42,15 +46,19 @@ async def extract_candidates(
     )
     if typed:
         return typed
-    agent = FactExtractionAgent(gateway)
-    fallback = await agent.extract_from_document(
-        document_id=document_id,
-        document_text=document_text,
-        document_type_hint=document_type,
-        known_facts=known_facts,
-        person_id=person_id,
-    )
-    return [row for row in fallback if evidence_grounded(row.evidence_text, document_text)]
+    try:
+        agent = FactExtractionAgent(gateway)
+        fallback = await agent.extract_from_document(
+            document_id=document_id,
+            document_text=document_text,
+            document_type_hint=document_type,
+            known_facts=known_facts,
+            person_id=person_id,
+        )
+        return [row for row in fallback if evidence_grounded(row.evidence_text, document_text)]
+    except Exception:
+        logger.exception("Omnibus document extract failed type=%s", document_type)
+        return []
 
 
 async def _try_typed(
@@ -83,20 +91,24 @@ async def _try_typed(
             temperature=0.0,
         )
     except Exception:
+        logger.exception("Typed document extract failed type=%s", document_type)
         return []
     if not isinstance(out, BaseModel):
         return []
     base = float(rules.get("typed_confidence") or 0.9)
     candidates: list[VaultCandidate] = []
     for field_key, value, evidence in mapper(out):
-        if not evidence or not evidence_grounded(evidence, document_text):
+        span = evidence if evidence_grounded(evidence, document_text) else None
+        if span is None and isinstance(value, str) and evidence_grounded(value, document_text):
+            span = value
+        if not span:
             continue
         candidates.append(
             VaultCandidate(
                 field_key=field_key,
                 value=value,
                 confidence=base,
-                evidence_text=evidence,
+                evidence_text=span,
                 source_type="document",
                 source_reference=document_id,
             )

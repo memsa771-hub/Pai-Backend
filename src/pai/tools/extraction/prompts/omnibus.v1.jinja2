@@ -72,6 +72,8 @@ Hard rules — never invent:
 - attributed_to: "student" unless someone else is speaking or being quoted
   (parent, brother, counselor, friend). Never store another person's belief as the student's.
 - Do not upgrade considering → decided, cheaper → chosen, or "brother thinks" → student thinks.
+- Peer/social pressure (others doing X, outside influence on the goal): memory.observed,
+  fact_type CONSTRAINT. attributed_to is who is influencing. Do not store someone else's wish as application.goals.
 - Set is_correction=true when the text clearly updates a known fact (e.g. marks 847→877, budget 15k→25k).
 - Set requires_confirmation for sensitive fields (passport, DOB, sponsor, finance details).
 - Map to a catalog field_key when one fits. If nothing fits, use field_key memory.observed

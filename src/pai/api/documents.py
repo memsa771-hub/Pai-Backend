@@ -4,6 +4,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy import select
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from pai.services.document_intelligence.verification.service import (
     public_case,
     resolve_case,
 )
+from pai.services.documents.models import DocumentJob
 from pai.services.documents.service import (
     _public_document,
     create_document_upload,
@@ -33,8 +35,8 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 
 class DocumentReviewRequest(BaseModel):
-    acceptCandidateIds: list[str] = Field(default_factory=list)
-    rejectCandidateIds: list[str] = Field(default_factory=list)
+    acceptCandidateIds: list[uuid.UUID] = Field(default_factory=list)
+    rejectCandidateIds: list[uuid.UUID] = Field(default_factory=list)
 
 
 class VerificationResolveRequest(BaseModel):
@@ -159,6 +161,12 @@ async def document_status(
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
     doc = await get_document_owned(session, person.id, document_id)
+    job = await session.scalar(
+        select(DocumentJob)
+        .where(DocumentJob.document_id == doc.id)
+        .order_by(DocumentJob.created_at.desc())
+        .limit(1)
+    )
     return JSONResponse(
         content=success(
             {
@@ -172,6 +180,9 @@ async def document_status(
                 "identityStatus": doc.identity_status,
                 "attentionState": _public_document(doc)["attentionState"],
                 "vaultExtractionPolicy": doc.vault_extraction_policy,
+                "currentStage": job.current_stage if job else None,
+                "jobStatus": job.status if job else None,
+                "lastError": job.last_error if job else None,
             }
         )
     )
@@ -194,10 +205,12 @@ async def review_document(
     session: Annotated[AsyncSession, Depends(get_db)],
     person=Depends(require_onboarding_complete),
 ) -> JSONResponse:
-    accept_ids = [uuid.UUID(x) for x in body.acceptCandidateIds]
-    reject_ids = [uuid.UUID(x) for x in body.rejectCandidateIds]
     await review_document_candidates(
-        session, person, document_id, accept_ids=accept_ids, reject_ids=reject_ids
+        session,
+        person,
+        document_id,
+        accept_ids=body.acceptCandidateIds,
+        reject_ids=body.rejectCandidateIds,
     )
     return JSONResponse(content=success({"message": "Review applied."}))
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
@@ -13,7 +14,7 @@ from pai.llm.gateway import LLMGateway
 from pai.orchestration.schemas import VaultCandidate
 from pai.services.document_intelligence.classification.classifier import classify_document
 from pai.services.document_intelligence.classification.taxonomy import default_type, evidence_eligible
-from pai.services.document_intelligence.config import policy
+from pai.services.document_intelligence.config import policy, taxonomy as di_taxonomy
 from pai.services.document_intelligence.digitization.service import digitize_bytes
 from pai.services.document_intelligence.digitization.schemas import DigitizationResult
 from pai.services.document_intelligence.evidence.authority import source_authority
@@ -123,7 +124,9 @@ async def run_document_analysis(
         job.status = "failed"
         job.last_error = "document missing"
         return
-    person = await session.get(Person, doc.person_id)
+    person = await session.scalar(
+        select(Person).where(Person.id == doc.person_id).options(selectinload(Person.vault))
+    )
     if person is None:
         job.status = "failed"
         job.last_error = "person missing"
@@ -168,9 +171,12 @@ async def run_document_analysis(
             return
 
         _mark_stage(run, job, "classify", doc)
+        filename = version.original_filename if version else doc.original_filename
+        prior = doc.document_type
+        hint = None if prior in set(di_taxonomy().get("generated_types") or ()) else prior
         classified = classify_document(
-            filename=(version.original_filename if version else doc.original_filename),
-            hint=doc.document_type,
+            filename=filename or "",
+            hint=hint,
             source_type=doc.source_type,
             text=text[: int(rules.get("classify_text_chars") or 4000)],
         )
@@ -181,14 +187,8 @@ async def run_document_analysis(
         doc.evidence_eligible = evidence_eligible(
             source_type=doc.source_type, document_type=doc.document_type
         )
-        if not doc.evidence_eligible:
-            doc.status = "ready"
-            doc.lifecycle_status = "active"
-            doc.verification_status = "unverified"
-            run.status = "completed"
-            run.completed_at = datetime.now(UTC)
-            job.status = "completed"
-            return
+        doc.vault_extraction_policy = "extract" if doc.evidence_eligible else "disabled"
+        job.last_error = f"classified:{doc.document_type} file:{filename}"
 
         known = await _known_facts(session, person)
         _mark_stage(run, job, "extract", doc)
@@ -200,6 +200,8 @@ async def run_document_analysis(
             known_facts=known,
             person_id=str(person.id),
         )
+        if not candidates:
+            job.last_error = (job.last_error or "") + f" extract:0 fields type={doc.document_type}"
         subject_field = str(rules.get("subject_field") or "identity.full_name")
         subject_name = _candidate_str(candidates, subject_field)
         date_fields = list((rules.get("normalizers") or {}).get("date") or [])
@@ -309,6 +311,8 @@ async def run_document_analysis(
             )
             fact.reconciliation_status = result.decision
             review = "pending"
+            if result.decision in ("IGNORE_FOR_VAULT", "INSUFFICIENT_EVIDENCE"):
+                review = "ignored"
             if result.decision in ("NEW_SAFE_FACT", "CONFIRMS_EXISTING"):
                 if truncated:
                     pending_left = True

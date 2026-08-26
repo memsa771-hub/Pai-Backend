@@ -45,7 +45,7 @@
     { "needles": ["gmat"], "type": "gmat" },
     { "needles": ["sop", "statement of purpose"], "type": "sop" },
     { "needles": ["personal statement"], "type": "personal_statement" },
-    { "needles": ["lor", "recommendation"], "type": "lor" },
+    { "needles": ["lor", "letter of recommendation", "recommendation letter"], "type": "lor" },
     { "needles": ["bank", "statement"], "type": "bank_statement" },
     { "needles": ["sponsor", "affidavit", "financial"], "type": "sponsorship_letter" },
     { "needles": ["visa"], "type": "visa" },

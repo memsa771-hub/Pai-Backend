@@ -138,7 +138,7 @@ async def create_document_upload(
         original_filename=filename,
         mime_type=mime,
         size_bytes=len(data),
-        status="uploaded" if eligible else "ready",
+        status="uploaded",
         lifecycle_status="draft" if source == "ai_generated" else "active",
     )
     session.add(doc)
@@ -157,16 +157,15 @@ async def create_document_upload(
     session.add(version)
     await session.flush()
     doc.current_version_id = version.id
-    if eligible:
-        session.add(
-            DocumentJob(
-                document_id=doc.id,
-                document_version_id=version.id,
-                person_id=person.id,
-                idempotency_key=f"extract-{version.id}",
-                status="pending",
-            )
+    session.add(
+        DocumentJob(
+            document_id=doc.id,
+            document_version_id=version.id,
+            person_id=person.id,
+            idempotency_key=f"extract-{version.id}",
+            status="pending",
         )
+    )
     await session.commit()
     await session.refresh(doc)
     return doc
@@ -174,12 +173,6 @@ async def create_document_upload(
 
 async def enqueue_reprocess(session: AsyncSession, person_id: uuid.UUID, document_id: uuid.UUID) -> None:
     doc = await get_document_owned(session, person_id, document_id)
-    if not doc.evidence_eligible:
-        raise AuthError(
-            code="EXTRACTION_DISABLED",
-            message="This document is not extracted into the Person Vault.",
-            status_code=400,
-        )
     job = DocumentJob(
         document_id=doc.id,
         document_version_id=doc.current_version_id,
@@ -368,6 +361,21 @@ async def review_document_candidates(
 ) -> None:
     doc = await get_document_owned(session, person.id, document_id)
     reject_ids = reject_ids or []
+    requested = list(dict.fromkeys([*accept_ids, *reject_ids]))
+    if requested:
+        found = await session.scalars(
+            select(DocumentCandidate.id).where(
+                DocumentCandidate.document_id == doc.id,
+                DocumentCandidate.person_id == person.id,
+                DocumentCandidate.id.in_(requested),
+            )
+        )
+        if not list(found.all()):
+            raise AuthError(
+                code="CANDIDATE_NOT_FOUND",
+                message="Those ids are not candidates for this document. Copy ids from GET /documents/{id}/candidates.",
+                status_code=400,
+            )
     if accept_ids and doc.identity_status == "mismatch":
         raise DocumentIdentityUnresolvedError()
     if reject_ids:

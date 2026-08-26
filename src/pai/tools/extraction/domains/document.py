@@ -27,7 +27,10 @@ class DocumentSourceDomain:
         )
         llm_req = request.model_copy(update={"text": llm_text})
         llm = OmnibusLLMExtractor(gateway)
-        llm_cands = await llm.extract(llm_req)
+        try:
+            llm_cands = await llm.extract(llm_req)
+        except Exception:
+            llm_cands = []
         merged = merge_candidates(boosters, llm_cands)
         normalized = normalize_candidates(merged)
         return ExtractionBundle(

@@ -22,7 +22,7 @@ from pai.llm.schemas import LLMMessage
 
 logger = logging.getLogger(__name__)
 
-_BRIEF_MAX_LINES = 10
+_BRIEF_MAX_LINES = 12
 
 
 # ── Template configs ──────────────────────────────────────────────────────────
@@ -178,6 +178,10 @@ Return a JSON object with these keys:
 - "weaknesses": list of student weaknesses (strings)
 - "meets_requirements": object mapping each requirement to true/false/null
 - "notes": brief assessment summary (string, max 3 sentences)
+- "stated_alignment": one of "aligned" | "mismatch" | "possibly_pressured"
+  (pressured = peer pressure or copying others rather than profile fit; mismatch = strengths/constraints point elsewhere)
+- "counselor_recommendation": 1-2 sentences on what you would advise if alignment is not strong; empty string if aligned
+- "alternative_paths": list of related fields or program types that fit strengths + constraints (empty if aligned)
 """
     result = await _llm_json(gateway, system, user, max_tokens=800)
     if not result:
@@ -187,6 +191,9 @@ Return a JSON object with these keys:
             "weaknesses": [],
             "meets_requirements": {},
             "notes": "Assessment unavailable.",
+            "stated_alignment": "unknown",
+            "counselor_recommendation": "",
+            "alternative_paths": [],
             "_error": True,
         }
     return result
@@ -294,26 +301,31 @@ async def build_counselor_brief(
     """
     system = (
         "You produce a concise goal intelligence brief for a counselor. "
-        "Maximum 10 lines. Plain text, no markdown headers. "
-        "Cover: goal, fit assessment, top 2 gaps, top 3 next steps."
+        "Maximum 12 lines. Plain text, no markdown headers. "
+        "Cover: stated goal, fit, whether it matches the student's profile vs constraints/pressure, "
+        "Path 1 counselor recommendation if alignment is weak, Path 2 honor stated goal, "
+        "top 2 gaps, top 3 next steps."
     )
     user = f"""Goal: {goal_title}
 Type: {goal_type}
 
 Overall fit: {assessment.get('overall_fit', 'unknown')}
+Alignment: {assessment.get('stated_alignment', 'unknown')}
 Strengths: {', '.join((assessment.get('strengths') or [])[:3])}
 Weaknesses: {', '.join((assessment.get('weaknesses') or [])[:3])}
+Counselor recommendation: {assessment.get('counselor_recommendation') or '(none)'}
+Alternative paths: {', '.join((assessment.get('alternative_paths') or [])[:4]) or '(none)'}
 Blocking gaps: {', '.join(g['item'] for g in gaps if g.get('blocking'))[:3]}
 Top plan steps: {', '.join(s['step'] for s in plan[:3])}
 
-Write a 5–10 line counselor brief. Be specific and actionable.
+Write a 6–12 line counselor brief. If alignment is mismatch or possibly_pressured, Path 1 must be the counselor rec and Path 2 must keep the student's stated goal. Be specific.
 """
     try:
         messages = [
             LLMMessage(role="system", content=system),
             LLMMessage(role="user", content=user),
         ]
-        resp = await gateway.run(task="goal_intelligence", messages=messages, max_tokens=300, temperature=0.3)
+        resp = await gateway.run(task="goal_intelligence", messages=messages, max_tokens=450, temperature=0.3)
         brief = getattr(resp, "content", None) or ""
         lines = [ln for ln in (brief or "").splitlines() if ln.strip()]
         return "\n".join(lines[:_BRIEF_MAX_LINES])
@@ -322,7 +334,17 @@ Write a 5–10 line counselor brief. Be specific and actionable.
         fit = assessment.get("overall_fit", "unknown")
         blocking = [g["item"] for g in gaps if g.get("blocking")][:2]
         steps = [s["step"] for s in plan[:3]]
+        rec = assessment.get("counselor_recommendation") or ""
+        alts = assessment.get("alternative_paths") or []
+        align = assessment.get("stated_alignment") or ""
         parts = [f"Goal: {goal_title}", f"Fit: {fit}"]
+        if align and align not in ("aligned", "unknown"):
+            parts.append(f"Alignment: {align}")
+        if rec:
+            parts.append("Path 1: " + str(rec)[:180])
+        if alts:
+            parts.append("Also consider: " + "; ".join(str(a) for a in alts[:3]))
+            parts.append("Path 2: honor stated goal inside constraints if they insist.")
         if blocking:
             parts.append("Blocking gaps: " + "; ".join(blocking))
         if steps:

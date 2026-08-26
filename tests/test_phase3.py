@@ -68,7 +68,7 @@ def test_prompt_render_student_conversation():
     system = render_template("system.v1.jinja2")
     assert "PAI" in system
     assert "web_search" in system
-    assert "80 words" in system
+    assert "two paths" in system.lower()
     from pai.services.vault.catalog import extraction_catalog_hint
 
     full = render_intel(

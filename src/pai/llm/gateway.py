@@ -47,6 +47,8 @@ class LLMGateway:
     def _max_tokens_for(self, task: str) -> int:
         if task in ("counseling", "student_conversation"):
             return int(self._settings.llm_counseling_max_tokens)
+        if task in ("document", "document_extract"):
+            return int(self._settings.document_vision_max_tokens)
         return 2048
 
     async def run(

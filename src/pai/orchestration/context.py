@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -37,6 +38,8 @@ class CounselorContext(BaseModel):
     active_goal_brief: str | None = None
     active_goal_status: str | None = None  # ready | partial | pending | failed
     pending_confirmations: list[str] = Field(default_factory=list)
+    career_interest: str | None = None
+    decision_signal: str | None = None
 
     def profile_block(self) -> str:
         lines = []
@@ -64,6 +67,10 @@ class CounselorContext(BaseModel):
                     lines.append(f"  {stripped}")
         elif self.goal:
             lines.append(f"goal: {self.goal}")
+        if self.decision_signal:
+            lines.append(f"decision_signal: {self.decision_signal}")
+        if self.career_interest:
+            lines.append(f"career_interest: {self.career_interest}")
         if self.education:
             lines.append(f"education: {self.education}")
         if self.location:
@@ -84,6 +91,36 @@ class CounselorContext(BaseModel):
                 + "; ".join(self.pending_confirmations[:3])
             )
         return "\n".join(lines) if lines else "(no stored profile yet)"
+
+
+_PRESSURE = re.compile(
+    r"\b("
+    r"peer pressure|social pressure|"
+    r"everyone (?:says|is|wants|does|doing)|"
+    r"people (?:say|think|want)|"
+    r"they want me|"
+    r"someone else(?:'s)?|"
+    r"my (?:friend|friends|classmates?|cousin|cousins|parents?|family|dad|father|mom|mother|uncle|aunt)|"
+    r"parents? (?:want|said)"
+    r")\b",
+    re.I,
+)
+
+
+def _pressure_signal(*, recent: list[dict], facts: list[str], memory: list[str]) -> str | None:
+    blob = " ".join(
+        [
+            *(str(m.get("content") or "") for m in recent if m.get("role") == "user"),
+            *facts,
+            *memory,
+        ]
+    )
+    if not blob.strip() or not _PRESSURE.search(blob):
+        return None
+    return (
+        "Stated goal may reflect peer pressure rather than personal fit. "
+        "Advise on genuine fit and constraints; do not only chase the named program."
+    )
 
 
 _profile_cache: dict[str, tuple[int, dict[str, Any]]] = {}
@@ -244,6 +281,10 @@ async def build_counselor_context(
         active_goal_brief=active_goal_brief,
         active_goal_status=active_goal_status,
         pending_confirmations=pending_confirmations[:5],
+        career_interest=_fact_after(facts, "career interest"),
+        decision_signal=_pressure_signal(
+            recent=recent, facts=known, memory=memory_lines
+        ),
     )
 
 

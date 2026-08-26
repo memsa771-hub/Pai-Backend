@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     llm_timeout_seconds: float = Field(default=60.0, alias="LLM_TIMEOUT_SECONDS")
-    llm_counseling_max_tokens: int = Field(default=400, alias="LLM_COUNSELING_MAX_TOKENS")
+    llm_counseling_max_tokens: int = Field(default=640, alias="LLM_COUNSELING_MAX_TOKENS")
 
     supabase_storage_bucket: str = Field(default="documents", alias="SUPABASE_STORAGE_BUCKET")
     document_max_bytes: int = Field(default=10_485_760, alias="DOCUMENT_MAX_BYTES")

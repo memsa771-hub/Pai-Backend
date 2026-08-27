@@ -60,12 +60,8 @@ async def iter_counselor_tokens(
         settings.llm_counseling_max_tokens,
     )
     if not tools:
-        llm = [_dict_to_llm_message(m) for m in raw_messages]
-        async for delta in gateway.stream(
-            task="student_conversation", messages=llm, max_tokens=max_tokens
-        ):
-            if delta:
-                yield delta
+        async for delta in _yield_student_text(gateway, raw_messages, max_tokens):
+            yield delta
         return
     for round_n in range(max_rounds):
         llm = [_dict_to_llm_message(m) for m in raw_messages]
@@ -104,13 +100,40 @@ async def iter_counselor_tokens(
         text = parsed.reply if parsed is not None else public_reply(response.content)
         if text:
             yield text
-        return
+            return
+        break
+    async for delta in _yield_student_text(gateway, raw_messages, max_tokens):
+        yield delta
+
+
+async def _yield_student_text(
+    gateway: LLMGateway, raw_messages: list[dict[str, Any]], max_tokens: int
+) -> AsyncIterator[str]:
+    """Stream prose; if the stream is empty, one non-stream completion."""
     llm = [_dict_to_llm_message(m) for m in raw_messages]
+    got = False
     async for delta in gateway.stream(
         task="student_conversation", messages=llm, max_tokens=max_tokens
     ):
         if delta:
+            got = True
             yield delta
+    if got:
+        return
+    response = await gateway.run(
+        task="student_conversation", messages=llm, max_tokens=max_tokens
+    )
+    assert isinstance(response, LLMResponse)
+    parsed = _result_from_text(response.content or "")
+    text = parsed.reply if parsed is not None else public_reply(response.content)
+    if not text:
+        text = (response.content or "").strip()
+        if text.startswith("{") or "```" in text:
+            text = ""
+    if text:
+        yield text
+        return
+    yield "I couldn't generate a reply just now. Please send that again."
 
 
 async def _run_tool(

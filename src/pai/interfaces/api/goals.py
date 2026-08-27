@@ -85,8 +85,7 @@ def _serialize_goal(goal: Goal, intel: GoalIntelligence | None = None) -> dict[s
 
 @goals_router.get(
     "",
-    summary="List all goals",
-    description="Returns all non-archived goals for this student, newest first.",
+    summary="List goals",
     responses=_AUTH_ERRORS,
 )
 async def list_student_goals(
@@ -118,7 +117,6 @@ async def list_student_goals(
 @goals_router.get(
     "/active",
     summary="Get the active goal",
-    description="Returns the currently active goal and its intelligence summary for the default conversation.",
     responses=_AUTH_ERRORS,
 )
 async def get_active_goal_endpoint(
@@ -137,7 +135,6 @@ async def get_active_goal_endpoint(
 @goals_router.get(
     "/{goal_id}",
     summary="Goal detail",
-    description="Returns full goal detail including intelligence summary.",
     responses=_AUTH_ERRORS,
 )
 async def get_goal_detail(
@@ -157,10 +154,6 @@ async def get_goal_detail(
 @goals_router.post(
     "/{goal_id}/activate",
     summary="Activate a goal",
-    description=(
-        "Set this goal as the active goal in the student's current conversation. "
-        "Other active goals are paused. Enqueues intelligence if stale."
-    ),
     responses=_AUTH_ERRORS,
 )
 async def activate_goal_endpoint(

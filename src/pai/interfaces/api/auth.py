@@ -121,7 +121,7 @@ async def _person_after_verified_auth(
     "/signup",
     response_model=ApiSuccessResponse[SignupResponseData],
     responses={409: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
-    summary="Register with name, email, and password",
+    summary="Register",
 )
 async def signup(
     body: SignupRequest,
@@ -135,11 +135,7 @@ async def signup(
     "/login",
     response_model=ApiSuccessResponse[LoginResponseData],
     responses={401: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse}},
-    summary="Sign in with email and password",
-    description=(
-        "Returns `data.accessToken`. In Swagger: copy that JWT → **Authorize** → paste "
-        "**without** the word Bearer. Verified users are auto-bootstrapped into Person Vault."
-    ),
+    summary="Login",
 )
 async def login(
     body: LoginRequest,
@@ -155,7 +151,7 @@ async def login(
     "/refresh",
     response_model=ApiSuccessResponse[LoginResponseData],
     responses={401: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse}},
-    summary="Refresh access token using HttpOnly refresh cookie",
+    summary="Refresh token",
 )
 async def refresh_tokens(
     request: Request,
@@ -176,7 +172,7 @@ async def refresh_tokens(
     "/logout",
     response_model=ApiSuccessResponse[MessageData],
     responses={401: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse}},
-    summary="Sign out and revoke refresh token",
+    summary="Logout",
 )
 async def logout(
     request: Request,
@@ -196,7 +192,7 @@ async def logout(
 @router.post(
     "/email-verification/request",
     response_model=ApiSuccessResponse[MessageData],
-    summary="Resend email verification message",
+    summary="Resend verification email",
 )
 async def request_email_verification(
     body: EmailOnlyRequest,
@@ -210,7 +206,7 @@ async def request_email_verification(
     "/email-verification/confirm",
     response_model=ApiSuccessResponse[LoginResponseData],
     responses={400: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse}},
-    summary="Confirm email verification ticket",
+    summary="Confirm email",
 )
 async def confirm_email_verification(
     body: VerificationConfirmRequest,
@@ -226,13 +222,7 @@ async def confirm_email_verification(
     "/session",
     response_model=ApiSuccessResponse[LoginResponseData],
     responses={401: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse}},
-    summary="Create a PAI session from email-verification redirect tokens",
-    description=(
-        "Frontend `/auth/verify-email` reads `#access_token` and `#refresh_token` from the "
-        "Supabase redirect, then POSTs them here. PAI validates the user, bootstraps the "
-        "Person Vault, sets cookies, and returns `nextPath` (`/onboarding` until complete). "
-        "Clear the hash from the browser URL after this call."
-    ),
+    summary="Session from verify-email tokens",
 )
 async def establish_session(
     body: SessionFromTokensRequest,
@@ -247,7 +237,7 @@ async def establish_session(
 @router.post(
     "/password/forgot",
     response_model=ApiSuccessResponse[MessageData],
-    summary="Request password reset email",
+    summary="Forgot password",
 )
 async def forgot_password(
     body: EmailOnlyRequest,
@@ -261,7 +251,7 @@ async def forgot_password(
     "/password/reset",
     response_model=ApiSuccessResponse[MessageData],
     responses={400: {"model": ApiErrorResponse}, 422: {"model": ApiErrorResponse}},
-    summary="Reset password with ticket from email",
+    summary="Reset password",
 )
 async def reset_password(
     body: PasswordResetRequest,
@@ -279,7 +269,7 @@ async def reset_password(
         403: {"model": ApiErrorResponse},
         501: {"model": ApiErrorResponse},
     },
-    summary="Change password for authenticated user",
+    summary="Change password",
 )
 async def change_password(
     body: PasswordChangeRequest,
@@ -297,8 +287,7 @@ async def change_password(
     "/me",
     response_model=ApiSuccessResponse[MeResponseData],
     responses={401: {"model": ApiErrorResponse}},
-    summary="Get current user profile",
-    description="Use this after Authorize to confirm your token works (expect 200).",
+    summary="Get current user",
 )
 async def me(
     service: Annotated[AuthService, Depends(get_pai)],
@@ -341,7 +330,7 @@ async def me(
     "/account",
     response_model=ApiSuccessResponse[MessageData],
     responses={401: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
-    summary="Delete authenticated user account",
+    summary="Delete account",
 )
 async def delete_account(
     request: Request,

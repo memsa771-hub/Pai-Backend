@@ -23,11 +23,7 @@ class VaultFieldPatch(BaseModel):
 
 @router.get(
     "",
-    summary="Whole Person Vault",
-    description=(
-        "Filled fields, empty optional gaps, still-required criticals, "
-        "typed records, and completion %. Query includeSensitive=true to unmask."
-    ),
+    summary="Get Person Vault",
 )
 async def get_vault(
     session: Annotated[AsyncSession, Depends(get_db)],

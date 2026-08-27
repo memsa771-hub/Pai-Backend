@@ -77,6 +77,13 @@ class DeepSeekProvider:
         choice = data["choices"][0]
         message = choice.get("message") or {}
         content = message.get("content") or ""
+        if not str(content).strip():
+            content = message.get("reasoning_content") or message.get("reasoning") or ""
+        if isinstance(content, list):
+            content = "".join(
+                (part.get("text") or "") if isinstance(part, dict) else str(part)
+                for part in content
+            )
         raw_calls = message.get("tool_calls") or []
         tool_calls = [_parse_tool_call(tc) for tc in raw_calls]
         return LLMResponse(

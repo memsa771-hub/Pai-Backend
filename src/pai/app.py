@@ -21,7 +21,7 @@ from pai.interfaces.workers.documents import document_worker_loop
 from pai.interfaces.workers.goals import goal_worker_loop
 from pai.interfaces.workers.intelligence import intelligence_worker_loop
 from pai.platform.llm.gateway import LLMGateway
-from pai.interfaces.api.openapi import API_DESCRIPTION, OPENAPI_TAGS, customize_openapi_schema
+from pai.interfaces.api.openapi import OPENAPI_TAGS, customize_openapi_schema
 from pai.intelligences.counselor.checkpoint import close_graph_checkpointer, init_graph_checkpointer
 from pai.intelligences.counselor.prompts import validate_prompt_templates
 from pai.platform.security.auth.supabase import SupabaseAuthProvider
@@ -99,7 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Placement AI (PAI)",
-        description=API_DESCRIPTION,
+        description="",
         version="0.2.0",
         lifespan=lifespan,
         openapi_tags=OPENAPI_TAGS,
@@ -109,11 +109,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         swagger_ui_parameters={
             "persistAuthorization": True,
             "displayRequestDuration": True,
-            "filter": True,
             "tryItOutEnabled": True,
             "docExpansion": "list",
-            "defaultModelsExpandDepth": 1,
-            "syntaxHighlight.theme": "monokai",
+            "defaultModelsExpandDepth": -1,
+            "filter": True,
         },
     )
     app.state.settings = app_settings
@@ -129,7 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         schema = get_openapi(
             title=app.title,
             version=app.version,
-            description=app.description,
+            description="",
             routes=app.routes,
             tags=OPENAPI_TAGS,
         )
@@ -180,7 +179,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/health/live",
         tags=["health"],
         summary="Liveness probe",
-        description="Process is up. No auth required.",
     )
     async def health_live() -> JSONResponse:
         return JSONResponse(content=success({"status": "live"}))
@@ -189,7 +187,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/health/ready",
         tags=["health"],
         summary="Readiness probe",
-        description="Auth provider reachable. No auth required.",
     )
     async def health_ready(request: Request) -> JSONResponse:
         provider: SupabaseAuthProvider = request.app.state.auth_provider

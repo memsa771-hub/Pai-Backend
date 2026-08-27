@@ -5,129 +5,39 @@ from __future__ import annotations
 from typing import Any
 
 OPENAPI_TAGS: list[dict[str, str]] = [
-    {
-        "name": "health",
-        "description": "Liveness and readiness probes (no auth).",
-    },
-    {
-        "name": "auth",
-        "description": (
-            "Sign up, login, refresh, and account recovery. "
-            "Signup collects full name, email, password, and confirm password, "
-            "then emails a verification link to the frontend callback. "
-            "After the click, `POST /auth/session` with the hash tokens and follow `nextPath`. "
-            "**Swagger:** `POST /auth/login` → copy `data.accessToken` → Authorize."
-        ),
-    },
-    {
-        "name": "account",
-        "description": "Destructive account operations (authenticated).",
-    },
-    {
-        "name": "person",
-        "description": "Student identity + typed profile resources (education, skills, goals, …).",
-    },
-    {
-        "name": "onboarding",
-        "description": (
-            "Choose the form (`POST /onboarding`) or upload a CV (`POST /onboarding/cv`). "
-            "CV upload extracts the profile and marks onboarding complete — no extra fields. "
-            "Chat, later documents, and updates enrich the same Vault. "
-            "Signup and login never mark onboarding complete."
-        ),
-    },
-    {
-        "name": "vault",
-        "description": (
-            "Person Vault — PAI's structured memory of the student. "
-            "**`GET /api/v1/vault`** returns filled, empty, and still-required fields. "
-            "Chat/CV extraction writes here; AgentSpan holds unstructured insights only."
-        ),
-    },
-    {
-        "name": "chat",
-        "description": (
-            "One counselor per student. "
-            "`POST /api/v1/chat` sends a message. "
-            "`GET /api/v1/chat/messages` loads the transcript (paginated). "
-            "Empty threads open with a Vault-grounded greeting; live facts use Tavily."
-        ),
-    },
-    {
-        "name": "documents",
-        "description": "Private document upload, extraction jobs, and human review.",
-    },
+    {"name": "health", "description": "Liveness and readiness."},
+    {"name": "auth", "description": "Signup, login, session."},
+    {"name": "account", "description": "Delete account."},
+    {"name": "onboarding", "description": "Starting profile or CV."},
+    {"name": "person", "description": "Identity and typed records."},
+    {"name": "vault", "description": "Structured student facts."},
+    {"name": "chat", "description": "Counselor turn and history."},
+    {"name": "documents", "description": "Upload, extract, review."},
+    {"name": "goals", "description": "Pursuits and active goal."},
 ]
 
-API_DESCRIPTION = """
-## Placement AI (PAI) API
+API_DESCRIPTION = ""
 
-Persistent student counselor: **Person Vault** (structured truth) + conversation + semantic memory.
-Agents reason; deterministic services write trusted data. LLM provider is replaceable (DeepSeek today).
-
-Onboarding seeds a **small starting profile**. The Vault grows from **chat extraction**, **CV/documents**, and later updates — not from a long onboarding form.
-
----
-
-### Swagger quick start (local testing)
-
-1. Call **`POST /api/v1/auth/login`** with a **verified** email/password.
-2. Copy **`data.accessToken`** only (the long `eyJ…` string).
-3. Click **Authorize** (top right) → paste the token **without** the word `Bearer`.
-4. Swagger adds `Bearer` for you. Adding it twice causes `401`.
-5. Call **`GET /api/v1/auth/me`** — must return 200 before chat.
-6. If `data.onboardingCompleted` is false, `GET /api/v1/onboarding` then either `POST /api/v1/onboarding` (form) or `POST /api/v1/onboarding/cv` (CV unlocks chat immediately). Deeper profile facts come from chat.
-7. Call **`GET /api/v1/chat/messages`** then **`POST /api/v1/chat`** with a message.
-
-Login auto-bootstraps the Person Vault for verified users. New users must finish onboarding before counselor chat.
-
-### Auth model
-
-| Credential | Where | Purpose |
-|------------|--------|---------|
-| Access token | `Authorization: Bearer <token>` | API calls (short-lived) |
-| Refresh token | HttpOnly cookie `pai_refresh_token` | Silent refresh |
-| CSRF | Cookie + `X-CSRF-Token` header | Required on refresh/logout |
-
-Never put secrets in query strings. Never commit real tokens.
-
-### Envelope
-
-Success: `{ "success": true, "data": { … } }`  
-Error: `{ "success": false, "error": { "code": "…", "message": "…" } }`
-""".strip()
-
-
-BEARER_DESCRIPTION = (
-    "Paste **only** `data.accessToken` from `POST /api/v1/auth/login` "
-    "(the `eyJ…` JWT). Do **not** type the word Bearer — Swagger adds it automatically."
-)
+BEARER_DESCRIPTION = "Paste data.accessToken from login. Do not type Bearer."
 
 
 def customize_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    info = schema.setdefault("info", {})
+    info["description"] = ""
+    info.pop("summary", None)
+
     components = schema.setdefault("components", {})
     schemes = components.setdefault("securitySchemes", {})
 
-    # Normalize FastAPI's auto-generated bearer scheme for clearer Swagger UX.
     for key, value in list(schemes.items()):
         if not isinstance(value, dict):
             continue
         if value.get("type") == "http" and str(value.get("scheme", "")).lower() == "bearer":
             value["bearerFormat"] = "JWT"
             value["description"] = BEARER_DESCRIPTION
-            # Prefer a stable name in the UI.
             if key != "BearerAuth":
                 schemes["BearerAuth"] = value
-                # Keep old key pointing at same for refs already generated
             break
 
-    if "BearerAuth" in schemes:
-        schema["security"] = [{"BearerAuth": []}]
-
-    # Public routes should not require a lock in the global security sense —
-    # FastAPI still marks individual ops via dependencies; global security is a hint.
-    # Clear global and rely on per-operation security from HTTPBearer dependencies.
-    # Actually setting global security makes ALL ops need auth including login — bad.
     schema.pop("security", None)
-
     return schema

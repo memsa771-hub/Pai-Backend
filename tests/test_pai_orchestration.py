@@ -250,6 +250,48 @@ def test_tool_loop_reuses_plain_reply_without_second_llm():
     assert out.task_proposals == []
 
 
+@pytest.mark.asyncio
+async def test_empty_tool_completion_falls_back_to_prose():
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from pai.intelligences.counselor.counselor_graph import iter_counselor_tokens
+    from pai.intelligences.counselor.registry import build_turn_registry
+    from pai.intelligences.counselor.tooling import ToolContext
+    from pai.platform.llm.schemas import LLMResponse
+
+    class FakeGateway:
+        async def run(self, **kwargs):
+            if kwargs.get("tools"):
+                return LLMResponse(content="", provider="deepseek", model="x")
+            return LLMResponse(
+                content="Columbia MS is competitive; I can map a path from your profile.",
+                provider="deepseek",
+                model="x",
+            )
+
+        async def stream(self, **kwargs):
+            if False:
+                yield ""
+
+    settings = SimpleNamespace(counselor_max_tool_rounds=1, llm_counseling_max_tokens=400)
+    chunks: list[str] = []
+    async for delta in iter_counselor_tokens(
+        gateway=FakeGateway(),
+        settings=settings,
+        prompt_vars={"current_message": "I want MS in columbia", "profile_block": "", "recent_turns": []},
+        registry=build_turn_registry(enable_web_search=True),
+        tool_ctx=ToolContext(
+            settings=settings, memory=MagicMock(), person_id="p", conversation_id="c"
+        ),
+        enable_tools=True,
+    ):
+        chunks.append(delta)
+    text = "".join(chunks)
+    assert "Columbia" in text
+    assert text.strip() != ""
+
+
 def test_counselor_json_preamble_does_not_leak_into_reply():
     from pai.intelligences.counselor.counselor_graph import _result_from_text
 

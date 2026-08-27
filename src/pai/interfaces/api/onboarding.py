@@ -31,12 +31,6 @@ def _svc(settings: Settings) -> OnboardingService:
     "",
     responses=_ONBOARDING_ERRORS,
     summary="Get onboarding status",
-    description=(
-        "Incomplete: form catalog (`choices`, `requiredFields`, `enums`). "
-        "Country dropdowns use `enums.countries` once. "
-        "Complete: compact status only (`onboardingCompleted`, `nextPath`, `identity`). "
-        "Signup and login never mark onboarding complete."
-    ),
 )
 async def get_onboarding(
     session: Annotated[AsyncSession, Depends(get_db)],
@@ -50,13 +44,7 @@ async def get_onboarding(
 @router.post(
     "",
     responses=_ONBOARDING_ERRORS,
-    summary="Submit starting onboarding profile",
-    description=(
-        "Accepts a small starting profile in one request. "
-        "Returns compact status (`onboardingCompleted`, `nextPath`, `identity`) — "
-        "not the form catalog. Dropdowns come from GET /onboarding. "
-        "Idempotent. CV users should POST /onboarding/cv instead."
-    ),
+    summary="Submit starting profile",
 )
 async def submit_onboarding(
     body: OnboardingSubmit,
@@ -71,12 +59,7 @@ async def submit_onboarding(
 @router.post(
     "/cv",
     responses=_ONBOARDING_ERRORS,
-    summary="Upload CV/PDF for profile extraction",
-    description=(
-        "Extracts the CV into the Person Vault and **marks onboarding complete**. "
-        "Returns compact status, not the form catalog. Chat unlocks immediately. "
-        "Upload a text-based PDF or DOCX (not a scanned image)."
-    ),
+    summary="Complete onboarding with a CV",
 )
 async def upload_onboarding_cv(
     request: Request,

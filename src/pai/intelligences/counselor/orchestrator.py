@@ -405,7 +405,12 @@ class PAIOrchestrator:
             extra_note=str(state.get("attachment_note") or ""),
         )
         state["assistant_result"] = result
-        state["assistant_reply"] = public_reply(result.reply) or (result.reply or "")
+        reply = public_reply(result.reply) or (result.reply or "").strip()
+        if not reply or reply.startswith("{") or "```" in reply:
+            reply = ""
+        state["assistant_reply"] = reply
+        if not state["assistant_reply"]:
+            logger.warning("Counselor returned empty prose; student will see a blank reply")
         state["task_proposals"] = result.task_proposals
         prior_trace = list(state.get("tool_trace") or [])
         prior_trace.extend(self._conversation_agent.last_tool_trace or [])

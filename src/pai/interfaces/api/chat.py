@@ -38,31 +38,14 @@ async def _person_conversation(session, person, settings):
 
 
 class ChatRequest(BaseModel):
-    """One counselor turn for this student. Always continues the same PAI thread."""
-
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "message": "Can you check whether this transcript is enough for TUM?",
-                    "attachmentIds": ["11111111-1111-1111-1111-111111111111"],
-                }
-            ]
+            "examples": [{"message": "I want MS CS in Germany"}]
         }
     )
 
-    message: str = Field(
-        ...,
-        min_length=1,
-        max_length=16000,
-        description="Student message to PAI.",
-        examples=["I want MS CS in Germany under 20000 EUR"],
-    )
-    attachmentIds: list[uuid.UUID] = Field(
-        default_factory=list,
-        max_length=8,
-        description="Document Vault ids from POST /documents. Files are not uploaded through chat.",
-    )
+    message: str = Field(..., min_length=1, max_length=16000, examples=["I want MS CS in Germany"])
+    attachmentIds: list[uuid.UUID] = Field(default_factory=list, max_length=8)
 
 
 _AUTH_ERRORS = {
@@ -90,13 +73,6 @@ def _sse(event: str, data: object) -> str:
     "/chat",
     status_code=status.HTTP_200_OK,
     summary="Send a counselor message",
-    description=(
-        "Primary PAI turn. Requires `Authorization: Bearer <accessToken>`.\n\n"
-        "Returns the reply as soon as the counselor finishes. Vault/memory "
-        "extraction is queued durably per student (`intelligencePending`).\n\n"
-        "Prefer `POST /api/v1/chat/stream` for token-by-token typing.\n\n"
-        "**Swagger:** Authorize with `data.accessToken` only (no `Bearer` prefix)."
-    ),
     responses=_AUTH_ERRORS,
 )
 async def chat(
@@ -129,12 +105,6 @@ async def chat(
 @chat_router.post(
     "/chat/stream",
     summary="Stream a counselor reply (SSE)",
-    description=(
-        "Same turn as `/chat`, but tokens are sent as `event: token` as they "
-        "arrive. `event: reply` has the saved message id. `event: done` follows "
-        "immediately (`intelligencePending` may be true); Vault extraction "
-        "is queued durably per student."
-    ),
     responses=_AUTH_ERRORS,
 )
 async def chat_stream(
@@ -252,10 +222,6 @@ async def chat_stream(
 @chat_router.get(
     "/chat/messages",
     summary="Load the counselor transcript",
-    description=(
-        "The one PAI history for this student. Omit `offset` to get the latest "
-        "`limit` messages (chat window). Pass `offset=0` to read from the start."
-    ),
     responses=_AUTH_ERRORS,
 )
 async def get_chat_messages(

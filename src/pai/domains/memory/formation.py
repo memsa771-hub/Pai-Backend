@@ -26,6 +26,8 @@ Action = Literal["insert", "strengthen", "supersede", "noop"]
 
 _SLUG = re.compile(r"[^a-z0-9]+")
 _LIVE = ("active", "candidate")
+# Unverified claims stay recallable but rank below settled Vault truth.
+_CLAIM_RANK_PENALTY = 0.5
 
 
 @dataclass
@@ -184,8 +186,23 @@ def apply_draft(
     return "supersede", incoming, superseded
 
 
+def is_unverified_claim(record: MemoryRecord) -> bool:
+    """A value the gates refused because it contradicts an active Vault value.
+
+    Written by drafts_from_turn(conflicts=...) under a `claim:` key so the
+    counselor can raise it. It is an open question, never settled truth.
+    """
+    return (record.memory_key or "").startswith("claim:")
+
+
 def format_for_recall(record: MemoryRecord, *, mode: str = "fast") -> str:
-    head = f"[{record.kind}/{record.status} ×{record.recurrence}] {record.content}"
+    if is_unverified_claim(record):
+        head = (
+            f"[UNCONFIRMED CLAIM — contradicts the stored value; "
+            f"ask the student, do not treat as true] {record.content}"
+        )
+    else:
+        head = f"[{record.kind}/{record.status} ×{record.recurrence}] {record.content}"
     extra: list[str] = []
     if record.previous_content:
         extra.append(f"previously: {record.previous_content[:160]}")
@@ -217,13 +234,19 @@ def rank_score(query: str, record: MemoryRecord, *, now: datetime | None = None)
     if jaccard <= 0:
         return -1.0
     recency = _recency(record.last_confirmed_at, now)
-    return (
+    score = (
         0.40 * jaccard
         + 0.25 * record.importance
         + 0.20 * record.stability
         + 0.10 * recency
         + 0.05 * record.confidence
     )
+    # An unverified claim must never outrank the Vault-backed fact it contradicts.
+    # It stays recallable (the counselor should ask about it) but ranks below
+    # settled truth competing for the same recall slots.
+    if is_unverified_claim(record):
+        score *= _CLAIM_RANK_PENALTY
+    return score
 
 
 async def apply_memory_drafts(

@@ -176,11 +176,12 @@ class PAIOrchestrator:
         if self._memory:
             self._memory.hydrate_conversation(pack.recent_messages)
         if semantic:
+            # recall() already capped this at SEMANTIC_MEMORY_MAX_RESULTS.
             pack.relevant_memory = [
                 line.strip(" -")
                 for line in str(semantic).splitlines()
                 if line.strip() and not line.strip().startswith("Relevant context")
-            ][:5]
+            ]
         from pai.domains.documents.service import attachment_note_for_message
 
         note = await attachment_note_for_message(

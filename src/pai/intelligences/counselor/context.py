@@ -82,7 +82,7 @@ class CounselorContext(BaseModel):
         if self.universities:
             lines.append("universities: " + "; ".join(self.universities[:6]))
         if self.relevant_memory:
-            lines.append("memory: " + " | ".join(self.relevant_memory[:5]))
+            lines.append("memory: " + " | ".join(self.relevant_memory))
         if self.missing_critical_fields:
             lines.append("gaps: " + ", ".join(self.missing_critical_fields[:4]))
         if self.pending_confirmations:
@@ -275,7 +275,9 @@ async def build_counselor_context(
         known_facts=known[:16],
         missing_critical_fields=missing,
         recent_messages=recent,
-        relevant_memory=memory_lines[:5],
+        # Recall already returns at most SEMANTIC_MEMORY_MAX_RESULTS; a second
+        # hardcoded slice here silently discarded half of what was configured.
+        relevant_memory=memory_lines,
         critical_verifications=verifications,
         active_goal_id=active_goal_id,
         active_goal_brief=active_goal_brief,

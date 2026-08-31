@@ -100,12 +100,32 @@ def test_substantive_messages_trigger_extraction():
     assert should_extract_facts("I live in Dubai and want NYU Abu Dhabi") is True
     assert should_extract_facts("I live in Berlin") is True
     assert should_extract_facts("I moved last month") is True
-    assert should_extract_facts("What should I do next?") is False
-    assert should_extract_facts("What IELTS score do I need?") is False
     assert should_extract_facts("Hello") is False
     assert should_extract_facts("help me") is False
     assert should_extract_facts("ok go") is False
     assert should_extract_facts("COkay lock in USTC and STJU") is True
+
+
+def test_questions_carrying_facts_still_extract():
+    """A question is not proof the turn is factless.
+
+    These asked for extraction to be skipped, which dropped the whole
+    intelligence job: no Vault write, no goal capture, no memory formation.
+    Counseling context arrives inside questions, so the extractor — not a
+    regex — decides whether there is anything to keep.
+    """
+    assert should_extract_facts(
+        "What scholarships can I get? My mother earns 40k a month."
+    ) is True
+    assert should_extract_facts("What should I do next?") is True
+    assert should_extract_facts("What IELTS score do I need?") is True
+
+
+def test_trivial_turns_still_skip_extraction():
+    assert should_extract_facts("What do you mean?") is False
+    assert should_extract_facts("can you explain") is False
+    assert should_extract_facts("thanks") is False
+    assert should_extract_facts("") is False
 
 
 def test_agents_do_not_call_each_other():

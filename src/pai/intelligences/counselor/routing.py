@@ -96,16 +96,21 @@ def classify_turn(message: str) -> str:
 
 
 def should_extract_facts(message: str) -> bool:
-    """Extract statements. Skip greetings, acknowledgements, and advice-only questions."""
+    """Extract unless the turn is provably trivial.
+
+    Deny-list, not allow-list: a question can still carry the facts a counselor
+    must remember ("what scholarships can I get? my mother earns 40k"), and a
+    regex cannot tell those apart from a pure advice question. Volume is safe
+    here — extraction runs in the deferred intelligence job (never in the reply
+    path), the omnibus extractor returns no candidates when there is nothing to
+    find, and the kernel gates still decide what may reach the Vault.
+    """
     text = (message or "").strip()
     if len(text) < 2:
         return False
     if _GREETING.match(text):
         return False
     if _EXPLAIN_ONLY.match(text):
-        return False
-    asking = "?" in text or bool(_ADVICE_LEAD.match(text))
-    if asking and not _has_profile_signal(text):
         return False
     return True
 

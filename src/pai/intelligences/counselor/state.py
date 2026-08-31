@@ -47,4 +47,5 @@ class PAIState(TypedDict, total=False):
     tool_trace: list[dict[str, Any]]
     goal_updated: bool
     attachment_note: str
+    discovery_top_field: str | None
     _session_bound: Any

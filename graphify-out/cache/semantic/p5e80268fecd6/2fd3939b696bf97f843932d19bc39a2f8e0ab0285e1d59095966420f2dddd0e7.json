@@ -1,0 +1,1 @@
+{"nodes": [{"id": "goal_intelligence_pipeline", "label": "Goal Intelligence Pipeline", "file_type": "concept", "source_file": "docs/goal-centric-status.md", "rationale": "Background flow: Research -> Assessment -> Gaps -> Planning -> Counselor Brief."}], "edges": [], "hyperedges": []}

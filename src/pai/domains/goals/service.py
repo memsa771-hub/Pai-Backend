@@ -104,6 +104,32 @@ def _anchor_match_score(goal: Goal, anchors: dict[str, Any]) -> float:
     return min(score, 1.0)
 
 
+def _has_hard_conflict(goal: Goal, anchors: dict[str, Any]) -> bool:
+    """True only when a stable anchor is present on both sides and disagrees.
+
+    Missing information is never a conflict — only two explicitly stated,
+    differing values for the same dimension count as one. This is what lets a
+    vague rephrase ("I want to pursue my masters", "get into a German
+    university") keep reinforcing an existing goal ("MS in Germany") instead
+    of spawning a duplicate Goal row, while a genuinely different pursuit
+    (different country/degree/role stated explicitly) is still caught.
+    """
+    incoming_type = anchors.get("goal_type")
+    if incoming_type and goal.goal_type != incoming_type:
+        return True
+    pairs: list[tuple[str | None, str | None]] = [
+        (goal.target_country, anchors.get("target_country")),
+        (goal.degree_level, anchors.get("degree_level")),
+        (goal.program, anchors.get("program")),
+        (goal.role, anchors.get("role")),
+        (goal.target_company, anchors.get("target_company")),
+    ]
+    return any(
+        existing and incoming and _norm(existing) != _norm(incoming)
+        for existing, incoming in pairs
+    )
+
+
 def _assert_no_vault_keys(anchors: dict[str, Any]) -> None:
     bad = {k for k in anchors if k in _VAULT_ONLY_KEYS}
     if bad:
@@ -458,8 +484,17 @@ def goal_to_public(goal: Goal | None) -> dict[str, Any] | None:
 
 
 async def goal_fact_lines(session: AsyncSession, person_id: uuid.UUID) -> list[str]:
-    """Counselor-facing current/previous goal lines. Goal domain is the source of truth."""
+    """Counselor-facing goal lines. Goal domain is the source of truth.
+
+    A non-current Goal row is only ever described as "previous ... do not
+    keep executing" when it was genuinely superseded (lifecycle PAUSED).
+    Draft/secondary rows are surfaced separately and clearly labeled instead
+    of being lumped in as "previous". A row whose title is really the same
+    pursuit as the current goal (leftover duplicate data) is never shown at
+    all, to avoid resurfacing pre-fix duplicates as noise.
+    """
     current = await get_active_goal(session, person_id)
+    current_key = _norm(current.title) if current is not None else None
     others = [
         g
         for g in await list_goals(session, person_id, include_archived=True)
@@ -468,7 +503,21 @@ async def goal_fact_lines(session: AsyncSession, person_id: uuid.UUID) -> list[s
     lines: list[str] = []
     if current is not None:
         lines.append(f"Current goal ({current.goal_type}): {current.title}")
-    if others:
-        prev = others[0]
-        lines.append(f"Previous goal: {prev.title} — do not keep executing this plan")
+
+    seen_keys: set[str] = {current_key} if current_key else set()
+    paused_shown = False
+    exploring_shown = 0
+    for g in others:
+        key = _norm(g.title)
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        if g.lifecycle_status == LIFECYCLE_PAUSED and not paused_shown:
+            lines.append(
+                f"Previous goal: {g.title} — superseded, do not keep executing this plan"
+            )
+            paused_shown = True
+        elif g.lifecycle_status != LIFECYCLE_ARCHIVED and exploring_shown < 2:
+            lines.append(f"Secondary/exploring goal: {g.title}")
+            exploring_shown += 1
     return lines

@@ -1,0 +1,6 @@
+C:\Users\musaw\OneDrive\Desktop\Pai-Backend\DEVELOPER.md
+C:\Users\musaw\OneDrive\Desktop\Pai-Backend\README.md
+C:\Users\musaw\OneDrive\Desktop\Pai-Backend\docker-compose.yml
+C:\Users\musaw\OneDrive\Desktop\Pai-Backend\docs\goal-centric-status.md
+C:\Users\musaw\OneDrive\Desktop\Pai-Backend\docs\onboarding-fields.md
+C:\Users\musaw\OneDrive\Desktop\Pai-Backend\workflow.md

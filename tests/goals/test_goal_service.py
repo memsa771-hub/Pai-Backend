@@ -17,11 +17,15 @@ import pytest
 from pai.domains.goals.service import (
     _assert_no_vault_keys,
     _anchor_match_score,
+    _has_hard_conflict,
     find_matching_goal,
     create_goal,
     update_goal_anchors,
     activate_goal,
+    goal_fact_lines,
     LIFECYCLE_ACTIVE,
+    LIFECYCLE_ARCHIVED,
+    LIFECYCLE_DRAFT,
     LIFECYCLE_PAUSED,
     INTEL_STALE,
     VAULT_FIELDS_THAT_AFFECT_GOALS,
@@ -83,6 +87,42 @@ def test_anchor_match_different_type_returns_zero():
     goal = _make_goal(goal_type="job")
     anchors = {"goal_type": "admission", "target_country": "DE"}
     assert _anchor_match_score(goal, anchors) == 0.0
+
+
+# ── Hard-conflict compatibility check ─────────────────────────────────────────
+# Missing anchors must never register as a conflict — only two explicitly
+# stated, differing values for the same dimension do.
+
+
+def test_no_conflict_when_incoming_anchors_are_a_subset():
+    """A vague rephrase with fewer anchors is compatible, not conflicting."""
+    goal = _make_goal(goal_type="admission", target_country="DE", degree_level="ms")
+    anchors = {"goal_type": "admission"}  # country/degree omitted, not contradicted
+    assert _has_hard_conflict(goal, anchors) is False
+
+
+def test_no_conflict_when_anchors_fully_missing_on_both_sides():
+    goal = _make_goal(goal_type="admission", target_country=None, degree_level=None)
+    anchors = {"goal_type": "admission"}
+    assert _has_hard_conflict(goal, anchors) is False
+
+
+def test_conflict_when_country_explicitly_differs():
+    goal = _make_goal(goal_type="admission", target_country="DE", degree_level="ms")
+    anchors = {"goal_type": "admission", "target_country": "CN", "degree_level": "ms"}
+    assert _has_hard_conflict(goal, anchors) is True
+
+
+def test_conflict_when_degree_level_explicitly_differs():
+    goal = _make_goal(goal_type="admission", target_country="DE", degree_level="ms")
+    anchors = {"goal_type": "admission", "target_country": "DE", "degree_level": "phd"}
+    assert _has_hard_conflict(goal, anchors) is True
+
+
+def test_conflict_when_goal_type_differs():
+    goal = _make_goal(goal_type="admission")
+    anchors = {"goal_type": "job"}
+    assert _has_hard_conflict(goal, anchors) is True
 
 
 # ── GoalService operations (mocked session) ───────────────────────────────────
@@ -188,3 +228,82 @@ def test_vault_fields_affect_admission_goals():
 def test_vault_fields_ielts_not_in_map():
     """IELTS is a Vault key — it routes via test_scores, not ielts itself."""
     assert "ielts" not in VAULT_FIELDS_THAT_AFFECT_GOALS
+
+
+# ── goal_fact_lines — counselor-facing current/previous/secondary lines ──────
+
+
+def _row(title, lifecycle_status, goal_type="admission"):
+    row = MagicMock(spec=Goal)
+    row.id = uuid.uuid4()
+    row.title = title
+    row.lifecycle_status = lifecycle_status
+    row.goal_type = goal_type
+    return row
+
+
+@pytest.mark.asyncio
+async def test_goal_fact_lines_only_labels_paused_goal_as_previous(mock_session, person_id):
+    current = _row("MS Computer Science in Germany", LIFECYCLE_ACTIVE)
+    paused = _row("MS in China", LIFECYCLE_PAUSED)
+    with patch(
+        "pai.domains.goals.service.get_active_goal", new=AsyncMock(return_value=current)
+    ), patch(
+        "pai.domains.goals.service.list_goals",
+        new=AsyncMock(return_value=[current, paused]),
+    ):
+        lines = await goal_fact_lines(mock_session, person_id)
+    assert any(line.startswith("Current goal") for line in lines)
+    assert any(
+        line.startswith("Previous goal: MS in China") and "do not keep executing" in line
+        for line in lines
+    )
+
+
+@pytest.mark.asyncio
+async def test_goal_fact_lines_does_not_mislabel_draft_as_previous(mock_session, person_id):
+    """A draft/secondary goal must never be rendered with 'do not keep
+    executing this plan' — that phrasing is reserved for genuinely paused
+    (superseded) goals."""
+    current = _row("MS in Germany", LIFECYCLE_ACTIVE)
+    draft = _row("SWE internship in Dubai", LIFECYCLE_DRAFT, goal_type="internship")
+    with patch(
+        "pai.domains.goals.service.get_active_goal", new=AsyncMock(return_value=current)
+    ), patch(
+        "pai.domains.goals.service.list_goals",
+        new=AsyncMock(return_value=[current, draft]),
+    ):
+        lines = await goal_fact_lines(mock_session, person_id)
+    assert not any("do not keep executing" in line for line in lines)
+    assert any(line.startswith("Secondary/exploring goal: SWE internship") for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_goal_fact_lines_dedupes_same_title_as_current(mock_session, person_id):
+    """A leftover duplicate row with the same (normalized) title as the
+    current goal must never resurface as noise."""
+    current = _row("MS in German university", LIFECYCLE_ACTIVE)
+    duplicate = _row("  ms in german university  ", LIFECYCLE_PAUSED)
+    with patch(
+        "pai.domains.goals.service.get_active_goal", new=AsyncMock(return_value=current)
+    ), patch(
+        "pai.domains.goals.service.list_goals",
+        new=AsyncMock(return_value=[current, duplicate]),
+    ):
+        lines = await goal_fact_lines(mock_session, person_id)
+    assert len(lines) == 1
+    assert lines[0].startswith("Current goal")
+
+
+@pytest.mark.asyncio
+async def test_goal_fact_lines_ignores_archived_goals(mock_session, person_id):
+    current = _row("MS in Germany", LIFECYCLE_ACTIVE)
+    archived = _row("Old bootcamp goal", LIFECYCLE_ARCHIVED)
+    with patch(
+        "pai.domains.goals.service.get_active_goal", new=AsyncMock(return_value=current)
+    ), patch(
+        "pai.domains.goals.service.list_goals",
+        new=AsyncMock(return_value=[current, archived]),
+    ):
+        lines = await goal_fact_lines(mock_session, person_id)
+    assert len(lines) == 1

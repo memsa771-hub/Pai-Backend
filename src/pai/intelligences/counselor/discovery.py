@@ -12,10 +12,12 @@ mirroring the style of `rank_score()` in `domains/memory/formation.py`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from pai.domains.student.vault.catalog import VAULT_CATALOG, CatalogField, Priority
+from pai.intelligences.counselor.profile_depth import DepthGap
 
 _PRIORITY_WEIGHT: dict[Priority, float] = {"C": 1.0, "I": 0.6, "E": 0.3}
 
@@ -104,6 +106,11 @@ class DiscoveryCandidate:
     section: str
     score: float
     reasons: dict[str, float] = field(default_factory=dict)
+    # "field" = a missing catalog field; "depth" = a have-it-but-shallow gap
+    # (e.g. an earlier degree) surfaced by profile_depth.py.
+    kind: str = "field"
+    label: str | None = None
+    reason_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -172,11 +179,47 @@ def score_field(
     )
 
 
+def score_depth_gap(
+    gap: DepthGap,
+    *,
+    message: str,
+    goal_type: str | None,
+) -> DiscoveryCandidate | None:
+    """Score a profile-depth gap. Returns None unless the turn or active goal
+    makes it relevant — depth is never surfaced upfront, only when needed.
+
+    No priority term (depth gaps are not catalog fields) and no upfront base, so
+    a depth gap can only win when message/goal relevance fires — then relevance
+    lets it outrank an unrelated catalog field, per Rule 8.
+    """
+    msg_rel = _message_relevance(message, gap.section)
+    goal_rel = _goal_relevance(goal_type, gap.section)
+    if msg_rel == 0.0 and goal_rel == 0.0:
+        return None
+    score = 0.35 * msg_rel + 0.20 * goal_rel + 0.22 * gap.impact
+    return DiscoveryCandidate(
+        field_key=gap.key,
+        priority="I",
+        section=gap.section,
+        score=round(score, 4),
+        reasons={
+            "message_relevance": msg_rel,
+            "goal_relevance": goal_rel,
+            "impact_weight": gap.impact,
+            "depth": 1.0,
+        },
+        kind="depth",
+        label=gap.label,
+        reason_text=gap.reason,
+    )
+
+
 def select_discovery_candidates(
     *,
     missing_critical: list[str] | None = None,
     missing_important: list[str] | None = None,
     missing_enrichment: list[str] | None = None,
+    depth_gaps: Sequence[DepthGap] | None = None,
     message: str = "",
     goal_type: str | None = None,
     known_facts: list[str] | None = None,
@@ -227,6 +270,11 @@ def select_discovery_candidates(
                 )
             )
 
+    for gap in depth_gaps or ():
+        depth_candidate = score_depth_gap(gap, message=message, goal_type=goal_type)
+        if depth_candidate is not None:
+            candidates.append(depth_candidate)
+
     candidates.sort(key=lambda c: c.score, reverse=True)
     top = candidates[0] if candidates and candidates[0].score > 0 else None
     runners_up = list(candidates[1 : 1 + max_runners_up]) if candidates else []
@@ -240,6 +288,8 @@ def select_discovery_candidates(
 
 def explain(candidate: DiscoveryCandidate) -> str:
     """One-line, human-readable rationale for the top candidate (doc §12)."""
+    if candidate.kind == "depth" and candidate.reason_text:
+        return candidate.reason_text
     label = candidate.field_key.split(".")[-1].replace("_", " ")
     reasons = candidate.reasons
     why: list[str] = []

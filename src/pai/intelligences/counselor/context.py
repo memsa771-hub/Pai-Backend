@@ -45,9 +45,14 @@ class CounselorContext(BaseModel):
     pending_confirmations: list[str] = Field(default_factory=list)
     career_interest: str | None = None
     decision_signal: str | None = None
+    # Advisory per-turn posture (explore/understand/guide). Background guidance
+    # for tone and pacing — never a command. See conversation_stance.py.
+    conversation_focus: str | None = None
 
     def profile_block(self) -> str:
         lines = []
+        if self.conversation_focus:
+            lines.append(f"counselor_focus: {self.conversation_focus}")
         if self.critical_verifications:
             lines.append("CRITICAL VERIFICATION:")
             for row in self.critical_verifications[:4]:
@@ -178,6 +183,7 @@ async def build_counselor_context(
         raw_missing_critical = list(cached[1].get("raw_missing_critical") or [])
         raw_missing_important = list(cached[1].get("raw_missing_important") or [])
         raw_missing_enrichment = list(cached[1].get("raw_missing_enrichment") or [])
+        depth_gaps = list(cached[1].get("depth_gaps") or [])
     else:
         typed_records = await load_typed_profile_records(session, person.id)
         vault_svc = VaultService(settings)
@@ -198,6 +204,14 @@ async def build_counselor_context(
         raw_missing_important = list(completion.get("missingImportantFields") or [])
         raw_missing_enrichment = list(completion.get("missingEnrichmentFields") or [])
         missing = _advice_gaps(raw_missing_critical)
+        from pai.intelligences.counselor.profile_depth import compute_depth_gaps
+
+        _highest = sparse.get("education.highest_level")
+        depth_gaps = compute_depth_gaps(
+            highest_level=_sparse_value(_highest) if _highest is not None else None,
+            educations=typed_records.get("educations") or [],
+            work_experiences=typed_records.get("workExperiences") or [],
+        )
         _profile_cache[str(person.id)] = (
             version,
             {
@@ -206,6 +220,7 @@ async def build_counselor_context(
                 "raw_missing_critical": raw_missing_critical,
                 "raw_missing_important": raw_missing_important,
                 "raw_missing_enrichment": raw_missing_enrichment,
+                "depth_gaps": depth_gaps,
             },
         )
     recent: list[dict[str, str]] = []
@@ -299,6 +314,7 @@ async def build_counselor_context(
         missing_critical=raw_missing_critical,
         missing_important=raw_missing_important,
         missing_enrichment=raw_missing_enrichment,
+        depth_gaps=depth_gaps,
         message=message,
         goal_type=active_goal_type,
         known_facts=known,
@@ -307,6 +323,21 @@ async def build_counselor_context(
     )
     top_discovery_candidate = discovery.top.field_key if discovery.top else None
     discovery_reason = explain(discovery.top) if discovery.top else None
+    decision_signal = _pressure_signal(recent=recent, facts=known, memory=memory_lines)
+
+    from pai.intelligences.counselor.conversation_stance import compute_stance
+    from pai.intelligences.counselor.routing import classify_turn, is_greeting
+
+    prior_assistant_turns = sum(1 for m in recent if m.get("role") == "assistant")
+    stance = compute_stance(
+        message=message,
+        turn_kind=classify_turn(message),
+        is_greeting=is_greeting(message),
+        has_active_goal=active_goal_id is not None,
+        active_goal_status=active_goal_status,
+        decision_signal=bool(decision_signal),
+        prior_assistant_turns=prior_assistant_turns,
+    )
     return CounselorContext(
         person_id=str(person.id),
         identity=identity,
@@ -330,9 +361,8 @@ async def build_counselor_context(
         active_goal_status=active_goal_status,
         pending_confirmations=pending_confirmations[:5],
         career_interest=_fact_after(facts, "career interest"),
-        decision_signal=_pressure_signal(
-            recent=recent, facts=known, memory=memory_lines
-        ),
+        decision_signal=decision_signal,
+        conversation_focus=stance.focus,
     )
 
 
@@ -782,9 +812,10 @@ def compose_opening(pack: Any) -> str:
         )
     bullets = "\n".join(f"• {item}" for item in profile)
     return (
-        f"{greeting} I already have this from your profile:\n{bullets}\n\n"
-        "Ask me about tests, universities, deadlines, scholarships, or what to do this week. "
-        "I'll keep building on this — you don't need to repeat it."
+        f"{greeting} Good to have you here. So you never have to repeat yourself, "
+        f"here's what I already know:\n{bullets}\n\n"
+        "What's on your mind right now — something you're trying to figure out, or a "
+        "direction you're weighing? We'll start wherever you are."
     )
 
 

@@ -414,9 +414,9 @@
     "semantic_hash": "bca4ff75502ca246d5e34e88376ce02d"
   },
   "src/pai/intelligences/counselor/context.py": {
-    "mtime": 1788165221.0568378,
-    "seen": 1788165456.8071175,
-    "ast_hash": "3a9a6d3197ddd4a95db0cd7238aa1b7a",
+    "mtime": 1788161446.9272497,
+    "seen": 1788161543.0381038,
+    "ast_hash": "0b6d2ecd2fe9b31d08e6c7aabcdf1628",
     "semantic_hash": ""
   },
   "src/pai/intelligences/counselor/counselor_graph.py": {
@@ -1482,15 +1482,15 @@
     "semantic_hash": ""
   },
   "src/pai/intelligences/counselor/discovery.py": {
-    "mtime": 1788165199.497771,
-    "seen": 1788165456.8071244,
-    "ast_hash": "63349800506962009cf92f97504ea269",
+    "mtime": 1788159978.2492769,
+    "seen": 1788160874.5025194,
+    "ast_hash": "2a71be9eac3a4d898651dc0bd4da8f88",
     "semantic_hash": ""
   },
   "tests/test_profile_discovery.py": {
-    "mtime": 1788165319.8943024,
-    "seen": 1788165456.8074727,
-    "ast_hash": "9c081c03d02f819d333126b319ea9711",
+    "mtime": 1788159978.22982,
+    "seen": 1788160874.5027876,
+    "ast_hash": "60771bc4d80eec3b34827b94455be36f",
     "semantic_hash": ""
   },
   "PAI_Intelligent_Counselor_Architecture.md": {
@@ -1539,18 +1539,6 @@
     "mtime": 1788161312.0169222,
     "seen": 1788161543.0383642,
     "ast_hash": "cf28e44ff6ccb2c68ed3a2b68da260a7",
-    "semantic_hash": ""
-  },
-  "src/pai/intelligences/counselor/profile_depth.py": {
-    "mtime": 1788165139.481377,
-    "seen": 1788165456.8071365,
-    "ast_hash": "ac3350a0f6f8f517464ba271611e1f37",
-    "semantic_hash": ""
-  },
-  "tests/test_profile_depth.py": {
-    "mtime": 1788165301.9616845,
-    "seen": 1788165456.8074698,
-    "ast_hash": "bad5ce0e81c1bd24e36123a3332c9312",
     "semantic_hash": ""
   }
 }

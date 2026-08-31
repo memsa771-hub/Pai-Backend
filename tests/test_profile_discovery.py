@@ -10,7 +10,18 @@ from pai.intelligences.counselor.discovery import (
     score_field,
     select_discovery_candidates,
 )
+from pai.intelligences.counselor.profile_depth import DepthGap
 from pai.domains.student.vault.catalog import VAULT_CATALOG
+
+
+def _bachelor_depth_gap() -> DepthGap:
+    return DepthGap(
+        key="education.level.bachelor",
+        section="education",
+        label="bachelor's degree",
+        reason="their bachelor's degree isn't on file yet — needed for transcripts and SOPs",
+        impact=0.7,
+    )
 
 
 def test_goal_relevant_field_outscores_irrelevant_critical_field():
@@ -170,3 +181,55 @@ def test_profile_block_falls_back_to_flat_gap_list_without_discovery_candidate()
     )
     block = ctx.profile_block()
     assert "gaps: demographics.gender" in block
+
+
+def test_depth_gap_never_surfaces_upfront_when_irrelevant():
+    result = select_discovery_candidates(
+        depth_gaps=[_bachelor_depth_gap()],
+        message="hey, good to be back",
+    )
+    assert result.top is None
+
+
+def test_depth_gap_surfaces_when_message_is_relevant():
+    result = select_discovery_candidates(
+        depth_gaps=[_bachelor_depth_gap()],
+        message="can you pull together my degree and transcript history",
+    )
+    assert result.top is not None
+    assert result.top.kind == "depth"
+    assert result.top.field_key == "education.level.bachelor"
+
+
+def test_depth_gap_surfaces_via_active_goal_relevance():
+    result = select_discovery_candidates(
+        depth_gaps=[_bachelor_depth_gap()],
+        message="",
+        goal_type="admission",
+    )
+    assert result.top is not None
+    assert result.top.kind == "depth"
+
+
+def test_explain_uses_depth_reason_text():
+    result = select_discovery_candidates(
+        depth_gaps=[_bachelor_depth_gap()],
+        message="tell me about my degree",
+        goal_type="admission",
+    )
+    assert result.top is not None
+    assert explain(result.top) == (
+        "their bachelor's degree isn't on file yet — needed for transcripts and SOPs"
+    )
+
+
+def test_relevant_catalog_field_and_depth_gap_coexist_in_ranking():
+    # A message relevant to education surfaces something useful, and depth gaps
+    # participate without crashing the flat-field path.
+    result = select_discovery_candidates(
+        missing_important=["finance.funding_status"],
+        depth_gaps=[_bachelor_depth_gap()],
+        message="what gpa and degree records matter for a funded master's",
+        goal_type="admission",
+    )
+    assert result.top is not None

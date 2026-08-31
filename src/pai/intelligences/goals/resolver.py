@@ -186,22 +186,6 @@ def _text_mentions_goal(text: str, goal: Goal) -> bool:
     return False
 
 
-def _is_clear_switch(
-    new_intent: str,
-    active_goal: Goal | None,
-) -> bool:
-    """Return True when the message clearly references a *different* pursuit."""
-    if active_goal is None:
-        return False
-    if _text_mentions_goal(new_intent, active_goal):
-        return False
-    from pai.domains.goals.service import _anchor_match_score
-
-    new_anchors = _extract_anchors_from_intent(new_intent, active_goal.goal_type)
-    score = _anchor_match_score(active_goal, new_anchors)
-    return score < 0.4
-
-
 async def resolve(
     session: AsyncSession,
     person_id: uuid.UUID,
@@ -243,11 +227,12 @@ async def resolve(
             intelligence_enqueued=changed,
         )
 
-    # 1. Anchor similarity against active goal
+    # 1. Compatibility against the active goal — reinforce unless anchors truly
+    #    conflict. Missing anchors on the incoming side are never a mismatch,
+    #    so a vague rephrase of the same pursuit cannot spawn a duplicate row.
     if active_goal is not None and not supersedes:
         full_anchors = {"goal_type": goal_type, **anchors}
-        score = _anchor_match_score_from_anchors(active_goal, full_anchors)
-        if score >= 0.4:
+        if not _has_hard_conflict_on_goal(active_goal, full_anchors):
             changed = await _update_and_maybe_enqueue(
                 session, active_goal, anchors, person_id, activate=False
             )
@@ -269,8 +254,10 @@ async def resolve(
                 goal=mentioned,
                 intelligence_enqueued=enqueued,
             )
-        # Mentioned a different existing goal → switch when clear, else secondary
-        if _is_clear_switch(intent, active_goal) or supersedes:
+        # Mentioned a different existing goal → only an explicit pivot (LLM-detected
+        # supersedes_previous) switches the active goal; otherwise it's a secondary
+        # pursuit and the current active goal must stay untouched.
+        if supersedes:
             await activate_goal(session, mentioned, conversation_id=conversation_id)
             enqueued = await _maybe_enqueue(session, mentioned)
             return ResolverResult(
@@ -289,7 +276,7 @@ async def resolve(
     full_anchors = {"goal_type": goal_type, **anchors}
     secondary = await find_matching_goal(session, person_id, full_anchors)
     if secondary is not None and (active_goal is None or secondary.id != active_goal.id):
-        if supersedes or _is_clear_switch(intent, active_goal):
+        if supersedes:
             await activate_goal(session, secondary, conversation_id=conversation_id)
             enqueued = await _maybe_enqueue(session, secondary)
             return ResolverResult(
@@ -328,10 +315,10 @@ async def resolve(
     )
 
 
-def _anchor_match_score_from_anchors(goal: Goal, anchors: dict[str, Any]) -> float:
-    from pai.domains.goals.service import _anchor_match_score
+def _has_hard_conflict_on_goal(goal: Goal, anchors: dict[str, Any]) -> bool:
+    from pai.domains.goals.service import _has_hard_conflict
 
-    return _anchor_match_score(goal, anchors)
+    return _has_hard_conflict(goal, anchors)
 
 
 async def _update_and_maybe_enqueue(

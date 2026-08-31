@@ -108,6 +108,8 @@ def compute_completion_from_snapshot(
         by_priority[field.priority].append(field)
 
     missing_critical: list[str] = []
+    missing_important: list[str] = []
+    missing_enrichment: list[str] = []
     scores: dict[str, int] = {}
     present_map: dict[str, bool] = {}
 
@@ -121,8 +123,13 @@ def compute_completion_from_snapshot(
             continue
         filled = sum(1 for f in group if present_map[f.key])
         scores[priority_name(priority)] = round(100 * filled / len(group))
+        missing_keys = [f.key for f in group if not present_map[f.key]]
         if priority == "C":
-            missing_critical = [f.key for f in group if not present_map[f.key]]
+            missing_critical = missing_keys
+        elif priority == "I":
+            missing_important = missing_keys
+        else:
+            missing_enrichment = missing_keys
 
     overall = (
         round(100 * sum(1 for f in fields if present_map[f.key]) / len(fields)) if fields else 0
@@ -141,6 +148,8 @@ def compute_completion_from_snapshot(
         "overall": overall,
         "applicableScopes": scopes,
         "missingCriticalFields": missing_critical,
+        "missingImportantFields": missing_important,
+        "missingEnrichmentFields": missing_enrichment,
         "nextRecommendedField": next_field,
         "_present_map": present_map,
     }

@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -269,3 +269,105 @@ async def test_resolver_creates_goal_for_life_aim(mock_session, person_id, conve
         )
     assert result.action == "create"
     assert result.goal is not None
+
+
+# ── Deduplication regressions ─────────────────────────────────────────────────
+# These pin down the exact bug pattern from production: a vague rephrase that
+# extracts fewer/no anchors must reinforce the existing goal instead of
+# spawning a duplicate Goal row, and a merely-different-anchors mention must
+# not be treated as an explicit switch.
+
+
+def _make_active_goal(**overrides) -> MagicMock:
+    from pai.domains.goals.models import Goal
+
+    goal = MagicMock(spec=Goal)
+    goal.id = overrides.get("id") or __import__("uuid").uuid4()
+    goal.goal_type = overrides.get("goal_type", "admission")
+    goal.title = overrides.get("title", "MS in Germany")
+    goal.target_country = overrides.get("target_country", "DE")
+    goal.degree_level = overrides.get("degree_level", "ms")
+    goal.program = overrides.get("program")
+    goal.role = overrides.get("role")
+    goal.target_company = overrides.get("target_company")
+    goal.anchors = overrides.get("anchors", {})
+    goal.intelligence_status = overrides.get("intelligence_status", "ready")
+    return goal
+
+
+@pytest.mark.asyncio
+async def test_vague_rephrase_reinforces_active_goal_instead_of_duplicating(
+    mock_session, person_id, conversation_id
+):
+    """A rephrase with fewer anchors (no country extracted) must REINFORCE,
+    not create a second Goal row for the same pursuit."""
+    active_goal = _make_active_goal()
+    llm_goal = GoalExtract(
+        kind="life_aim",
+        intent="I want to pursue my masters",
+        mode="pursuing",
+        stated=True,
+        supersedes_previous=False,
+        evidence_text="I want to pursue my masters",
+    )
+    with patch(
+        "pai.intelligences.goals.resolver.get_conversation_active_goal",
+        new=AsyncMock(return_value=active_goal),
+    ), patch(
+        "pai.intelligences.goals.resolver.enqueue_goal_intelligence_job",
+        new=AsyncMock(return_value=MagicMock()),
+    ):
+        result = await resolve(
+            mock_session,
+            person_id,
+            conversation_id,
+            llm_goal=llm_goal,
+            user_message="I want to pursue my masters",
+        )
+    assert result.action == "reinforce"
+    assert result.goal is active_goal
+
+
+@pytest.mark.asyncio
+async def test_mentioning_different_goal_without_pivot_is_secondary_not_switch(
+    mock_session, person_id, conversation_id
+):
+    """Mentioning a goal with conflicting anchors (different country) is a
+    secondary/exploring pursuit unless the LLM detected explicit pivot
+    language (supersedes_previous). Anchor dissimilarity alone must never
+    force a switch — that used to pause the real active goal by mistake."""
+    active_goal = _make_active_goal(title="MS in Germany")
+    other_goal = _make_active_goal(
+        title="MBA in USA", target_country="US", degree_level="mba"
+    )
+
+    async def fake_list_goals(session, pid, *, include_archived=False):
+        return [other_goal]
+
+    llm_goal = GoalExtract(
+        kind="life_aim",
+        intent="MBA in USA",
+        mode="exploring",
+        stated=True,
+        supersedes_previous=False,
+        evidence_text="MBA in USA",
+    )
+    with patch(
+        "pai.intelligences.goals.resolver.get_conversation_active_goal",
+        new=AsyncMock(return_value=active_goal),
+    ), patch(
+        "pai.intelligences.goals.resolver.list_goals",
+        new=fake_list_goals,
+    ), patch(
+        "pai.intelligences.goals.resolver.enqueue_goal_intelligence_job",
+        new=AsyncMock(return_value=MagicMock()),
+    ):
+        result = await resolve(
+            mock_session,
+            person_id,
+            conversation_id,
+            llm_goal=llm_goal,
+            user_message="I am also considering an MBA in the USA",
+        )
+    assert result.action == "create_secondary"
+    assert result.goal is other_goal

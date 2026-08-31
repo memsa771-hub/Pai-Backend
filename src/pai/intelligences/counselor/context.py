@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -30,6 +31,10 @@ class CounselorContext(BaseModel):
     universities: list[str] = Field(default_factory=list)
     known_facts: list[str] = Field(default_factory=list)
     missing_critical_fields: list[str] = Field(default_factory=list)
+    missing_important_fields: list[str] = Field(default_factory=list)
+    enrichment_opportunities: list[str] = Field(default_factory=list)
+    top_discovery_candidate: str | None = None
+    discovery_reason: str | None = None
     recent_messages: list[dict[str, str]] = Field(default_factory=list)
     relevant_memory: list[str] = Field(default_factory=list)
     active_tasks: list[dict[str, str]] = Field(default_factory=list)
@@ -40,9 +45,14 @@ class CounselorContext(BaseModel):
     pending_confirmations: list[str] = Field(default_factory=list)
     career_interest: str | None = None
     decision_signal: str | None = None
+    # Advisory per-turn posture (explore/understand/guide). Background guidance
+    # for tone and pacing — never a command. See conversation_stance.py.
+    conversation_focus: str | None = None
 
     def profile_block(self) -> str:
         lines = []
+        if self.conversation_focus:
+            lines.append(f"counselor_focus: {self.conversation_focus}")
         if self.critical_verifications:
             lines.append("CRITICAL VERIFICATION:")
             for row in self.critical_verifications[:4]:
@@ -83,7 +93,9 @@ class CounselorContext(BaseModel):
             lines.append("universities: " + "; ".join(self.universities[:6]))
         if self.relevant_memory:
             lines.append("memory: " + " | ".join(self.relevant_memory))
-        if self.missing_critical_fields:
+        if self.top_discovery_candidate:
+            lines.append(f"gaps: {self.discovery_reason or self.top_discovery_candidate}")
+        elif self.missing_critical_fields:
             lines.append("gaps: " + ", ".join(self.missing_critical_fields[:4]))
         if self.pending_confirmations:
             lines.append(
@@ -152,6 +164,7 @@ async def build_counselor_context(
     conversation_id: uuid.UUID | None = None,
     settings: Settings | None = None,
     semantic_memory: str = "",
+    message: str = "",
 ) -> CounselorContext:
     """Vault + goals + last messages. No documents, cross-thread, or task fan-out."""
     settings = settings or get_settings()
@@ -167,6 +180,10 @@ async def build_counselor_context(
     if cached and cached[0] == version:
         facts = list(cached[1].get("facts") or [])
         missing = list(cached[1].get("missing") or [])
+        raw_missing_critical = list(cached[1].get("raw_missing_critical") or [])
+        raw_missing_important = list(cached[1].get("raw_missing_important") or [])
+        raw_missing_enrichment = list(cached[1].get("raw_missing_enrichment") or [])
+        depth_gaps = list(cached[1].get("depth_gaps") or [])
     else:
         typed_records = await load_typed_profile_records(session, person.id)
         vault_svc = VaultService(settings)
@@ -182,8 +199,30 @@ async def build_counselor_context(
 
         facts = await goal_fact_lines(session, person.id)
         facts.extend(build_known_facts(identity=identity, sparse=sparse, typed=typed_records))
-        missing = _advice_gaps(completion.get("missingCriticalFields") or [])
-        _profile_cache[str(person.id)] = (version, {"facts": facts, "missing": missing})
+        facts = _dedupe_goal_lines(facts)
+        raw_missing_critical = list(completion.get("missingCriticalFields") or [])
+        raw_missing_important = list(completion.get("missingImportantFields") or [])
+        raw_missing_enrichment = list(completion.get("missingEnrichmentFields") or [])
+        missing = _advice_gaps(raw_missing_critical)
+        from pai.intelligences.counselor.profile_depth import compute_depth_gaps
+
+        _highest = sparse.get("education.highest_level")
+        depth_gaps = compute_depth_gaps(
+            highest_level=_sparse_value(_highest) if _highest is not None else None,
+            educations=typed_records.get("educations") or [],
+            work_experiences=typed_records.get("workExperiences") or [],
+        )
+        _profile_cache[str(person.id)] = (
+            version,
+            {
+                "facts": facts,
+                "missing": missing,
+                "raw_missing_critical": raw_missing_critical,
+                "raw_missing_important": raw_missing_important,
+                "raw_missing_enrichment": raw_missing_enrichment,
+                "depth_gaps": depth_gaps,
+            },
+        )
     recent: list[dict[str, str]] = []
     if conversation_id:
         result = await session.execute(
@@ -213,8 +252,11 @@ async def build_counselor_context(
             f"DISPUTED {row.get('fieldKey')}: current={row.get('existingValue')} document={row.get('incomingValue')}",
         )
     active_goal_id: str | None = None
+    active_goal_type: str | None = None
     active_goal_brief: str | None = None
     active_goal_status: str | None = None
+    recently_asked_field_key: str | None = None
+    recently_asked_at: datetime | None = None
     pending_confirmations: list[str] = []
     if person.vault is not None:
         try:
@@ -241,28 +283,61 @@ async def build_counselor_context(
             )
     if conversation_id is not None:
         try:
-            from pai.domains.goals.service import (
-                get_conversation_active_goal,
-                get_goal_intelligence,
-            )
+            from pai.domains.goals.service import get_goal_by_id, get_goal_intelligence
 
-            active_goal = await get_conversation_active_goal(
-                session, conversation_id, person.id
-            )
-            if active_goal is not None:
-                active_goal_id = str(active_goal.id)
-                intel = await get_goal_intelligence(session, active_goal.id)
-                if intel is not None and intel.counselor_brief:
-                    active_goal_brief = intel.counselor_brief
-                    active_goal_status = intel.status
-                else:
-                    active_goal_status = active_goal.intelligence_status or "pending"
+            conv = await session.get(Conversation, conversation_id)
+            if conv is not None:
+                recently_asked_field_key = conv.last_discovery_field_key
+                recently_asked_at = conv.last_discovery_asked_at
+                if conv.active_goal_id is not None:
+                    active_goal = await get_goal_by_id(
+                        session, conv.active_goal_id, person.id
+                    )
+                    if active_goal is not None:
+                        active_goal_id = str(active_goal.id)
+                        active_goal_type = active_goal.goal_type
+                        intel = await get_goal_intelligence(session, active_goal.id)
+                        if intel is not None and intel.counselor_brief:
+                            active_goal_brief = intel.counselor_brief
+                            active_goal_status = intel.status
+                        else:
+                            active_goal_status = active_goal.intelligence_status or "pending"
         except Exception:
             import logging as _logging
 
             _logging.getLogger(__name__).exception(
                 "Failed to load active goal brief (non-fatal)"
             )
+    from pai.intelligences.counselor.discovery import explain, select_discovery_candidates
+
+    discovery = select_discovery_candidates(
+        missing_critical=raw_missing_critical,
+        missing_important=raw_missing_important,
+        missing_enrichment=raw_missing_enrichment,
+        depth_gaps=depth_gaps,
+        message=message,
+        goal_type=active_goal_type,
+        known_facts=known,
+        recently_asked_field_key=recently_asked_field_key,
+        recently_asked_at=recently_asked_at,
+    )
+    top_discovery_candidate = discovery.top.field_key if discovery.top else None
+    discovery_reason = explain(discovery.top) if discovery.top else None
+    decision_signal = _pressure_signal(recent=recent, facts=known, memory=memory_lines)
+
+    from pai.intelligences.counselor.conversation_stance import compute_stance
+    from pai.intelligences.counselor.routing import classify_turn, is_greeting
+
+    prior_assistant_turns = sum(1 for m in recent if m.get("role") == "assistant")
+    stance = compute_stance(
+        message=message,
+        turn_kind=classify_turn(message),
+        is_greeting=is_greeting(message),
+        has_active_goal=active_goal_id is not None,
+        active_goal_status=active_goal_status,
+        decision_signal=bool(decision_signal),
+        prior_assistant_turns=prior_assistant_turns,
+    )
     return CounselorContext(
         person_id=str(person.id),
         identity=identity,
@@ -274,6 +349,10 @@ async def build_counselor_context(
         universities=_facts_all(facts, "target universit"),
         known_facts=known[:16],
         missing_critical_fields=missing,
+        missing_important_fields=discovery.missing_important,
+        enrichment_opportunities=discovery.enrichment_opportunities,
+        top_discovery_candidate=top_discovery_candidate,
+        discovery_reason=discovery_reason,
         recent_messages=recent,
         # Recall already returns at most SEMANTIC_MEMORY_MAX_RESULTS; a second
         # hardcoded slice here silently discarded half of what was configured.
@@ -284,9 +363,8 @@ async def build_counselor_context(
         active_goal_status=active_goal_status,
         pending_confirmations=pending_confirmations[:5],
         career_interest=_fact_after(facts, "career interest"),
-        decision_signal=_pressure_signal(
-            recent=recent, facts=known, memory=memory_lines
-        ),
+        decision_signal=decision_signal,
+        conversation_focus=stance.focus,
     )
 
 
@@ -343,6 +421,33 @@ def _sparse_value(entry: Any) -> Any:
     return entry
 
 
+def _dedupe_goal_lines(lines: list[str]) -> list[str]:
+    """Drop a "Career/study goal: X" line whose title is already covered by a
+    Current/Previous/Secondary goal line (same underlying pursuit, different
+    rendering path) so the same goal is never listed twice in known facts."""
+
+    def _key(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip().casefold()
+
+    covered: set[str] = set()
+    for line in lines:
+        for prefix in ("Current goal", "Previous goal", "Secondary/exploring goal"):
+            if line.startswith(prefix):
+                _, _, rest = line.partition(": ")
+                title = rest.split(" — ")[0].strip()
+                if title:
+                    covered.add(_key(title))
+                break
+    out: list[str] = []
+    for line in lines:
+        if line.startswith("Career/study goal: "):
+            title = line[len("Career/study goal: ") :].strip()
+            if _key(title) in covered:
+                continue
+        out.append(line)
+    return out
+
+
 def build_known_facts(
     *,
     identity: dict[str, Any],
@@ -373,9 +478,16 @@ def build_known_facts(
             detail += f", {edu['percentage']}%"
         facts.append(f"Education: {detail}")
 
+    seen_goal_titles: set[str] = set()
     for goal in typed.get("goals") or []:
-        if goal.get("title"):
-            facts.append(f"Career/study goal: {goal['title']}")
+        title = goal.get("title")
+        if not title or goal.get("status") == "archived":
+            continue
+        key = re.sub(r"\s+", " ", str(title)).strip().casefold()
+        if not key or key in seen_goal_titles:
+            continue
+        seen_goal_titles.add(key)
+        facts.append(f"Career/study goal: {title}")
 
     for skill in (typed.get("skills") or [])[:12]:
         if skill.get("name"):
@@ -540,6 +652,7 @@ async def build_person_context_pack(
 
     known = await goal_fact_lines(session, person.id)
     known.extend(build_known_facts(identity=identity, sparse=sparse, typed=typed_records))
+    known = _dedupe_goal_lines(known)
     open_cases = await session.execute(
         select(VerificationCase.field_key).where(
             VerificationCase.person_id == person.id,
@@ -701,9 +814,10 @@ def compose_opening(pack: Any) -> str:
         )
     bullets = "\n".join(f"• {item}" for item in profile)
     return (
-        f"{greeting} I already have this from your profile:\n{bullets}\n\n"
-        "Ask me about tests, universities, deadlines, scholarships, or what to do this week. "
-        "I'll keep building on this — you don't need to repeat it."
+        f"{greeting} Good to have you here. So you never have to repeat yourself, "
+        f"here's what I already know:\n{bullets}\n\n"
+        "What's on your mind right now — something you're trying to figure out, or a "
+        "direction you're weighing? We'll start wherever you are."
     )
 
 

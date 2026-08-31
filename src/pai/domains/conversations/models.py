@@ -22,6 +22,12 @@ class Conversation(Base):
     topic: Mapped[str | None] = mapped_column(String(128))
     # The goal currently active in this thread. NULL = no goal active.
     active_goal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Profile Discovery / Gap Selection: last field the counselor asked about,
+    # so the ranking doesn't keep re-suggesting it turn after turn.
+    last_discovery_field_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_discovery_asked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

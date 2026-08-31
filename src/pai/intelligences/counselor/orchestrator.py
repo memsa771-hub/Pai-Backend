@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
-from pai.domains.conversations.models import Message, OrchestrationRun
+from pai.domains.conversations.models import Conversation, Message, OrchestrationRun
 from pai.platform.database.db import get_session_factory
 from pai.platform.llm.gateway import LLMGateway
 from pai.domains.memory.formation import apply_memory_drafts, drafts_from_turn
@@ -138,6 +138,7 @@ class PAIOrchestrator:
             run.status = final.get("run_status", "completed")
             run.current_step = "completed"
             run.completed_at = datetime.now(UTC)
+            await self._record_discovery_question(final)
             return final
         except Exception as exc:
             logger.exception("Orchestration failed")
@@ -171,6 +172,7 @@ class PAIOrchestrator:
             self._person,
             conversation_id=uuid.UUID(state["conversation_id"]),
             settings=self._settings,
+            message=state["user_message"],
         )
         pack, semantic = await asyncio.gather(pack_task, recall)
         if self._memory:
@@ -192,6 +194,20 @@ class PAIOrchestrator:
         state["student_context"] = pack
         state["student_context_json"] = pack.profile_block()
         state["extraction_required"] = should_extract_facts(state["user_message"])
+        top_field = getattr(pack, "top_discovery_candidate", None)
+        state["discovery_top_field"] = top_field
+        if top_field:
+            state.setdefault("tool_trace", []).append(
+                {
+                    "service": "profile_discovery",
+                    "topCandidate": top_field,
+                    "reason": getattr(pack, "discovery_reason", None),
+                    "missingImportant": list(getattr(pack, "missing_important_fields", None) or []),
+                    "enrichmentOpportunities": list(
+                        getattr(pack, "enrichment_opportunities", None) or []
+                    ),
+                }
+            )
         if self._run:
             self._run.current_step = "serve_turn"
         return state
@@ -484,6 +500,7 @@ class PAIOrchestrator:
         state["assistant_result"] = None
         if self._memory:
             self._memory.record_turn(user=state["user_message"], assistant=state["assistant_reply"])
+        await self._record_discovery_question(state)
 
     async def node_process_tasks(self, state: PAIState) -> PAIState:
         assert self._session and self._person
@@ -555,6 +572,29 @@ class PAIOrchestrator:
         except Exception:
             logger.exception("Goal resolver failed (non-fatal)")
             return False
+
+    async def _record_discovery_question(self, state: PAIState) -> None:
+        """Persist which gap was surfaced this turn (doc §7 Rule 7 — don't
+        keep re-suggesting the same field turn after turn). Best-effort: a
+        "?" in the reply is our deterministic signal that *something* was
+        asked, since the streaming path has no structured next_question.
+        """
+        field_key = state.get("discovery_top_field")
+        if not field_key or self._session is None:
+            return
+        reply = state.get("assistant_reply") or ""
+        if "?" not in reply:
+            return
+        conversation_id = state.get("conversation_id")
+        if not conversation_id:
+            return
+        try:
+            conv = await self._session.get(Conversation, uuid.UUID(conversation_id))
+            if conv is not None:
+                conv.last_discovery_field_key = field_key
+                conv.last_discovery_asked_at = datetime.now(UTC)
+        except Exception:
+            logger.exception("Failed to record discovery question (non-fatal)")
 
     async def _inject_goal_facts(self, state: PAIState) -> None:
         assert self._session and self._person

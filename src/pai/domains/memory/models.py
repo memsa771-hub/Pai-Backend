@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -44,6 +45,10 @@ class SemanticMemoryRow(Base):
     formation: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default="{}"
     )
+    # Nullable: rows predating the backfill (or written while embeddings were
+    # unavailable) still recall lexically.
+    embedding: Mapped[Any | None] = mapped_column(Vector(1536), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index(

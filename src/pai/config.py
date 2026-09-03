@@ -93,8 +93,17 @@ class Settings(BaseSettings):
     )
     enable_counselor_tools: bool = Field(default=True, alias="ENABLE_COUNSELOR_TOOLS")
     counselor_max_tool_rounds: int = Field(default=3, alias="COUNSELOR_MAX_TOOL_ROUNDS")
-    # Cap rows scanned for lexical semantic ranking until pgvector is wired
+    # Cap rows scanned when ranking lexically (the vector path ranks in SQL)
     semantic_memory_scan_limit: int = Field(default=200, alias="SEMANTIC_MEMORY_SCAN_LIMIT")
+    # Semantic recall via embeddings. Off (or no API key) -> lexical ranking, unchanged.
+    enable_semantic_embeddings: bool = Field(default=True, alias="ENABLE_SEMANTIC_EMBEDDINGS")
+    embedding_provider: str = Field(default="openai", alias="EMBEDDING_PROVIDER")
+    embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
+    # Must match the model's output size and the vector(N) column in migration 014.
+    embedding_dimensions: int = Field(default=1536, alias="EMBEDDING_DIMENSIONS")
+    # Rows pulled by vector search before structural re-ranking in Python.
+    embedding_candidate_limit: int = Field(default=40, alias="EMBEDDING_CANDIDATE_LIMIT")
+    embedding_timeout_seconds: float = Field(default=15.0, alias="EMBEDDING_TIMEOUT_SECONDS")
     # Postgres LangGraph checkpoints add remote writes per node — off by default for chat latency
     enable_graph_checkpoint: bool = Field(default=False, alias="ENABLE_GRAPH_CHECKPOINT")
 

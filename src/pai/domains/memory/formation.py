@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass, field, replace
@@ -15,12 +16,14 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from pai.kernel.contracts.schemas import VaultCandidate
 from pai.domains.memory.models import SemanticMemoryRow
 from pai.domains.student.vault.catalog import get_catalog_field
+from pai.kernel.contracts.schemas import VaultCandidate
 from pai.kernel.evidence.assertion import assertion_of, format_observed, is_vault_eligible
+
+logger = logging.getLogger(__name__)
 
 Action = Literal["insert", "strengthen", "supersede", "noop"]
 
@@ -215,27 +218,43 @@ def format_for_recall(record: MemoryRecord, *, mode: str = "fast") -> str:
     return head
 
 
-def rank_score(query: str, record: MemoryRecord, *, now: datetime | None = None) -> float:
+def rank_score(
+    query: str,
+    record: MemoryRecord,
+    *,
+    now: datetime | None = None,
+    semantic_similarity: float | None = None,
+) -> float:
+    """Blend relevance with how settled a memory is.
+
+    `semantic_similarity` is cosine similarity from vector search (0..1, higher
+    is closer in meaning). When present it replaces word overlap: those rows
+    were selected by meaning, so requiring shared words would discard exactly
+    the matches embeddings exist to find.
+    """
     if record.status == "superseded":
         return -1.0
     if record.importance < 0.15 or record.status == "ephemeral":
         return -1.0
-    jaccard = _jaccard(
-        query,
-        " ".join(
-            [
-                record.content,
-                record.evidence,
-                record.memory_key.replace(":", " ").replace(".", " ").replace("_", " "),
-                record.field_key or "",
-            ]
-        ),
-    )
-    if jaccard <= 0:
-        return -1.0
+    if semantic_similarity is not None:
+        relevance = min(1.0, max(0.0, float(semantic_similarity)))
+    else:
+        relevance = _jaccard(
+            query,
+            " ".join(
+                [
+                    record.content,
+                    record.evidence,
+                    record.memory_key.replace(":", " ").replace(".", " ").replace("_", " "),
+                    record.field_key or "",
+                ]
+            ),
+        )
+        if relevance <= 0:
+            return -1.0
     recency = _recency(record.last_confirmed_at, now)
     score = (
-        0.40 * jaccard
+        0.40 * relevance
         + 0.25 * record.importance
         + 0.20 * record.stability
         + 0.10 * recency
@@ -267,6 +286,7 @@ async def apply_memory_drafts(
     by_key = {row.memory_key: row for row in result.scalars().all() if row.memory_key}
     now = datetime.now(UTC)
     written = 0
+    touched: list[SemanticMemoryRow] = []
     for draft in drafts:
         existing_row = by_key.get(draft.memory_key)
         existing = record_from_row(existing_row) if existing_row is not None else None
@@ -284,8 +304,73 @@ async def apply_memory_drafts(
             created = _new_row(person_id, new_rec)
             session.add(created)
             by_key[draft.memory_key] = created
+        touched.append(by_key[draft.memory_key])
         written += 1
     return written
+
+
+async def embed_pending_memories(
+    session_factory: async_sessionmaker[AsyncSession],
+    person_id: uuid.UUID,
+    *,
+    limit: int = 50,
+) -> int:
+    """Embed this person's memories that still lack a vector.
+
+    Runs on its own session AFTER the caller has committed. Embedding is an
+    outbound HTTPS call; doing it inside the write transaction would hold row
+    locks for the duration of a third-party request. Rows are found by
+    `embedding IS NULL`, so a failure here simply leaves them for the next turn
+    (or the backfill script) — they stay recallable lexically meanwhile.
+    """
+    from pai.config import get_settings
+    from pai.platform.llm.embeddings import embedding_text, get_embedding_provider
+
+    settings = get_settings()
+    provider = get_embedding_provider(settings)
+    if provider is None:
+        return 0
+    try:
+        async with session_factory() as session:
+            rows = list(
+                (
+                    await session.execute(
+                        select(SemanticMemoryRow)
+                        .where(
+                            SemanticMemoryRow.person_id == person_id,
+                            SemanticMemoryRow.embedding.is_(None),
+                        )
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not rows:
+                return 0
+            texts = [
+                embedding_text(r.content, (r.formation or {}).get("evidence", ""))
+                for r in rows
+            ]
+            vectors = await provider.embed(texts)
+            if not vectors or len(vectors) != len(rows):
+                return 0
+            expected = settings.embedding_dimensions
+            for row, vector in zip(rows, vectors):
+                if len(vector) != expected:
+                    logger.error(
+                        "Embedding dimension mismatch: model returned %s, column expects %s",
+                        len(vector),
+                        expected,
+                    )
+                    return 0
+                row.embedding = vector
+                row.embedding_model = settings.embedding_model
+            await session.commit()
+            return len(rows)
+    except Exception:
+        logger.exception("Embedding memories failed (non-fatal)")
+        return 0
 
 
 def record_from_row(row: SemanticMemoryRow) -> MemoryRecord:

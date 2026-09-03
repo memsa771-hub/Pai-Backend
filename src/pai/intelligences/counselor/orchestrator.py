@@ -12,7 +12,11 @@ from pai.config import Settings
 from pai.domains.conversations.models import Conversation, Message, OrchestrationRun
 from pai.platform.database.db import get_session_factory
 from pai.platform.llm.gateway import LLMGateway
-from pai.domains.memory.formation import apply_memory_drafts, drafts_from_turn
+from pai.domains.memory.formation import (
+    apply_memory_drafts,
+    drafts_from_turn,
+    embed_pending_memories,
+)
 from pai.domains.memory.service import PersonMemoryService
 from pai.intelligences.counselor.agents import FactExtractionAgent, StudentConversationAgent
 from pai.intelligences.planner import plan_next_actions
@@ -356,6 +360,12 @@ class PAIOrchestrator:
         if to_apply or drafts:
             await self._session.commit()
             invalidate_counselor_cache(self._person.id)
+            # After commit: embedding is an outbound HTTPS call and must not
+            # hold row locks. Failure here is non-fatal — the rows keep
+            # embedding NULL and are picked up next turn or by the backfill.
+            await embed_pending_memories(
+                get_session_factory(self._settings), self._person.id
+            )
         state["applied_vault_changes"] = applied
         state["pending_confirmations"] = pending
         if self._run:

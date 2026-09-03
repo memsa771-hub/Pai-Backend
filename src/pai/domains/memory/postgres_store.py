@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 import uuid
 from typing import Any
@@ -10,6 +11,8 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from pai.domains.memory.models import SemanticMemoryRow
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncPostgresMemoryStore:
@@ -43,10 +46,16 @@ class AsyncPostgresMemoryStore:
         return entry_id
 
     async def search(self, query: str, top_k: int = 5, *, mode: str = "fast") -> list[MemoryEntry]:
-        # Cap rows before Python ranking — full-table load does not scale.
         from pai.config import get_settings
 
-        scan_limit = max(top_k, get_settings().semantic_memory_scan_limit)
+        settings = get_settings()
+        scored_rows = await self._vector_candidates(query, settings)
+        if scored_rows is not None:
+            # Vector search narrowed by meaning; structural signals
+            # (importance / stability / recency / claim penalty) still decide order.
+            return _rank_entries(query, scored_rows, top_k, mode=mode, semantic=True)
+        # Cap rows before Python ranking — full-table load does not scale.
+        scan_limit = max(top_k, settings.semantic_memory_scan_limit)
         async with self._session_factory() as session:
             result = await session.execute(
                 select(SemanticMemoryRow)
@@ -62,6 +71,52 @@ class AsyncPostgresMemoryStore:
             )
             rows = list(result.scalars().all())
         return _rank_entries(query, rows, top_k, mode=mode)
+
+    async def _vector_candidates(
+        self, query: str, settings
+    ) -> list[tuple[SemanticMemoryRow, float]] | None:
+        """Nearest neighbours by meaning as (row, similarity), or None to fall
+        back to lexical ranking.
+
+        Similarity is 1 - cosine_distance, so 1.0 is identical meaning and 0.0
+        is unrelated. Returning the real number (not just the ordering) lets
+        rank_score weigh *how* relevant a memory is against how settled it is.
+        """
+        from pai.platform.llm.embeddings import get_embedding_provider
+
+        provider = get_embedding_provider(settings)
+        if provider is None:
+            return None
+        vectors = await provider.embed([query])
+        if not vectors:
+            return None
+        try:
+            distance = SemanticMemoryRow.embedding.cosine_distance(vectors[0])
+            async with self._session_factory() as session:
+                result = await session.execute(
+                    select(SemanticMemoryRow, distance.label("distance"))
+                    .where(
+                        SemanticMemoryRow.person_id == self._person_id,
+                        SemanticMemoryRow.embedding.isnot(None),
+                        or_(
+                            SemanticMemoryRow.memory_key.is_(None),
+                            SemanticMemoryRow.status.in_(("active", "candidate")),
+                        ),
+                    )
+                    .order_by(distance)
+                    .limit(settings.embedding_candidate_limit)
+                )
+                # cosine_distance is 0..2; clamp so similarity stays within 0..1.
+                rows = [
+                    (row, max(0.0, min(1.0, 1.0 - float(dist))))
+                    for row, dist in result.all()
+                ]
+        except Exception:
+            # Column or extension missing (migration not applied yet).
+            logger.exception("Vector recall failed")
+            return None
+        # Nothing embedded yet — let lexical ranking answer instead of returning nothing.
+        return rows or None
 
     async def delete(self, memory_id: str) -> bool:
         async with self._session_factory() as session:
@@ -145,17 +200,25 @@ def _row_to_entry(row: SemanticMemoryRow) -> MemoryEntry:
 
 def _rank_entries(
     query: str,
-    rows: list[SemanticMemoryRow],
+    rows: list[SemanticMemoryRow] | list[tuple[SemanticMemoryRow, float]],
     top_k: int,
     *,
     mode: str = "fast",
+    semantic: bool = False,
 ) -> list[MemoryEntry]:
+    """Order candidates.
+
+    When `semantic` is set, `rows` are (row, similarity) pairs from vector
+    search: they already passed a meaning filter, so the lexical word-overlap
+    requirement must not drop them, and the real similarity feeds the blend.
+    """
     from pai.domains.memory.formation import format_for_recall, rank_score, record_from_row
 
     scored: list[tuple[float, MemoryEntry]] = []
-    for row in rows:
+    for item in rows:
+        row, similarity = item if semantic else (item, None)
         record = record_from_row(row)
-        score = rank_score(query, record)
+        score = rank_score(query, record, semantic_similarity=similarity)
         if score <= 0:
             continue
         entry = _row_to_entry(row)

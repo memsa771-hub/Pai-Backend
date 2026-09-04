@@ -82,16 +82,79 @@ async def _llm_json(
             temperature=0.2,
         )
         content = getattr(response, "content", None) or ""
-        # Strip markdown fences if present
-        stripped = content.strip()
-        if stripped.startswith("```"):
-            stripped = "\n".join(stripped.splitlines()[1:])
-            if stripped.endswith("```"):
-                stripped = stripped[: stripped.rfind("```")]
-        return json.loads(stripped.strip())
     except Exception:
-        logger.exception("LLM JSON call failed")
+        logger.exception("Goal intelligence LLM call failed")
         return {}
+    parsed = _extract_json_object(content)
+    if parsed is None:
+        # Prose preamble, a refusal, or JSON truncated by max_tokens. Log what
+        # actually came back — "Expecting value: line 1 column 1" alone tells
+        # you nothing about which of those happened.
+        preview = content.strip()[:200].replace("\n", " ")
+        logger.warning(
+            "Goal intelligence returned no parsable JSON (%d chars): %s",
+            len(content),
+            preview or "(empty response)",
+        )
+        return {}
+    return parsed
+
+
+def _extract_json_object(content: str) -> dict[str, Any] | None:
+    """Pull a JSON object out of a model response.
+
+    The model sometimes wraps JSON in fences or leads with a sentence, so a bare
+    json.loads on the whole string fails. Try the cleaned text first, then the
+    first balanced {...} found anywhere in it.
+    """
+    stripped = (content or "").strip()
+    if not stripped:
+        return None
+    if stripped.startswith("```"):
+        stripped = "\n".join(stripped.splitlines()[1:])
+        if stripped.endswith("```"):
+            stripped = stripped[: stripped.rfind("```")]
+        stripped = stripped.strip()
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:].strip()
+    for candidate in (stripped, _first_json_object(stripped)):
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _first_json_object(text: str) -> str | None:
+    """First balanced {...} in the text, ignoring braces inside strings."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i, char in enumerate(text[start:], start):
+        if in_str:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_str = False
+            continue
+        if char == '"':
+            in_str = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
 
 
 # ── Stage 1: Research ─────────────────────────────────────────────────────────

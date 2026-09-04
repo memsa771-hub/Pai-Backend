@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -14,6 +16,8 @@ from pai.intelligences.counselor.tooling import ToolContext
 from pai.kernel.contracts.schemas import ConversationResult
 from pai.platform.llm.gateway import LLMGateway
 from pai.platform.llm.schemas import LLMMessage, LLMResponse, LLMToolCall, LLMToolCallFunction
+
+logger = logging.getLogger(__name__)
 
 
 def counselor_seed_messages(prompt_vars: dict[str, Any]) -> list[dict[str, Any]]:
@@ -34,6 +38,12 @@ def counselor_seed_messages(prompt_vars: dict[str, Any]) -> list[dict[str, Any]]
         if role not in ("user", "assistant") or not content:
             continue
         if role == "user" and content == current:
+            continue
+        # A leaked reasoning turn already in the transcript is replayed as an
+        # example of our own voice and teaches the model to keep narrating.
+        # Drop it from the prompt; the stored row is cleaned separately.
+        if role == "assistant" and looks_like_reasoning(content):
+            logger.warning("Dropping leaked reasoning from replayed history")
             continue
         messages.append({"role": role, "content": content})
     extra = (prompt_vars.get("web_note") or "").strip()
@@ -127,9 +137,17 @@ async def _yield_student_text(
     parsed = _result_from_text(response.content or "")
     text = parsed.reply if parsed is not None else public_reply(response.content)
     if not text:
-        text = (response.content or "").strip()
-        if text.startswith("{") or "```" in text:
-            text = ""
+        # Last-resort raw content still goes through the same guards: an empty
+        # public_reply() means the output was JSON or reasoning, and neither is
+        # safe to show. Falling back to a generic line beats leaking internals.
+        candidate = (response.content or "").strip()
+        if (
+            candidate
+            and not candidate.startswith("{")
+            and "```" not in candidate
+            and not looks_like_reasoning(candidate)
+        ):
+            text = candidate
     if text:
         yield text
         return
@@ -262,10 +280,43 @@ def _parse_conversation_json(text: str) -> ConversationResult | None:
     return parsed
 
 
+# Deliberation the student must never see. Only phrases that cannot occur when
+# speaking TO a student: third-person narration about them, quoting our own
+# instructions, or naming internal prompt fields. Validated against the stored
+# assistant transcript — these fire on real leaks and on nothing legitimate.
+# ("the student visa", "if the student is in possession of…" must NOT match,
+# hence the verb requirement after "the student".)
+_REASONING_LEAK = re.compile(
+    r"\b[Tt]he student (?:says|said|wants|now|asked|is asking|has been|switched)\b"
+    r"|\bPer rules\b|\bper the rules\b|\bPer the guidance\b"
+    r"|\bcounselor_focus\b|\bdecision_signal\b"
+    r"|\b[Tt]he rule says\b"
+)
+
+
+def looks_like_reasoning(text: str | None) -> bool:
+    """True when the model narrated its deliberation instead of replying.
+
+    A reasoning-capable model occasionally emits its scratchpad as the message.
+    Shipping that leaks the counselor's internal steering (focus, gaps, pressure
+    heuristics, prompt rules) to the student, so it is dropped rather than sent.
+    """
+    return bool(_REASONING_LEAK.search(text or ""))
+
+
 def public_reply(text: str | None) -> str:
-    """Student-visible channel: prose only. Envelope JSON is never the message."""
+    """Student-visible channel: prose only.
+
+    Envelope JSON is never the message, and neither is the model's reasoning.
+    """
     raw = (text or "").strip()
     if not raw:
+        return ""
+    if looks_like_reasoning(raw):
+        logger.warning(
+            "Counselor emitted reasoning instead of a reply; suppressed (%d chars)",
+            len(raw),
+        )
         return ""
     if raw.startswith("{") or "```" in raw:
         parsed = _parse_conversation_json(raw)

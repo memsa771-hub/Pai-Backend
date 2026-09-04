@@ -432,8 +432,11 @@ class PAIOrchestrator:
             extra_note=str(state.get("attachment_note") or ""),
         )
         state["assistant_result"] = result
-        reply = public_reply(result.reply) or (result.reply or "").strip()
-        if not reply or reply.startswith("{") or "```" in reply:
+        # public_reply() returning empty is a decision, not a miss: the output was
+        # JSON or the model's own reasoning. Falling back to the raw text here
+        # would hand the student exactly what the filter just rejected.
+        reply = public_reply(result.reply)
+        if reply.startswith("{") or "```" in reply:
             reply = ""
         state["assistant_reply"] = reply
         if not state["assistant_reply"]:
@@ -506,7 +509,11 @@ class PAIOrchestrator:
             chunks.append(delta)
             yield delta
         text = "".join(chunks)
-        state["assistant_reply"] = public_reply(text) or text
+        # Tokens have already reached the client by now, so this cannot unsend a
+        # leak mid-stream — it keeps reasoning out of the stored transcript and
+        # out of the memory this turn forms. The pre-stream guards in
+        # counselor_graph are what stop it being emitted in the first place.
+        state["assistant_reply"] = public_reply(text)
         state["assistant_result"] = None
         if self._memory:
             self._memory.record_turn(user=state["user_message"], assistant=state["assistant_reply"])

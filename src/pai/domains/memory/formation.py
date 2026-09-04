@@ -31,6 +31,11 @@ _SLUG = re.compile(r"[^a-z0-9]+")
 _LIVE = ("active", "candidate")
 # Unverified claims stay recallable but rank below settled Vault truth.
 _CLAIM_RANK_PENALTY = 0.5
+# How much of a vector-search score is "does this answer the question" versus
+# "is this a settled, important fact". Measured against labelled queries on real
+# memories: at 0.40 the structural half dominated and one high-importance memory
+# won everything; 0.60 tripled top-1 hits.
+_SEMANTIC_RELEVANCE_WEIGHT = 0.60
 
 
 @dataclass
@@ -236,7 +241,8 @@ def rank_score(
         return -1.0
     if record.importance < 0.15 or record.status == "ephemeral":
         return -1.0
-    if semantic_similarity is not None:
+    semantic = semantic_similarity is not None
+    if semantic:
         relevance = min(1.0, max(0.0, float(semantic_similarity)))
     else:
         relevance = _jaccard(
@@ -253,13 +259,30 @@ def rank_score(
         if relevance <= 0:
             return -1.0
     recency = _recency(record.last_confirmed_at, now)
-    score = (
-        0.40 * relevance
-        + 0.25 * record.importance
-        + 0.20 * record.stability
-        + 0.10 * recency
-        + 0.05 * record.confidence
+    structure = (
+        0.55 * record.importance
+        + 0.25 * record.stability
+        + 0.12 * recency
+        + 0.08 * record.confidence
     )
+    if semantic:
+        # Cosine similarities sit in a narrow band (~0.28-0.48 in practice), so
+        # the lexical weights let importance out-vote relevance: the single
+        # highest-importance memory won every query regardless of what was
+        # asked. The caller normalises similarity across the candidate set;
+        # relevance leads and structure breaks ties between close matches.
+        score = _SEMANTIC_RELEVANCE_WEIGHT * relevance + (
+            1.0 - _SEMANTIC_RELEVANCE_WEIGHT
+        ) * structure
+    else:
+        # Jaccard spreads much wider, so the original balance still holds.
+        score = (
+            0.40 * relevance
+            + 0.25 * record.importance
+            + 0.20 * record.stability
+            + 0.10 * recency
+            + 0.05 * record.confidence
+        )
     # An unverified claim must never outrank the Vault-backed fact it contradicts.
     # It stays recallable (the counselor should ask about it) but ranks below
     # settled truth competing for the same recall slots.

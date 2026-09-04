@@ -214,9 +214,21 @@ def _rank_entries(
     """
     from pai.domains.memory.formation import format_for_recall, rank_score, record_from_row
 
+    # Cosine similarities for one query sit in a narrow band, and the absolute
+    # value carries little meaning — what matters is which of these candidates
+    # is closest. Rescale the set to 0..1 so relevance can actually separate
+    # them; without this the spread is too small to outweigh importance.
+    span_lo = span = 0.0
+    if semantic and rows:
+        sims = [sim for _row, sim in rows]
+        span_lo = min(sims)
+        span = (max(sims) - span_lo) or 1.0
+
     scored: list[tuple[float, MemoryEntry]] = []
     for item in rows:
         row, similarity = item if semantic else (item, None)
+        if semantic:
+            similarity = (similarity - span_lo) / span
         record = record_from_row(row)
         score = rank_score(query, record, semantic_similarity=similarity)
         if score <= 0:

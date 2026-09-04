@@ -71,6 +71,40 @@ def test_structural_signals_still_apply_under_vector_search():
     )
 
 
+def test_relevance_outranks_importance_on_the_vector_path():
+    """The bug this weighting fixes.
+
+    Cosine similarities sit in a narrow band, so with the lexical weights the
+    single highest-importance memory won every query regardless of what was
+    asked — "which country am I aiming for?" returned education.highest_level.
+    A clearly more relevant memory must beat a merely more important one.
+    """
+    relevant = _record(memory_key="semantic:application.study_country", importance=0.55)
+    important_but_off_topic = _record(
+        memory_key="semantic:education.highest_level", importance=0.95
+    )
+    assert rank_score("q", relevant, semantic_similarity=1.0) > rank_score(
+        "q", important_but_off_topic, semantic_similarity=0.0
+    )
+
+
+def test_importance_still_breaks_ties_at_equal_relevance():
+    """Relevance leads, but structure must still decide between close matches."""
+    high = _record(importance=0.95)
+    low = _record(importance=0.42)
+    assert rank_score("q", high, semantic_similarity=0.5) > rank_score(
+        "q", low, semantic_similarity=0.5
+    )
+
+
+def test_lexical_path_keeps_its_original_weighting():
+    """Jaccard spreads far wider than cosine; its balance is unchanged."""
+    record = _record(importance=0.88, stability=0.5, confidence=0.8)
+    # 0.40*jaccard + 0.25*imp + 0.20*stab + 0.10*recency + 0.05*conf
+    score = rank_score("finance household income 40000", record)
+    assert 0.0 < score < 1.0
+
+
 def test_unverified_claim_penalty_survives_vector_path():
     """A rejected claim must not outrank settled truth just because it is close."""
     truth = _record(memory_key="semantic:application.study_country")

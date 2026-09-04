@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pai.intelligences.counselor.tooling import ToolContext, ToolResult
+
+# Audit lines the pipeline once wrote into memory. They are still live and
+# recallable in older data — they occupy a recall slot and put internal
+# vocabulary into the counselor's context. Memory holds facts about the
+# student, never our own telemetry.
+_SYSTEM_LOG = re.compile(
+    r"^\s*(?:Vault (?:accepted|rejected|applied)|VaultIntel\[|"
+    r"Extraction (?:completed|failed)|Orchestration )",
+    re.I,
+)
+
+
+def is_system_log_text(text: str) -> bool:
+    return bool(_SYSTEM_LOG.match(text or ""))
 
 
 class RecallSemanticMemoryTool:
@@ -86,6 +101,12 @@ class RememberInsightTool:
         insight = str(args.get("insight") or "").strip()
         if not insight:
             return ToolResult(name=self.name, ok=False, content="Missing insight.")
+        if is_system_log_text(insight):
+            return ToolResult(
+                name=self.name,
+                ok=False,
+                content="Memory stores facts about the student, not system activity.",
+            )
         kind = str(args.get("kind") or "insight")
         memory_id = await ctx.memory.remember(
             insight,

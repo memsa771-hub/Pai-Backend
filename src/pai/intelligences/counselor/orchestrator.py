@@ -30,7 +30,7 @@ from pai.intelligences.counselor.context import (
     context_pack_to_json,
     invalidate_counselor_cache,
 )
-from pai.intelligences.counselor.counselor_graph import public_reply
+from pai.intelligences.counselor.counselor_graph import NO_REPLY_FALLBACK, public_reply
 from pai.intelligences.counselor.graph import build_pai_graph
 from pai.intelligences.counselor.routing import (
     counselor_web_search_enabled,
@@ -438,7 +438,9 @@ class PAIOrchestrator:
         reply = public_reply(result.reply)
         if reply.startswith("{") or "```" in reply:
             reply = ""
-        state["assistant_reply"] = reply
+        # Never ship an empty bubble: it reads as a broken app and titles the
+        # conversation "". The streaming path already substitutes this string.
+        state["assistant_reply"] = reply or NO_REPLY_FALLBACK
         if not state["assistant_reply"]:
             logger.warning("Counselor returned empty prose; student will see a blank reply")
         state["task_proposals"] = result.task_proposals
@@ -514,11 +516,12 @@ class PAIOrchestrator:
             chunks.append(delta)
             yield delta
         text = "".join(chunks)
-        # Tokens have already reached the client by now, so this cannot unsend a
-        # leak mid-stream — it keeps reasoning out of the stored transcript and
-        # out of the memory this turn forms. The pre-stream guards in
-        # counselor_graph are what stop it being emitted in the first place.
-        state["assistant_reply"] = public_reply(text)
+        # iter_counselor_tokens buffers and filters the opening before yielding,
+        # so whatever arrived here is what the student saw. Store exactly that:
+        # blanking it would make the saved row disagree with the screen (the
+        # message vanishes on reload) and would strip the "?" that
+        # _record_discovery_question needs to log the gap it just asked about.
+        state["assistant_reply"] = text.strip() or NO_REPLY_FALLBACK
         state["assistant_result"] = None
         if self._memory:
             self._memory.record_turn(user=state["user_message"], assistant=state["assistant_reply"])

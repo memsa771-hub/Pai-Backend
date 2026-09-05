@@ -99,6 +99,45 @@ def test_capitalised_rule_quoting_is_caught():
     assert looks_like_reasoning("per the rules, I should ask one question.")
 
 
+async def _drain(deltas):
+    """Run _yield_student_text against a fake stream."""
+    from pai.intelligences.counselor import counselor_graph as cg
+
+    class _Gateway:
+        async def stream(self, **_kw):
+            for d in deltas:
+                yield d
+
+    return "".join([c async for c in cg._yield_student_text(_Gateway(), [], 640)])
+
+
+async def test_streamed_reasoning_is_suppressed_before_release():
+    """Once a token is sent it cannot be unsent, so the opening is buffered.
+
+    orchestrator.py claimed pre-stream guards existed here; they did not.
+    """
+    leak = (
+        'The student says "hi I want admission in ms" — they want MS in CS in '
+        "Germany. Per rules: ask at most one question. The profile has gaps: "
+        "target universities, so I should guide toward concrete next steps."
+    )
+    assert await _drain([leak[i : i + 20] for i in range(0, len(leak), 20)]) == ""
+
+
+async def test_streamed_real_reply_passes_through_whole():
+    reply = (
+        "Germany is a genuinely strong choice for CS, and your background fits. "
+        "Before we look at universities, what pulled you toward Germany "
+        "specifically — the cost, the tech scene, or staying in Europe?"
+    )
+    assert await _drain([reply[i : i + 20] for i in range(0, len(reply), 20)]) == reply
+
+
+async def test_short_reply_shorter_than_the_buffer_is_not_swallowed():
+    """A greeting reply ends before the guard window fills."""
+    assert await _drain(["Hi! ", "Good to ", "hear from you."]) == "Hi! Good to hear from you."
+
+
 def test_existing_json_filtering_still_works():
     assert public_reply('{"reply": "hello"}') == "hello"
     assert public_reply("```json\n{}\n```") == ""

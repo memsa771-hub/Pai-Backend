@@ -233,20 +233,19 @@ def _rank_entries(
     # the ordering back to importance, which is the bug this rescale exists to
     # prevent.
     span_lo = span = 0.0
-    rescale = False
     if semantic and rows:
         sims = [sim for _row, sim in rows]
         span_lo = min(sims)
-        spread = max(sims) - span_lo
-        # Below this the candidates are effectively equally relevant and
-        # stretching them would amplify noise into a ranking signal.
-        rescale = spread > 0.02
-        span = spread or 1.0
+        # A zero spread means every candidate is equally relevant, so they all
+        # land on the floor and structure decides — which is the right answer,
+        # not a case to skip. Skipping would pass raw ~0.4 similarities through
+        # and hand ordering back to importance.
+        span = (max(sims) - span_lo) or 1.0
 
     scored: list[tuple[float, MemoryEntry]] = []
     for item in rows:
         row, similarity = item if semantic else (item, None)
-        if semantic and rescale:
+        if semantic:
             similarity = _RESCALE_FLOOR + (1.0 - _RESCALE_FLOOR) * (
                 (similarity - span_lo) / span
             )

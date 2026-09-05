@@ -26,6 +26,7 @@ import pai.domains.student.person.models  # noqa: F401
 from pai.config import get_settings
 from pai.domains.memory.service import PersonMemoryService
 from pai.platform.database.db import get_session_factory
+from pai.platform.llm.embeddings import get_embedding_provider
 
 # (question, substrings that would satisfy a counselor asking it)
 CASES: list[tuple[str, list[str]]] = [
@@ -49,6 +50,16 @@ async def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
+    # Without a provider, recall silently falls back to lexical ranking and this
+    # prints a normal-looking report for a path it is not measuring — while the
+    # blend weight and rescale floor both cite these numbers.
+    if get_embedding_provider(settings) is None:
+        print(
+            "Embeddings are unavailable (OPENAI_API_KEY unset or "
+            "ENABLE_SEMANTIC_EMBEDDINGS off) — this would measure lexical recall.",
+            file=sys.stderr,
+        )
+        return 1
     factory = get_session_factory(settings)
 
     async with factory() as session:

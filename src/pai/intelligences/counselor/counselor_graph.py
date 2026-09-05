@@ -19,6 +19,14 @@ from pai.platform.llm.schemas import LLMMessage, LLMResponse, LLMToolCall, LLMTo
 
 logger = logging.getLogger(__name__)
 
+# Characters buffered before the stream is released. Long enough for a leak to
+# announce itself, short enough not to feel like a stall.
+_STREAM_GUARD_CHARS = 180
+
+# Shown when filtering leaves nothing. A blank bubble reads as a broken app and
+# titles the conversation "".
+NO_REPLY_FALLBACK = "I couldn't generate a reply just now. Please send that again."
+
 
 def counselor_seed_messages(prompt_vars: dict[str, Any]) -> list[dict[str, Any]]:
     """Static system + stable profile + real turns. Cache-friendly prefix."""
@@ -128,13 +136,37 @@ async def _yield_student_text(
     """Stream prose; if the stream is empty, one non-stream completion."""
     llm = [_dict_to_llm_message(m) for m in raw_messages]
     got = False
+    head: list[str] = []
+    releasing = False
     async for delta in gateway.stream(
         task="student_conversation", messages=llm, max_tokens=max_tokens
     ):
-        if delta:
-            got = True
+        if not delta:
+            continue
+        got = True
+        if releasing:
             yield delta
+            continue
+        # Hold the opening until there is enough to judge: reasoning announces
+        # itself early ("The student says…"), and once a token is sent it
+        # cannot be unsent. Nothing downstream can filter a live stream.
+        head.append(delta)
+        if sum(len(part) for part in head) < _STREAM_GUARD_CHARS:
+            continue
+        opening = "".join(head)
+        if looks_like_reasoning(opening):
+            logger.warning("Counselor streamed reasoning; suppressed (%d chars)", len(opening))
+            return
+        releasing = True
+        yield opening
     if got:
+        if not releasing and head:
+            # Reply ended before filling the buffer.
+            opening = "".join(head)
+            if looks_like_reasoning(opening):
+                logger.warning("Counselor streamed reasoning; suppressed (%d chars)", len(opening))
+                return
+            yield opening
         return
     response = await gateway.run(
         task="student_conversation", messages=llm, max_tokens=max_tokens
@@ -159,7 +191,7 @@ async def _yield_student_text(
     if text:
         yield text
         return
-    yield "I couldn't generate a reply just now. Please send that again."
+    yield NO_REPLY_FALLBACK
 
 
 async def _run_tool(
@@ -211,7 +243,8 @@ async def run_counselor_with_tools(
         chunks.append(delta)
     text = "".join(chunks)
     parsed = _result_from_text(text)
-    result = parsed if parsed is not None else ConversationResult(reply=text.strip())
+    # Rebuilding from raw text would restore exactly what public_reply removed.
+    result = parsed if parsed is not None else ConversationResult(reply=public_reply(text))
     return result, []
 
 

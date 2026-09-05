@@ -107,7 +107,13 @@ async def iter_counselor_tokens(
             raw_messages.extend(item[0] for item in pairs)
             continue
         parsed = _result_from_text(response.content or "")
-        text = parsed.reply if parsed is not None else public_reply(response.content)
+        # A parsed envelope is not exempt: reasoning inside {"reply": "..."} is
+        # still reasoning, so both branches go through public_reply().
+        text = (
+            public_reply(parsed.reply)
+            if parsed is not None
+            else public_reply(response.content)
+        )
         if text:
             yield text
             return
@@ -135,7 +141,9 @@ async def _yield_student_text(
     )
     assert isinstance(response, LLMResponse)
     parsed = _result_from_text(response.content or "")
-    text = parsed.reply if parsed is not None else public_reply(response.content)
+    # A parsed envelope is not exempt: reasoning inside {"reply": "..."} is
+    # still reasoning, so both branches go through public_reply().
+    text = public_reply(parsed.reply) if parsed is not None else public_reply(response.content)
     if not text:
         # Last-resort raw content still goes through the same guards: an empty
         # public_reply() means the output was JSON or reasoning, and neither is
@@ -288,7 +296,7 @@ def _parse_conversation_json(text: str) -> ConversationResult | None:
 # hence the verb requirement after "the student".)
 _REASONING_LEAK = re.compile(
     r"\b[Tt]he student (?:says|said|wants|now|asked|is asking|has been|switched)\b"
-    r"|\bPer rules\b|\bper the rules\b|\bPer the guidance\b"
+    r"|\b[Pp]er rules\b|\b[Pp]er the rules\b|\b[Pp]er the guidance\b"
     r"|\bcounselor_focus\b|\bdecision_signal\b"
     r"|\b[Tt]he rule says\b"
 )

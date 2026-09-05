@@ -77,6 +77,28 @@ def test_third_person_narration_is_a_leak():
     assert looks_like_reasoning("The student asked about funding.")
 
 
+def test_reasoning_inside_a_json_envelope_is_suppressed():
+    """A parsed envelope is not a free pass.
+
+    The counselor sometimes wraps its output as {"reply": "..."}. Reasoning
+    inside that reply is still reasoning, so the envelope branch must go
+    through the same filter as bare prose.
+    """
+    envelope = '{"reply": "The student says \\"hi\\" — they want MS. Per rules: ask one."}'
+    assert public_reply(envelope) == ""
+
+
+def test_real_reply_inside_a_json_envelope_still_passes():
+    envelope = '{"reply": "Germany is a strong choice for CS. What draws you there?"}'
+    assert public_reply(envelope) == "Germany is a strong choice for CS. What draws you there?"
+
+
+def test_capitalised_rule_quoting_is_caught():
+    """Neighbouring alternatives accept either case; this one must too."""
+    assert looks_like_reasoning("Per the rules, I should ask one question.")
+    assert looks_like_reasoning("per the rules, I should ask one question.")
+
+
 def test_existing_json_filtering_still_works():
     assert public_reply('{"reply": "hello"}') == "hello"
     assert public_reply("```json\n{}\n```") == ""

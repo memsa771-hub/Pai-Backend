@@ -23,6 +23,21 @@ def test_fenced_without_language_tag():
     assert _extract_json_object('```\n{"a": 1}\n```') == {"a": 1}
 
 
+def test_single_line_fenced_json():
+    """The fence and the JSON on one line.
+
+    Stripping the fence by dropping the first line emptied the string, and the
+    balanced-brace fallback then scanned the emptied text — reintroducing the
+    silent {} this function exists to prevent.
+    """
+    assert _extract_json_object('```json {"a": 1}```') == {"a": 1}
+    assert _extract_json_object('```{"a": 1}```') == {"a": 1}
+
+
+def test_unterminated_fence():
+    assert _extract_json_object('```json\n{"a": 1}') == {"a": 1}
+
+
 def test_prose_preamble_before_json():
     """The failure seen in production: a sentence, then the JSON."""
     raw = 'Here is the structured data you asked for:\n\n{"deadlines": ["Jan 15"]}'

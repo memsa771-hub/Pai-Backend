@@ -14,6 +14,13 @@ from pai.domains.memory.models import SemanticMemoryRow
 
 logger = logging.getLogger(__name__)
 
+# Floor for rescaled similarity: the least-close candidate of a set is still a
+# vector-search hit, so it must not score as though it were unrelated.
+# Measured against scripts/eval_memory_recall.py: 0.0 scores a lone candidate as
+# irrelevant, 0.25 compresses the range enough to cost top-3 accuracy. 0.10 holds
+# top-3 at its best while keeping the degenerate case safe.
+_RESCALE_FLOOR = 0.10
+
 
 class AsyncPostgresMemoryStore:
     """Async Postgres store used by PersonMemoryService (AgentSpan-compatible entries)."""
@@ -216,19 +223,33 @@ def _rank_entries(
 
     # Cosine similarities for one query sit in a narrow band, and the absolute
     # value carries little meaning — what matters is which of these candidates
-    # is closest. Rescale the set to 0..1 so relevance can actually separate
-    # them; without this the spread is too small to outweigh importance.
+    # is closest. Stretch the set across a floor..1.0 window so relevance can
+    # separate them; without this the spread is too small to outweigh
+    # importance.
+    #
+    # The floor matters: a plain min-max pins the worst candidate at exactly 0,
+    # and with a single candidate (or near-identical similarities) it would pin
+    # *every* candidate at 0 — scoring a strong match as irrelevant and handing
+    # the ordering back to importance, which is the bug this rescale exists to
+    # prevent.
     span_lo = span = 0.0
+    rescale = False
     if semantic and rows:
         sims = [sim for _row, sim in rows]
         span_lo = min(sims)
-        span = (max(sims) - span_lo) or 1.0
+        spread = max(sims) - span_lo
+        # Below this the candidates are effectively equally relevant and
+        # stretching them would amplify noise into a ranking signal.
+        rescale = spread > 0.02
+        span = spread or 1.0
 
     scored: list[tuple[float, MemoryEntry]] = []
     for item in rows:
         row, similarity = item if semantic else (item, None)
-        if semantic:
-            similarity = (similarity - span_lo) / span
+        if semantic and rescale:
+            similarity = _RESCALE_FLOOR + (1.0 - _RESCALE_FLOOR) * (
+                (similarity - span_lo) / span
+            )
         record = record_from_row(row)
         score = rank_score(query, record, semantic_similarity=similarity)
         if score <= 0:

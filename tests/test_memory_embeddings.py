@@ -20,6 +20,29 @@ from pai.platform.llm.embeddings import (
 )
 
 
+def _row(**kw):
+    """Detached SemanticMemoryRow — ranking never touches the session."""
+    import uuid
+
+    from pai.domains.memory.models import SemanticMemoryRow
+
+    base = dict(
+        id=uuid.uuid4(),
+        person_id=uuid.uuid4(),
+        content="application.study_country: DE",
+        memory_key="semantic:application.study_country",
+        kind="semantic",
+        status="active",
+        version=1,
+        external_id=uuid.uuid4().hex[:16],
+        last_confirmed_at=datetime.now(UTC),
+        formation={"importance": 0.88, "confidence": 0.9, "stability": 0.5},
+        entry_metadata={},
+    )
+    base.update(kw)
+    return SemanticMemoryRow(**base)
+
+
 def _record(**kw) -> MemoryRecord:
     base = dict(
         memory_key="semantic:finance.household_income",
@@ -95,6 +118,29 @@ def test_importance_still_breaks_ties_at_equal_relevance():
     assert rank_score("q", high, semantic_similarity=0.5) > rank_score(
         "q", low, semantic_similarity=0.5
     )
+
+
+def test_single_candidate_is_not_scored_as_irrelevant():
+    """A plain min-max rescale pins the only candidate at relevance 0.
+
+    Vector search returning one row means one row matched — scoring it as
+    though it were unrelated (and handing the ordering back to importance)
+    is exactly the bug the rescale exists to prevent.
+    """
+    from pai.domains.memory.postgres_store import _rank_entries
+
+    row = _row(content="finance.household_income: 40000/month")
+    entries = _rank_entries("how can I afford this?", [(row, 0.95)], 5, semantic=True)
+    assert len(entries) == 1, "a lone strong match must survive ranking"
+
+
+def test_near_identical_similarities_do_not_collapse():
+    """When everything is equally close, no candidate may be zeroed out."""
+    from pai.domains.memory.postgres_store import _rank_entries
+
+    rows = [(_row(content=f"application.field_{i}: v"), 0.400 + i * 0.001) for i in range(4)]
+    entries = _rank_entries("q", rows, 10, semantic=True)
+    assert len(entries) == 4
 
 
 def test_lexical_path_keeps_its_original_weighting():

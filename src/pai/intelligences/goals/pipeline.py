@@ -107,17 +107,21 @@ def _extract_json_object(content: str) -> dict[str, Any] | None:
     json.loads on the whole string fails. Try the cleaned text first, then the
     first balanced {...} found anywhere in it.
     """
-    stripped = (content or "").strip()
-    if not stripped:
+    raw = (content or "").strip()
+    if not raw:
         return None
-    if stripped.startswith("```"):
-        stripped = "\n".join(stripped.splitlines()[1:])
-        if stripped.endswith("```"):
-            stripped = stripped[: stripped.rfind("```")]
-        stripped = stripped.strip()
-        if stripped.lower().startswith("json"):
-            stripped = stripped[4:].strip()
-    for candidate in (stripped, _first_json_object(stripped)):
+    unfenced = raw
+    if unfenced.startswith("```"):
+        # Split on the fence itself, not on newlines: ```json {"a": 1}``` is a
+        # single line, and dropping line one would leave nothing to parse.
+        unfenced = unfenced[3:]
+        if unfenced.endswith("```"):
+            unfenced = unfenced[: unfenced.rfind("```")]
+        unfenced = unfenced.strip()
+        if unfenced.lower().startswith("json"):
+            unfenced = unfenced[4:].strip()
+    # Always keep `raw` as a fallback so a mangled strip cannot lose the object.
+    for candidate in (unfenced, _first_json_object(unfenced), _first_json_object(raw)):
         if not candidate:
             continue
         try:

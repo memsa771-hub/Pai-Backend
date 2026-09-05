@@ -447,7 +447,12 @@ class PAIOrchestrator:
         state["tool_trace"] = prior_trace
         state["orchestration_llm_calls"] = (state.get("orchestration_llm_calls") or 0) + 1
         if self._memory:
-            self._memory.record_turn(user=state["user_message"], assistant=result.reply)
+            # Record what the student was actually shown. Passing result.reply
+            # here would put suppressed reasoning back into conversation memory,
+            # where it is replayed as an example of our own voice.
+            self._memory.record_turn(
+                user=state["user_message"], assistant=state["assistant_reply"]
+            )
         if self._run:
             self._run.current_step = "process_tasks"
         return state

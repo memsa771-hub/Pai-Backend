@@ -137,4 +137,8 @@ def normalize_candidates(candidates: list[VaultCandidate]) -> list[VaultCandidat
         norm = normalize_candidate(c)
         if norm is not None:
             out.append(norm)
+    # A named program is not a highest-level claim. Keep the stored highest
+    # qualification; do not emit high_school from an FSc (or similar) mention.
+    if any(c.field_key == "education.program" for c in out):
+        out = [c for c in out if c.field_key != "education.highest_level"]
     return out

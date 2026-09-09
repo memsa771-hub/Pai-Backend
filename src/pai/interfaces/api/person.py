@@ -226,13 +226,34 @@ def _resource_router(path: str, model_key: str, create_schema: type[BaseModel], 
 
 
 def _row_dict(row: Any) -> dict[str, Any]:
+    from pai.domains.student.person.profile_snapshot import (
+        _cert_dict,
+        _edu_dict,
+        _project_dict,
+        _skill_dict,
+        _work_dict,
+    )
+
+    if isinstance(row, Education):
+        return _edu_dict(row)
+    if row.__class__.__name__ == "WorkExperience":
+        return _work_dict(row)
+    if row.__class__.__name__ == "Project":
+        return _project_dict(row)
+    if row.__class__.__name__ == "Skill":
+        return _skill_dict(row)
+    if row.__class__.__name__ == "Certification":
+        return _cert_dict(row)
     data = {c.name: getattr(row, c.name) for c in row.__table__.columns}
-    for k, v in list(data.items()):
+    out: dict[str, Any] = {}
+    for k, v in data.items():
         if hasattr(v, "isoformat"):
-            data[k] = v.isoformat()
+            v = v.isoformat()
         elif isinstance(v, uuid_mod.UUID):
-            data[k] = str(v)
-    return data
+            v = str(v)
+        parts = k.split("_")
+        out[parts[0] + "".join(p.title() for p in parts[1:])] = v
+    return out
 
 
 def _camel_to_snake(data: dict[str, Any]) -> dict[str, Any]:

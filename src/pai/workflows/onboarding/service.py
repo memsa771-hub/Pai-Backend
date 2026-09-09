@@ -296,20 +296,25 @@ class OnboardingService:
             if person.onboarding_completed_at is None
             else await self._first_education(session, person)
         )
+        from pai.domains.student.handlers.common import _MANUAL_TYPED, _typed_snapshot, audit_manual_typed_write
+
+        spec = _MANUAL_TYPED["educations"]
+        old_value = _typed_snapshot(row, spec[2]) if row is not None else None
         if row is None:
-            session.add(
-                Education(
-                    person_id=person.id,
-                    institution=body.institution,
-                    degree=degree,
-                    major=body.major if body.major else None,
-                    gpa=body.gpa,
-                    gpa_scale=body.gpaScale,
-                    graduation_year=body.graduationYear,
-                    status="unknown",
-                    qualification_data={"original_level": body.educationLevel, "original_name": degree},
-                )
+            row = Education(
+                person_id=person.id,
+                institution=body.institution,
+                degree=degree,
+                major=body.major if body.major else None,
+                gpa=body.gpa,
+                gpa_scale=body.gpaScale,
+                graduation_year=body.graduationYear,
+                status="unknown",
+                qualification_data={"original_level": body.educationLevel, "original_name": degree},
             )
+            session.add(row)
+            await session.flush()
+            await audit_manual_typed_write(session, person, row)
         else:
             if body.institution:
                 row.institution = body.institution
@@ -322,6 +327,8 @@ class OnboardingService:
                 row.gpa_scale = body.gpaScale
             if body.graduationYear is not None:
                 row.graduation_year = body.graduationYear
+            await session.flush()
+            await audit_manual_typed_write(session, person, row, old_value=old_value)
         if person.vault:
             scopes = list(person.vault.applicable_scopes or [])
             if "education" not in scopes:

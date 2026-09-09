@@ -30,6 +30,7 @@ async def consume(settings, items):
     """
     if not enabled(settings):
         return
+    global _last_backend_warning
     try:
         async with asyncio.timeout(settings.rate_limit_backend_timeout_seconds):
             async with get_session_factory(settings)() as session:
@@ -50,8 +51,21 @@ async def consume(settings, items):
                 await session.commit()
     except AuthError:
         raise
+    except TimeoutError:
+        now = time.monotonic()
+        if now - _last_backend_warning >= 60:
+            _last_backend_warning = now
+            logger.warning(
+                "Rate-limit backend timed out after %ss; allowing request",
+                settings.rate_limit_backend_timeout_seconds,
+            )
+        if settings.rate_limit_fail_closed:
+            raise AuthError(
+                code="LIMITS_UNAVAILABLE",
+                message="Service temporarily unavailable.",
+                status_code=503,
+            )
     except Exception as exc:
-        global _last_backend_warning
         now = time.monotonic()
         if now - _last_backend_warning >= 60:
             _last_backend_warning = now

@@ -73,6 +73,14 @@ async def test_every_accepted_field_can_invalidate_goal_assessment():
     enqueue.assert_awaited_once()
 
 
+def test_catalog_program_key_matches_educations_manifest():
+    from pai.domains.goals.dependencies import affects
+
+    assert affects(["educations", "educations:abc"], "education.program") is True
+    assert affects(["educations"], "career.work_history") is False
+    assert affects(["testAttempts"], "application.test_scores") is True
+
+
 @pytest.mark.asyncio
 async def test_two_goals_only_affected_one_refreshed():
     """

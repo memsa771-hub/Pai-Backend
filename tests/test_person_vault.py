@@ -28,6 +28,40 @@ def test_bootstrap_idempotent(verified_user):
     assert first["vault"]["id"] == second["vault"]["id"]
 
 
+def test_education_crud(verified_user):
+    client, headers, _ = verified_user
+    client.post("/api/v1/person/bootstrap", headers=headers)
+    created = client.post(
+        "/api/v1/person/educations",
+        headers=headers,
+        json={"institution": "Test University", "degree": "BS", "graduationYear": 2024},
+    )
+    assert created.status_code == 201
+    item_id = created.json()["data"]["item"]["id"]
+    listing = client.get("/api/v1/person/educations", headers=headers)
+    items = listing.json()["data"]["items"]
+    assert len(items) == 1
+    assert items[0]["graduationYear"] == 2024
+    assert items[0]["institution"] == "Test University"
+    program = client.get("/api/v1/vault/fields/education.program", headers=headers)
+    assert program.status_code == 200
+    values = program.json()["data"]["value"]
+    assert isinstance(values, list) and values[0]["degree"] == "BS"
+    patched = client.patch(
+        f"/api/v1/person/educations/{item_id}",
+        headers=headers,
+        json={"major": "Computer Science"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["data"]["item"]["major"] == "Computer Science"
+    timeline = client.get("/api/v1/person/education-timeline", headers=headers)
+    assert timeline.status_code == 200
+    ev = timeline.json()["data"]["items"][0]["evidence"]
+    assert any(item["attribute"] == "institution" for item in ev)
+    deleted = client.delete(f"/api/v1/person/educations/{item_id}", headers=headers)
+    assert deleted.status_code == 200
+
+
 def test_bootstrap_rejects_unverified(vault_client, fake_provider):
     email = "unverified@example.com"
     fake_provider.users[email] = {
@@ -54,28 +88,6 @@ def test_person_profile_patch(verified_user):
     )
     assert patch.status_code == 200
     assert patch.json()["data"]["fullName"] == "Test User"
-
-
-def test_education_crud(verified_user):
-    client, headers, _ = verified_user
-    client.post("/api/v1/person/bootstrap", headers=headers)
-    created = client.post(
-        "/api/v1/person/educations",
-        headers=headers,
-        json={"institution": "Test University", "degree": "BS", "graduationYear": 2024},
-    )
-    assert created.status_code == 201
-    item_id = created.json()["data"]["item"]["id"]
-    listing = client.get("/api/v1/person/educations", headers=headers)
-    assert len(listing.json()["data"]["items"]) == 1
-    patched = client.patch(
-        f"/api/v1/person/educations/{item_id}",
-        headers=headers,
-        json={"major": "Computer Science"},
-    )
-    assert patched.status_code == 200
-    deleted = client.delete(f"/api/v1/person/educations/{item_id}", headers=headers)
-    assert deleted.status_code == 200
 
 
 def test_sparse_vault_field(verified_user):

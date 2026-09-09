@@ -148,6 +148,27 @@ def test_normalize_keeps_other_potential_facts():
     assert all(c.fact_type == "OTHER_POTENTIAL_FACT" for c in out)
 
 
+def test_normalize_drops_highest_level_when_program_present():
+    raw = [
+        VaultCandidate(
+            field_key="education.program",
+            value={"degree": "FSc", "major": "Pre-Medical", "institution": "Punjab College"},
+            confidence=0.95,
+            evidence_text="I completed FSc Pre-Medical at Punjab College",
+            source_reference="m1",
+        ),
+        VaultCandidate(
+            field_key="education.highest_level",
+            value="high_school",
+            confidence=0.9,
+            evidence_text="I completed FSc Pre-Medical at Punjab College",
+            source_reference="m1",
+        ),
+    ]
+    out = normalize_candidates(raw)
+    assert [c.field_key for c in out] == ["education.program"]
+
+
 def test_merge_keeps_distinct_jobs_and_observed():
     jobs = [
         VaultCandidate(

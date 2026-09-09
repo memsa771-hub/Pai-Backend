@@ -121,11 +121,11 @@ class Settings(BaseSettings):
     # back to lexical ranking, which looks like working software. Latency is
     # regional, so this is a knob — but the default must let a normal call
     # finish, not merely bound the wait.
-    embedding_timeout_seconds: float = Field(default=3.0, gt=0, alias="EMBEDDING_TIMEOUT_SECONDS")
+    embedding_timeout_seconds: float = Field(default=8.0, gt=0, alias="EMBEDDING_TIMEOUT_SECONDS")
     # Must exceed embedding_timeout_seconds: recall embeds the query first, so a
     # budget below it can never succeed. No le= ceiling — a deployment far from
     # the provider has to be able to raise this.
-    memory_recall_budget_seconds: float = Field(default=4.0, gt=0, alias="MEMORY_RECALL_BUDGET_SECONDS")
+    memory_recall_budget_seconds: float = Field(default=9.0, gt=0, alias="MEMORY_RECALL_BUDGET_SECONDS")
     turn_understanding_budget_seconds: float = Field(default=2.0, gt=0, le=3, alias="TURN_UNDERSTANDING_BUDGET_SECONDS")
     memory_rerank_url: str = Field(default="", alias="MEMORY_RERANK_URL")
     memory_rerank_api_key: str = Field(default="", alias="MEMORY_RERANK_API_KEY")

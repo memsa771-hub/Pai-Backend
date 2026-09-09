@@ -82,6 +82,8 @@ async def create_resource(
     await session.flush()
     if model is Education:
         await _sync_education_derivations(session, person, row)
+    from pai.domains.student.handlers.common import audit_manual_typed_write
+    await audit_manual_typed_write(session, person, row)
     scope = SCOPE_BY_RESOURCE.get(model.__tablename__)
     if scope:
         await expand_scope_for_person(session, person, scope)
@@ -111,12 +113,16 @@ async def update_resource(
     row = result.scalar_one_or_none()
     if row is None:
         raise PersonNotFoundError("Resource not found.")
+    from pai.domains.student.handlers.common import _MANUAL_TYPED, _typed_snapshot, audit_manual_typed_write
+    spec = _MANUAL_TYPED.get(model.__tablename__)
+    old_value = _typed_snapshot(row, spec[2]) if spec else None
     for key, val in data.items():
         if hasattr(row, key) and val is not None:
             setattr(row, key, val)
     await session.flush()
     if model is Education:
         await _sync_education_derivations(session, person, row)
+    await audit_manual_typed_write(session, person, row, old_value=old_value or None)
     if person.vault:
         await apply_completion_to_vault(session, person, person.vault)
     from pai.domains.goals.service import mark_intelligence_stale_for_vault_update

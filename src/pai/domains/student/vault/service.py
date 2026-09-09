@@ -262,6 +262,18 @@ class VaultService:
         vault = person.vault
         if vault is None:
             return {"key": field_key, "value": None, "masked": False}
+        if field.storage not in ("vault_value", "person"):
+            from pai.domains.student.person.profile_snapshot import load_typed_profile_records
+            from pai.domains.student.vault.completion import _field_value
+
+            typed = await load_typed_profile_records(session, person.id)
+            return {
+                "key": field_key,
+                "value": _field_value(
+                    person, field, {}, typed, include_sensitive=include_sensitive
+                ),
+                "masked": False,
+            }
         result = await session.execute(
             select(VaultValue).where(
                 VaultValue.vault_id == vault.id,

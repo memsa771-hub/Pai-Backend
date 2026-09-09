@@ -52,12 +52,21 @@ def get_engine(settings: Settings | None = None):
     if _engine is None:
         remote = _is_remote_postgres(settings.database_url)
         testing = settings.app_env in {"test", "testing"}
+        # Session-mode Supabase poolers cap clients near pool_size=15 for the
+        # whole project. API + three workers each using pool_size=5/overflow=10
+        # hits EMAXCONNSESSION immediately. Keep remote pools tiny.
+        if testing:
+            pool_kwargs: dict = {"poolclass": NullPool}
+        elif remote:
+            pool_kwargs = {"pool_size": 2, "max_overflow": 1}
+        else:
+            pool_kwargs = {"pool_size": 5, "max_overflow": 10}
         _engine = create_async_engine(
             settings.database_url,
             # Remote pooler: skip pre-ping (extra RTT) and recycle idle sockets.
             pool_pre_ping=testing or not remote,
             pool_recycle=180 if remote else -1,
-            **({"poolclass": NullPool} if testing else {"pool_size": 5, "max_overflow": 10}),
+            **pool_kwargs,
             connect_args=_engine_connect_args(
                 settings.database_url, ssl_verify=settings.database_ssl_verify
             ),

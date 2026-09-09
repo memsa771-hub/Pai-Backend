@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -64,18 +64,22 @@ class PersonBootstrapService:
                     session, AUTH_PROVIDER_NAME, external_id
                 )
                 if person is None:
-                    person = Person(
-                        auth_provider=AUTH_PROVIDER_NAME,
-                        external_auth_id=external_id,
-                        email=email,
-                        email_verified=True,
-                        full_name=provider_user.display_name,
-                        phone=provider_user.phone,
-                        account_status="active",
-                        onboarding_completed_at=None,
-                    )
-                    session.add(person)
-                    await session.flush()
+                    person = await self._get_live_person_by_email_for_update(session, email)
+                    if person is not None:
+                        person.external_auth_id = external_id
+                    else:
+                        person = Person(
+                            auth_provider=AUTH_PROVIDER_NAME,
+                            external_auth_id=external_id,
+                            email=email,
+                            email_verified=True,
+                            full_name=provider_user.display_name,
+                            phone=provider_user.phone,
+                            account_status="active",
+                            onboarding_completed_at=None,
+                        )
+                        session.add(person)
+                        await session.flush()
 
                 person.email = email
                 person.email_verified = True
@@ -105,6 +109,8 @@ class PersonBootstrapService:
                 person = await self._get_person_for_update(
                     session, AUTH_PROVIDER_NAME, external_id
                 )
+                if person is None:
+                    person = await self._get_live_person_by_email_for_update(session, email)
                 if person is None:
                     raise
                 vault = await self._get_vault_for_update(session, person.id)
@@ -175,6 +181,18 @@ class PersonBootstrapService:
             .options(selectinload(Person.vault))
         )
         result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _get_live_person_by_email_for_update(
+        self, session: AsyncSession, email: str
+    ) -> Person | None:
+        result = await session.execute(
+            select(Person)
+            .where(func.lower(Person.email) == email, Person.deleted_at.is_(None))
+            .order_by(Person.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
         return result.scalar_one_or_none()
 
     async def _get_person_for_update(

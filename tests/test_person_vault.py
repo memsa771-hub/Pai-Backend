@@ -203,7 +203,10 @@ def test_vault_overview_filled_empty_required(verified_user):
     required_keys = {item["key"] for item in data["required"]}
     empty_keys = {item["key"] for item in data["empty"]}
     assert "auth.email" in filled_keys
-    assert "application.study_country" in required_keys
+    # Legacy Goal targets remain readable in the catalog but are no longer
+    # Vault requirements or discovery gaps.
+    assert "application.study_country" not in required_keys
+    assert "application.study_country" not in empty_keys
     assert "application.test_scores" in empty_keys
     assert data["requiredCount"] == len(data["required"])
     assert data["memory"]["engine"] == "agentspan"

@@ -17,7 +17,12 @@ from pai.domains.student.person.models import (
     WorkExperience,
 )
 from pai.domains.student.person.profile_snapshot import load_typed_profile_records
-from pai.domains.student.vault.catalog import VAULT_CATALOG, CatalogField, Priority
+from pai.domains.student.vault.catalog import (
+    LEGACY_GOAL_FIELDS,
+    VAULT_CATALOG,
+    CatalogField,
+    Priority,
+)
 
 # (storage_key used by catalog, ORM model, API camelCase for typedResources)
 _TYPED_MODELS: list[tuple[str, type, str]] = [
@@ -32,8 +37,11 @@ _TYPED_MODELS: list[tuple[str, type, str]] = [
 
 def _scope_fields(scopes: list[str]) -> list[CatalogField]:
     applicable = set(scopes)
-    return [f for f in VAULT_CATALOG.values()
-            if f.applicable_scope in applicable and f.storage != "goals"]
+    return [
+        field
+        for field in VAULT_CATALOG.values()
+        if field.applicable_scope in applicable and field.key not in LEGACY_GOAL_FIELDS
+    ]
 
 
 def priority_name(p: Priority) -> str:

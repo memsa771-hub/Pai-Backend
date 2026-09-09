@@ -1,4 +1,9 @@
-from pai.domains.student.vault.catalog import CATALOG_VERSION, GUIDANCE_SCOPES, get_catalog_field
+from pai.domains.student.vault.catalog import (
+    CATALOG_VERSION,
+    GUIDANCE_SCOPES,
+    LEGACY_GOAL_FIELDS,
+    get_catalog_field,
+)
 from pai.domains.student.vault.service import grow_vault_schema
 
 
@@ -11,6 +16,7 @@ def test_vault_catalog_covers_guidance_core():
     assert get_catalog_field("application.career_interest").editable is False
     assert get_catalog_field("application.target_universities").editable is False
     assert get_catalog_field("application.admission_cycle").editable is False
+    assert "application.study_country" in LEGACY_GOAL_FIELDS
 
 
 def test_grow_vault_schema_is_idempotent():

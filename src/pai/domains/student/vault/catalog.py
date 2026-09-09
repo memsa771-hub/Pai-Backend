@@ -7,6 +7,15 @@ from typing import Literal
 
 CATALOG_VERSION = "1.6.0"
 AUTH_PROVIDER_NAME = "supabase"
+LEGACY_GOAL_FIELDS = frozenset(
+    {
+        "application.goals",
+        "application.career_interest",
+        "application.study_country",
+        "application.target_universities",
+        "application.admission_cycle",
+    }
+)
 # Always-on scopes so PAI can see what a student still needs for guidance.
 GUIDANCE_SCOPES = ("universal", "education", "application", "career")
 

@@ -170,7 +170,10 @@ async def patch_person_me(
 
 
 def _resource_router(path: str, model_key: str, create_schema: type[BaseModel], patch_schema: type[BaseModel]):
-    model = MODELS[model_key]
+    from pai.domains.student.person import typed_resources as resources
+    if model_key == "goals":
+        from pai.domains.goals import legacy_resources as resources
+    model = resources.MODELS[model_key]
 
     def register(Create: type[BaseModel], Patch: type[BaseModel]) -> None:
         @router.get(f"/{path}")
@@ -180,7 +183,7 @@ def _resource_router(path: str, model_key: str, create_schema: type[BaseModel], 
             limit: int = Query(50, ge=1, le=100),
             offset: int = Query(0, ge=0),
         ):
-            rows = await list_resources(session, model, person.id, limit=limit, offset=offset)
+            rows = await resources.list_resources(session, model, person.id, limit=limit, offset=offset)
             return JSONResponse(content=success({"items": [_row_dict(r) for r in rows]}))
 
         @router.post(f"/{path}", status_code=201)
@@ -189,7 +192,7 @@ def _resource_router(path: str, model_key: str, create_schema: type[BaseModel], 
             session: Annotated[AsyncSession, Depends(get_db)],
             person=Depends(resolve_person_from_token),
         ):
-            row = await create_resource(
+            row = await resources.create_resource(
                 session, model, person, _camel_to_snake(body.model_dump(exclude_none=True))
             )
             return JSONResponse(status_code=201, content=success({"item": _row_dict(row)}))
@@ -201,7 +204,7 @@ def _resource_router(path: str, model_key: str, create_schema: type[BaseModel], 
             session: Annotated[AsyncSession, Depends(get_db)],
             person=Depends(resolve_person_from_token),
         ):
-            row = await update_resource(
+            row = await resources.update_resource(
                 session,
                 model,
                 person,
@@ -216,7 +219,7 @@ def _resource_router(path: str, model_key: str, create_schema: type[BaseModel], 
             session: Annotated[AsyncSession, Depends(get_db)],
             person=Depends(resolve_person_from_token),
         ):
-            await delete_resource(session, model, person, uuid_mod.UUID(item_id))
+            await resources.delete_resource(session, model, person, uuid_mod.UUID(item_id))
             return JSONResponse(content=success({"message": "Deleted."}))
 
     register(create_schema, patch_schema)

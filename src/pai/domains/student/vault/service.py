@@ -342,7 +342,7 @@ class VaultService:
     async def _load_typed_summary(self, session: AsyncSession, person_id: uuid.UUID) -> dict[str, str]:
         from sqlalchemy import func
 
-        from pai.domains.goals.models import Goal
+        from pai.domains.goals.public import count_goals
         from pai.domains.student.person.models import (
             Certification,
             Education,
@@ -359,7 +359,6 @@ class VaultService:
             ("projects", Project),
             ("skills", Skill),
             ("certifications", Certification),
-            ("goals", Goal),
         ]
         summary: dict[str, str] = {}
         for name, model in models:
@@ -367,6 +366,7 @@ class VaultService:
                 select(func.count()).select_from(model).where(model.person_id == person_id)
             )
             summary[name] = str(count or 0)
+        summary["goals"] = str(await count_goals(session, person_id))
         return summary
 
     async def upsert_sparse_field(

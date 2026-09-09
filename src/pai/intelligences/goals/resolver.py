@@ -115,8 +115,8 @@ async def resolve(
         return ResolverResult(
             action=GoalWriteAction.NONE.value, goal=None, intelligence_enqueued=False
         )
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, person_id)
+    from pai.domains.student.public import lock_owner
+    await lock_owner(session, person_id)
     intent = parsed.intent
     supersedes = parsed.supersedes
 

@@ -133,7 +133,7 @@ class GoalExtract(BaseModel):
     def _goal_type_token(cls, value: object) -> object:
         if value in (None, ""):
             return None
-        from pai.domains.goals.types import GoalType
+        from pai.kernel.contracts.goals import GoalType
 
         return GoalType.coerce(str(value)).value
 

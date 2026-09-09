@@ -15,7 +15,7 @@ from pai.domains.documents.models import (
     MessageDocument,
 )
 from pai.domains.documents.relations import add_relation
-from pai.domains.student.person.models import Person, PersonVault, VaultValue
+from pai.kernel.contracts.vault import StudentIdentity as Person
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.kernel.errors import AuthError
 from pai.config import get_settings
@@ -37,8 +37,8 @@ class DocumentIdentityUnresolvedError(AuthError):
 
 
 async def enqueue_reprocess(session: AsyncSession, person_id: uuid.UUID, document_id: uuid.UUID) -> None:
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, person_id)
+    from pai.domains.student.public import lock_owner
+    await lock_owner(session, person_id)
     doc = await get_document_owned(session, person_id, document_id)
     if doc.source_type == "ai_generated":
         raise AuthError(code="EXTRACTION_DISABLED",
@@ -135,24 +135,12 @@ async def attachment_note_for_message(session: AsyncSession, message_id: uuid.UU
     return "Attached documents: " + ", ".join(names)
 
 
-async def _current_vault_values(
-    session: AsyncSession, person: Person, field_keys: list[str]
-) -> dict[str, object]:
-    if not field_keys:
+async def _current_vault_values(session, person, field_keys):
+    from pai.domains.student.public import VaultReader
+    snapshot = await VaultReader(session).get_snapshot(person.id)
+    if snapshot is None:
         return {}
-    vault_id = await session.scalar(
-        select(PersonVault.id).where(PersonVault.person_id == person.id)
-    )
-    if vault_id is None:
-        return {}
-    result = await session.execute(
-        select(VaultValue.field_key, VaultValue.value).where(
-            VaultValue.vault_id == vault_id,
-            VaultValue.field_key.in_(field_keys),
-            VaultValue.status == "active",
-        )
-    )
-    return {key: value for key, value in result.all()}
+    return {key: snapshot.profile[key] for key in field_keys if key in snapshot.profile}
 
 
 async def list_document_candidates(

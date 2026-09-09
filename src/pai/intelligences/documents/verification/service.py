@@ -11,7 +11,7 @@ from pai.kernel.gates import accept_vault_candidates
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.intelligences.documents.config import policy
 from pai.domains.documents.models import Document, DocumentFact, VerificationCase
-from pai.domains.student.person.models import Person
+from pai.kernel.contracts.vault import StudentIdentity as Person
 from pai.config import get_settings
 from pai.domains.student.vault.security import SensitiveValueCodec
 from pai.intelligences.documents.evidence.criticality import field_sensitivity
@@ -137,8 +137,8 @@ async def resolve_case(
 ) -> VerificationCase:
     if resolution_type not in RESOLUTIONS:
         raise AuthError(code="INVALID_RESOLUTION", message="Unknown resolution type.", status_code=400)
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, person.id)
+    from pai.domains.student.public import lock_owner
+    await lock_owner(session, person.id)
     result = await session.execute(
         select(VerificationCase).where(
             VerificationCase.id == case_id,

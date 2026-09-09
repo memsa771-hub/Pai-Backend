@@ -174,6 +174,14 @@ async def process_candidates(
             mutated = True
             continue
 
+        if field.storage == "goals" and field.key == "application.career_interest":
+            from pai.domains.goals.observations import submit_career_interest
+            status = await submit_career_interest(session, person.id, candidate)
+            if status != "rejected":
+                accepted.append(VaultApplyResult(field_key=candidate.field_key, status=status, confidence=candidate.confidence))
+                mutated = True
+            continue
+
         typed = await apply_typed_candidate(
             session,
             person,

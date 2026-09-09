@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.domains.goals.models import Goal
+from pai.domains.goals.public import count_goals
 from pai.domains.student.person.models import (
     Certification,
     Education,
@@ -27,14 +27,14 @@ _TYPED_MODELS: list[tuple[str, type, str]] = [
     ("projects", Project, "projects"),
     ("skills", Skill, "skills"),
     ("certifications", Certification, "certifications"),
-    ("goals", Goal, "goals"),
     ("test_attempts", TestAttempt, "testAttempts"),
 ]
 
 
 def _scope_fields(scopes: list[str]) -> list[CatalogField]:
     applicable = set(scopes)
-    return [f for f in VAULT_CATALOG.values() if f.applicable_scope in applicable]
+    return [f for f in VAULT_CATALOG.values()
+            if f.applicable_scope in applicable and f.storage != "goals"]
 
 
 def priority_name(p: Priority) -> str:
@@ -75,6 +75,11 @@ async def load_presence_snapshot(
             typed_present[storage_key] = n > 0
             typed_resources[api_name] = str(n)
 
+    # Combined-profile compatibility: only Goals queries its own tables.
+    goals = await count_goals(session, person.id)
+    typed_counts["goals"] = goals
+    typed_present["goals"] = goals > 0
+    typed_resources["goals"] = str(goals)
     return {
         "active_keys": active_keys,
         "typed_present": typed_present,

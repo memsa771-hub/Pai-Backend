@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-from pai.intelligences.counselor.context import StudentContextPack
+from pai.workflows.counseling.context import StudentContextPack
 from pai.kernel.contracts.schemas import (
     CandidateResult,
     ConversationResult,

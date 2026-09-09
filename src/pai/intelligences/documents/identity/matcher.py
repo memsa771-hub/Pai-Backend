@@ -4,11 +4,11 @@ from pai.intelligences.documents.classification.taxonomy import evidence_eligibl
 from pai.intelligences.documents.config import policy
 from pai.intelligences.documents.identity.names import names_match
 from pai.intelligences.documents.normalization.dates import parse_date
-from pai.domains.student.person.models import Person
+from pai.kernel.contracts.vault import StudentIdentity
 
 
 def match_student(
-    person: Person,
+    person: StudentIdentity,
     *,
     document_name: str | None,
     document_type: str,

@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.domains.goals.models import Goal
+from pai.domains.goals.public import profile_records
 from pai.domains.student.education.timeline import order_timeline
 from pai.domains.student.person.models import (
     Certification,
@@ -39,17 +39,6 @@ def _edu_dict(row: Education) -> dict[str, Any]:
         "status": row.status,
         "startDate": row.start_date.isoformat() if row.start_date else None,
         "endDate": row.end_date.isoformat() if row.end_date else None,
-    }
-
-
-def _goal_dict(row: Goal) -> dict[str, Any]:
-    return {
-        "id": str(row.id),
-        "goalType": row.goal_type,
-        "title": row.title,
-        "description": row.description,
-        "status": row.status,
-        "priority": row.priority,
     }
 
 
@@ -94,6 +83,7 @@ async def load_typed_profile_records(
     person_id: uuid.UUID,
     *,
     limit_per_type: int = 20,
+    include_goals: bool = True,
 ) -> dict[str, Any]:
     """Full typed records for the counselor (contents, not counts)."""
     educations = order_timeline(
@@ -108,16 +98,7 @@ async def load_typed_profile_records(
             ).scalars()
         )
     )
-    goals = list(
-        (
-            await session.execute(
-                select(Goal)
-                .where(Goal.person_id == person_id)
-                .order_by(Goal.updated_at.desc())
-                .limit(limit_per_type)
-            )
-        ).scalars()
-    )
+    goals = await profile_records(session, person_id, limit=limit_per_type) if include_goals else []
     work = list(
         (
             await session.execute(
@@ -163,7 +144,7 @@ async def load_typed_profile_records(
         # Education is returned in academic order so the counselor reads it as a
         # timeline rather than as whatever was edited most recently.
         "educations": [_edu_dict(r) for r in educations],
-        "goals": [_goal_dict(r) for r in goals],
+        "goals": goals,
         "workExperiences": [_work_dict(r) for r in work],
         "projects": [_project_dict(r) for r in projects],
         "skills": [_skill_dict(r) for r in skills],

@@ -19,9 +19,9 @@ from pai.domains.conversations.service import begin_chat_turn, save_assistant_me
 from pai.domains.documents.service import attach_documents_to_message
 from pai.domains.memory.service import PersonMemoryService
 from pai.domains.student.person.models import Person
-from pai.intelligences.counselor.followup import _payload_from_state, handle_user_message
-from pai.intelligences.counselor.opening import ensure_thread_opening
-from pai.intelligences.counselor.orchestrator import PAIOrchestrator
+from pai.workflows.counseling.followup import _payload_from_state, handle_user_message
+from pai.workflows.counseling.opening import ensure_thread_opening
+from pai.workflows.counseling.service import PAIOrchestrator
 from pai.intelligences.counselor.routing import counseling_task, counselor_web_search_enabled
 from pai.interfaces.api.dependencies import get_db, require_onboarding_complete
 from pai.interfaces.api.schemas import ApiErrorResponse, success

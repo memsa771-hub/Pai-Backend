@@ -5,11 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
-from pai.kernel.gates import accept_vault_candidates
 from pai.platform.llm.gateway import LLMGateway
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.intelligences.documents.classification.classifier import classify_content
@@ -41,7 +39,8 @@ from pai.domains.documents.models import (
     DocumentParty,
     DocumentVersion,
 )
-from pai.domains.student.person.models import Education, Person, PersonVault, VaultValue
+from pai.domains.student.public import VaultReader, VaultWriter
+from pai.kernel.contracts.vault import StudentIdentity, DocumentEvidence
 from pai.domains.student.vault.catalog import get_catalog_field
 from pai.platform.storage.supabase import SupabaseStorageProvider
 from pai.domains.student.vault.security import SensitiveValueCodec
@@ -61,54 +60,13 @@ def _mark_stage(
         doc.status = mapped
 
 
-async def _known_facts(session: AsyncSession, person: Person) -> list[str]:
-    from pai.intelligences.counselor.context import build_known_facts
-    from pai.domains.student.person.profile_snapshot import load_typed_profile_records
-    from pai.domains.student.vault.service import VaultService
-
-    sparse: dict = {}
-    if person.vault is not None:
-        unified = await VaultService().get_unified_vault(session, person, include_sensitive=False)
-        sparse = unified.get("sparseFields") or {}
-    typed = await load_typed_profile_records(session, person.id)
-    return build_known_facts(
-        identity={"preferredName": person.preferred_name, "fullName": person.full_name},
-        sparse=sparse,
-        typed=typed,
-    )
+async def _known_facts(session: AsyncSession, person: StudentIdentity) -> list[str]:
+    return await VaultReader(session).get_known_facts(person.id)
 
 
-async def _existing_belief(session: AsyncSession, person: Person, field_key: str):
-    field = get_catalog_field(field_key)
-    if field is not None and field.storage == "person" and field.person_column:
-        return getattr(person, field.person_column, None) or person.preferred_name
-    spec = (policy().get("typed_belief") or {}).get(field_key) or {}
-    if spec.get("storage") == "educations":
-        row = await session.scalar(
-            select(Education)
-            .where(Education.person_id == person.id)
-            .order_by(Education.updated_at.desc())
-            .limit(1)
-        )
-        if row is None:
-            return None
-        raw = getattr(row, str(spec.get("column") or "gpa"), None)
-        if raw is None:
-            return None
-        scale_col = spec.get("scale_column")
-        scale = getattr(row, str(scale_col), None) if scale_col else None
-        if spec.get("shape") == "cumulative_gpa":
-            return {"value": float(raw), "scale": float(scale) if scale is not None else None, "type": "cumulative"}
-        return raw
-    vault_id = await session.scalar(select(PersonVault.id).where(PersonVault.person_id == person.id))
-    if vault_id is None:
-        return None
-    return await session.scalar(
-        select(VaultValue.value).where(
-            VaultValue.vault_id == vault_id,
-            VaultValue.field_key == field_key,
-            VaultValue.status.in_(("active", "pending_confirmation", "disputed")),
-        )
+async def _existing_belief(session: AsyncSession, person: StudentIdentity, field_key: str):
+    return await VaultReader(session).get_existing_belief(
+        person.id, field_key, spec=(policy().get("typed_belief") or {}).get(field_key),
     )
 
 
@@ -126,9 +84,7 @@ async def run_document_analysis(
         job.status = "failed"
         job.last_error = "document missing"
         return
-    person = await session.scalar(
-        select(Person).where(Person.id == doc.person_id, Person.deleted_at.is_(None)).options(selectinload(Person.vault))
-    )
+    person = await VaultReader(session, settings).get_identity(doc.person_id)
     if person is None:
         job.status = "failed"
         job.last_error = "person missing"
@@ -435,8 +391,8 @@ async def run_document_analysis(
             )
 
         if applied and identity in set(rules.get("auto_apply_identity") or ("matched",)) and not truncated:
-            await accept_vault_candidates(
-                session, person, applied, from_document=True, already_reconciled=True,
+            await VaultWriter(session).submit_document_evidence(
+                DocumentEvidence(person_id=person.id, document_id=doc.id, observations=applied), already_reconciled=True,
                 apply_order=list(policy().get("apply_order") or []),
             )
 

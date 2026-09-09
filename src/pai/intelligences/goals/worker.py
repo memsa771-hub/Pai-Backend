@@ -21,6 +21,7 @@ from pai.platform.database.db import get_session_factory
 from pai.platform.llm.gateway import LLMGateway
 from pai.platform.jobs.lease import MAX_ATTEMPTS, apply_failure
 from pai.domains.goals.models import Goal, GoalIntelligence, GoalJob
+from pai.kernel.contracts.vault import VaultReader as VaultReaderPort
 
 logger = logging.getLogger(__name__)
 
@@ -129,13 +130,12 @@ async def process_goal_job(
     settings: Settings,
     job: GoalJob,
     gateway: LLMGateway,
+    *,
+    vault_reader: VaultReaderPort | None = None,
 ) -> None:
     """Run the pipeline for this job and persist results."""
     from pai.intelligences.goals.pipeline import run_full_pipeline, run_assessment_stage, run_gaps_stage, run_planning_stage, build_counselor_brief
-    from pai.domains.student.person.profile_snapshot import load_typed_profile_records
-    from pai.domains.student.vault.service import VaultService
-    from sqlalchemy.orm import selectinload
-    from pai.domains.student.person.models import Person
+    from pai.domains.student.public import VaultReader
 
     job_id = job.id
     goal_id = job.goal_id
@@ -146,23 +146,16 @@ async def process_goal_job(
         job.last_error = "Goal not found"
         return
 
-    person = await session.execute(
-        select(Person).options(selectinload(Person.vault)).where(Person.id == goal.person_id, Person.deleted_at.is_(None))
-    )
-    person_row = person.scalar_one_or_none()
-    if person_row is None:
+    reader = vault_reader if vault_reader is not None else VaultReader(session, settings)
+    student = await reader.get_snapshot(goal.person_id)
+    if student is None:
         job.status = "failed"
         job.last_error = "Person not found"
         return
 
-    profile_version = person_row.vault.version if person_row.vault else None
+    profile_version = student.revision
     goal_version = goal.updated_at
-    typed_records = await load_typed_profile_records(session, goal.person_id)
-    vault_svc = VaultService(settings)
-    unified = await vault_svc.get_unified_vault(
-        session, person_row, include_sensitive=False, typed_records=typed_records
-    )
-    vault_snapshot = _build_vault_snapshot({**typed_records, "sparseFields": unified.get("sparseFields") or {}})
+    vault_snapshot = student.profile
 
     anchors = {
         **(goal.anchors or {}),
@@ -234,12 +227,8 @@ async def process_goal_job(
             settings=settings,
         )
 
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, goal.person_id)
+    current_version = await reader.lock_revision(goal.person_id)
     await session.refresh(goal)
-    if person_row.vault:
-        await session.refresh(person_row.vault)
-    current_version = person_row.vault.version if person_row.vault else None
     if current_version != profile_version or goal.updated_at != goal_version:
         goal.intelligence_status = "stale"
         job.status = "pending"

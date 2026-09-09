@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings
 from pai.domains.documents.models import Document, DocumentJob, DocumentVersion
-from pai.domains.student.person.models import Person
+from pai.kernel.contracts.vault import StudentIdentity as Person
 from pai.intelligences.documents.classification.classifier import classify_document
 from pai.intelligences.documents.classification.taxonomy import (
     evidence_eligible,
@@ -48,8 +48,8 @@ async def create_document_upload(
     doc_id = uuid.uuid4()
     version_id = uuid.uuid4()
     path = f"{person.id}/{doc_id}/{version_id}/original"
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, person.id)
+    from pai.domains.student.public import lock_owner
+    await lock_owner(session, person.id)
     await storage.upload_private(path, data, mime)
     try:
         digest = hashlib.sha256(data).hexdigest()

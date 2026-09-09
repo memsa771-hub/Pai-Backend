@@ -1,33 +1,15 @@
+"""Goal-owned persistence for legacy /person/goals endpoints."""
 from __future__ import annotations
-
 import uuid
 from typing import Any
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from pai.domains.goals.models import Goal
+from pai.domains.student.public import lock_owner, refresh_profile_projection
+from pai.kernel.contracts.vault import StudentIdentity as Person
 from pai.kernel.errors import PersonNotFoundError
-from pai.domains.student.person.models import (
-    Certification,
-    Education,
-    Person,
-    Project,
-    Skill,
-    WorkExperience,
-)
-from pai.domains.student.vault.completion import apply_completion_to_vault
-from pai.domains.student.vault.service import expand_scope_for_person
 
-SCOPE_BY_RESOURCE = {
-    "educations": "education",
-    "work_experiences": "career",
-    "projects": "career",
-    "skills": "career",
-    "certifications": "career",
-    "goals": "application",
-    "test_attempts": "application",
-}
-
+MODELS = {"goals": Goal}
 
 async def list_resources(
     session: AsyncSession,
@@ -45,28 +27,6 @@ async def list_resources(
     return list(result.scalars().all())
 
 
-async def _sync_education_derivations(
-    session: AsyncSession, person: Person, row: Any
-) -> None:
-    """Keep manually edited education consistent with extracted education.
-
-    A degree typed into the UI has to land on the same canonical level and be
-    validated the same way as one PAI learned from chat, otherwise the timeline
-    only understands half the student's history.
-    """
-    from pai.domains.student.typed_apply import (
-        _apply_qualification_identity,
-        revalidate_education_timeline,
-    )
-
-    _apply_qualification_identity(
-        row,
-        {"degree": row.degree, "major": row.major, "original_name": row.original_name},
-    )
-    await session.flush()
-    await revalidate_education_timeline(session, person, detected_from="manual:education_edit")
-
-
 async def create_resource(
     session: AsyncSession,
     model: type,
@@ -75,18 +35,14 @@ async def create_resource(
 ) -> Any:
     if model not in MODELS.values():
         raise ValueError("Resource model belongs to another department")
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, person.id)
+    await lock_owner(session, person.id)
     row = model(person_id=person.id, **data)
     session.add(row)
     await session.flush()
-    if model is Education:
-        await _sync_education_derivations(session, person, row)
-    scope = SCOPE_BY_RESOURCE.get(model.__tablename__)
-    if scope:
-        await expand_scope_for_person(session, person, scope)
-    if person.vault:
-        await apply_completion_to_vault(session, person, person.vault)
+    scopes = ["application"]
+    if data.get("goal_type", "").lower() in ("relocation", "mobility", "relocate"):
+        scopes.append("mobility")
+    await refresh_profile_projection(session, person.id, scopes=scopes)
     from pai.domains.goals.service import mark_intelligence_stale_for_vault_update
     await mark_intelligence_stale_for_vault_update(session, person.id, model.__tablename__)
     await session.commit()
@@ -103,8 +59,7 @@ async def update_resource(
 ) -> Any:
     if model not in MODELS.values():
         raise ValueError("Resource model belongs to another department")
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, person.id)
+    await lock_owner(session, person.id)
     result = await session.execute(
         select(model).where(model.id == resource_id, model.person_id == person.id)
     )
@@ -115,10 +70,7 @@ async def update_resource(
         if hasattr(row, key) and val is not None:
             setattr(row, key, val)
     await session.flush()
-    if model is Education:
-        await _sync_education_derivations(session, person, row)
-    if person.vault:
-        await apply_completion_to_vault(session, person, person.vault)
+    await refresh_profile_projection(session, person.id)
     from pai.domains.goals.service import mark_intelligence_stale_for_vault_update
     await mark_intelligence_stale_for_vault_update(session, person.id, model.__tablename__)
     await session.commit()
@@ -134,8 +86,7 @@ async def delete_resource(
 ) -> None:
     if model not in MODELS.values():
         raise ValueError("Resource model belongs to another department")
-    from pai.domains.student.person.write_lock import lock_person
-    await lock_person(session, person.id)
+    await lock_owner(session, person.id)
     result = await session.execute(
         select(model).where(model.id == resource_id, model.person_id == person.id)
     )
@@ -144,23 +95,7 @@ async def delete_resource(
         raise PersonNotFoundError("Resource not found.")
     await session.delete(row)
     await session.flush()
-    if model is Education:
-        from pai.domains.student.typed_apply import revalidate_education_timeline
-
-        await revalidate_education_timeline(
-            session, person, detected_from="manual:education_delete"
-        )
-    if person.vault:
-        await apply_completion_to_vault(session, person, person.vault)
+    await refresh_profile_projection(session, person.id)
     from pai.domains.goals.service import mark_intelligence_stale_for_vault_update
     await mark_intelligence_stale_for_vault_update(session, person.id, model.__tablename__)
     await session.commit()
-
-
-MODELS = {
-    "educations": Education,
-    "work-experiences": WorkExperience,
-    "projects": Project,
-    "skills": Skill,
-    "certifications": Certification,
-}

@@ -5,7 +5,7 @@ import logging
 
 from pai.config import Settings, get_settings
 from pai.platform.database.db import get_session_factory
-from pai.intelligences.counselor.followup import run_intelligence_followup
+from pai.workflows.counseling.followup import run_intelligence_followup
 from pai.platform.llm.gateway import LLMGateway
 from pai.platform.jobs.queue import (
     claim_next_person_job,

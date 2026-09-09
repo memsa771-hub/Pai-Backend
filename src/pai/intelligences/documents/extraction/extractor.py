@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from pai.platform.llm.gateway import LLMGateway
 from pai.platform.llm.schemas import LLMMessage
-from pai.intelligences.counselor.agents import FactExtractionAgent
+from pai.intelligences.vault.agent import FactExtractionAgent
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.intelligences.documents.classification.taxonomy import type_meta
 from pai.intelligences.documents.config import policy

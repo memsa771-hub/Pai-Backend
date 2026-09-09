@@ -12,5 +12,7 @@ with TestClient(app) as client:
     assert client.get("/health/live").status_code == 200
     assert app.openapi()["paths"]
 assert OpenAIEmbeddingProvider(settings).dimensions > 0
-assert "education.highest_level" in input_snapshot({})
+assert input_snapshot(
+    {"educations": [{"id": "example"}], "goals": [{"id": "excluded"}], "counts": {}}
+) == {"educations": [{"id": "example"}]}
 print("Imports, lifespan, routes and provider packaging OK")

@@ -19,7 +19,7 @@ from pai.kernel.contracts.vault import StudentIdentity as Person
 from pai.kernel.contracts.schemas import VaultCandidate
 from pai.kernel.errors import AuthError
 from pai.config import get_settings
-from pai.domains.student.vault.security import SensitiveValueCodec
+from pai.platform.security.sensitive_values import SensitiveValueCodec
 
 
 class DocumentNotFoundError(AuthError):

@@ -60,7 +60,7 @@ class VaultReader:
         )).scalar_one_or_none()
         if person is None:
             return None
-        records = await load_typed_profile_records(self.session, person_id, include_goals=False)
+        records = await load_typed_profile_records(self.session, person_id)
         unified = await self.service.get_unified_vault(
             self.session, person, include_sensitive=False, typed_records=records
         )
@@ -134,6 +134,11 @@ class VaultWriter:
 
     def __init__(self, session):
         self.session = session
+
+    async def evaluate_observations(self, person_id, observations):
+        from pai.kernel.gates import evaluate_candidates_batch
+        person = await lock_person(self.session, person_id)
+        return await evaluate_candidates_batch(self.session, person, observations)
 
     async def submit_observations(self, person_id, observations, **policy):
         from pai.kernel.gates import accept_vault_candidates

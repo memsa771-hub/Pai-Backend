@@ -32,7 +32,7 @@ from pai.domains.student.person.models import (
 )
 from pai.domains.student.vault.catalog import AUTH_PROVIDER_NAME, CATALOG_VERSION, GUIDANCE_SCOPES
 from pai.domains.student.vault.completion import apply_completion_to_vault
-from pai.domains.student.vault.security import SensitiveValueCodec
+from pai.platform.security.sensitive_values import SensitiveValueCodec
 from pai.domains.student.vault.service import grow_vault_schema
 
 logger = logging.getLogger(__name__)

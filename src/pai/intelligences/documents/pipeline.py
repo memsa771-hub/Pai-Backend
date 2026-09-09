@@ -39,11 +39,15 @@ from pai.domains.documents.models import (
     DocumentParty,
     DocumentVersion,
 )
-from pai.domains.student.public import VaultReader, VaultWriter
-from pai.kernel.contracts.vault import StudentIdentity, DocumentEvidence
+from pai.kernel.contracts.vault import (
+    DocumentEvidence,
+    StudentIdentity,
+    VaultReader,
+    VaultWriter,
+)
 from pai.domains.student.vault.catalog import get_catalog_field
 from pai.platform.storage.supabase import SupabaseStorageProvider
-from pai.domains.student.vault.security import SensitiveValueCodec
+from pai.platform.security.sensitive_values import SensitiveValueCodec
 
 
 def _mark_stage(
@@ -60,12 +64,12 @@ def _mark_stage(
         doc.status = mapped
 
 
-async def _known_facts(session: AsyncSession, person: StudentIdentity) -> list[str]:
-    return await VaultReader(session).get_known_facts(person.id)
+async def _known_facts(vault_reader: VaultReader, person: StudentIdentity) -> list[str]:
+    return await vault_reader.get_known_facts(person.id)
 
 
-async def _existing_belief(session: AsyncSession, person: StudentIdentity, field_key: str):
-    return await VaultReader(session).get_existing_belief(
+async def _existing_belief(vault_reader: VaultReader, person: StudentIdentity, field_key: str):
+    return await vault_reader.get_existing_belief(
         person.id, field_key, spec=(policy().get("typed_belief") or {}).get(field_key),
     )
 
@@ -77,6 +81,8 @@ async def run_document_analysis(
     *,
     storage: SupabaseStorageProvider,
     gateway: LLMGateway,
+    vault_reader: VaultReader,
+    vault_writer: VaultWriter,
 ) -> None:
     rules = policy()
     doc = await session.get(Document, job.document_id)
@@ -84,7 +90,7 @@ async def run_document_analysis(
         job.status = "failed"
         job.last_error = "document missing"
         return
-    person = await VaultReader(session, settings).get_identity(doc.person_id)
+    person = await vault_reader.get_identity(doc.person_id)
     if person is None:
         job.status = "failed"
         job.last_error = "person missing"
@@ -142,7 +148,7 @@ async def run_document_analysis(
         doc.vault_extraction_policy = "extract" if doc.evidence_eligible else "disabled"
         job.last_error = f"classified:{doc.document_type} file:{filename}"
 
-        known = await _known_facts(session, person)
+        known = await _known_facts(vault_reader, person)
         _mark_stage(run, job, "extract", doc)
         extraction = await extract_candidates(
             gateway=gateway,
@@ -181,7 +187,7 @@ async def run_document_analysis(
         subject_name = _candidate_str(candidates, subject_field)
         date_fields = list((rules.get("normalizers") or {}).get("date") or [])
         document_dob = _candidate_str(candidates, date_fields[0]) if date_fields else None
-        known_dob = await _existing_belief(session, person, date_fields[0]) if date_fields else None
+        known_dob = await _existing_belief(vault_reader, person, date_fields[0]) if date_fields else None
         identity = match_student(
             person,
             document_name=subject_name,
@@ -240,7 +246,7 @@ async def run_document_analysis(
                 cand.field_key, cand.value, document_type=doc.document_type or default_type()
             )
             authority = source_authority(doc.document_type or default_type(), cand.field_key)
-            existing = await _existing_belief(session, person, cand.field_key)
+            existing = await _existing_belief(vault_reader, person, cand.field_key)
             confidence = extraction_confidence(
                 base=cand.confidence,
                 grounded=True,
@@ -391,7 +397,7 @@ async def run_document_analysis(
             )
 
         if applied and identity in set(rules.get("auto_apply_identity") or ("matched",)) and not truncated:
-            await VaultWriter(session).submit_document_evidence(
+            await vault_writer.submit_document_evidence(
                 DocumentEvidence(person_id=person.id, document_id=doc.id, observations=applied), already_reconciled=True,
                 apply_order=list(policy().get("apply_order") or []),
             )

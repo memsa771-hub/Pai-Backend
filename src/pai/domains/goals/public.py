@@ -15,13 +15,16 @@ async def count_goals(session, person_id):
 
 
 class GoalService:
-    def __init__(self, session):
+    def __init__(self, session, *, vault_reader):
         self.session = session
+        self.vault_reader = vault_reader
 
     async def observe_turn(self, person_id, **turn):
         from pai.intelligences.goals.resolver import resolve
         from pai.domains.goals.service import goal_to_public
-        result = await resolve(self.session, person_id=person_id, **turn)
+        result = await resolve(
+            self.session, person_id=person_id, vault_reader=self.vault_reader, **turn
+        )
         return {"action": result.action, "goal": goal_to_public(result.goal),
                 "intelligence_enqueued": result.intelligence_enqueued}
 

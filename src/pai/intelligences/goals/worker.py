@@ -131,11 +131,10 @@ async def process_goal_job(
     job: GoalJob,
     gateway: LLMGateway,
     *,
-    vault_reader: VaultReaderPort | None = None,
+    vault_reader: VaultReaderPort,
 ) -> None:
     """Run the pipeline for this job and persist results."""
     from pai.intelligences.goals.pipeline import run_full_pipeline, run_assessment_stage, run_gaps_stage, run_planning_stage, build_counselor_brief
-    from pai.domains.student.public import VaultReader
 
     job_id = job.id
     goal_id = job.goal_id
@@ -146,7 +145,7 @@ async def process_goal_job(
         job.last_error = "Goal not found"
         return
 
-    reader = vault_reader if vault_reader is not None else VaultReader(session, settings)
+    reader = vault_reader
     student = await reader.get_snapshot(goal.person_id)
     if student is None:
         job.status = "failed"
@@ -258,7 +257,9 @@ async def run_goal_worker_once(settings: Settings | None = None) -> bool:
             if not await pin_lease(session, job):
                 return True
             async with asyncio.timeout(540):
-                await process_goal_job(session, settings, job, gateway)
+                from pai.workflows.goal_assessment.runner import process_goal_job_with_vault
+
+                await process_goal_job_with_vault(session, settings, job, gateway)
             await session.commit()
         except Exception as exc:
             logger.exception("Goal job failed job=%s", job_id)

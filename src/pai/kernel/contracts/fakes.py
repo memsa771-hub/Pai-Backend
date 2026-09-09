@@ -16,3 +16,20 @@ class FakeVaultReader:
         if snapshot is None:
             raise PersonNotFoundError()
         return snapshot.revision
+
+
+class FakeVaultWriter:
+    def __init__(self, *, evaluated=()):
+        self.evaluated = list(evaluated)
+        self.submissions = []
+
+    async def evaluate_observations(self, person_id, observations):
+        return list(self.evaluated)
+
+    async def submit_observations(self, person_id, observations, **policy):
+        self.submissions.append((person_id, list(observations), policy))
+        return [], []
+
+    async def submit_document_evidence(self, evidence, **policy):
+        self.submissions.append((evidence.person_id, list(evidence.observations), policy))
+        return [], []

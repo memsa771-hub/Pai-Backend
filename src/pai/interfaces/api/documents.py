@@ -33,7 +33,7 @@ from pai.interfaces.api.dependencies import get_db, require_onboarding_complete
 from pai.interfaces.api.schemas import success
 from pai.kernel.gates import accept_vault_candidates
 from pai.platform.storage.supabase import SupabaseStorageProvider
-from pai.domains.student.vault.security import SensitiveValueCodec
+from pai.platform.security.sensitive_values import SensitiveValueCodec
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 

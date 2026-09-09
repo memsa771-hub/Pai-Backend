@@ -27,6 +27,7 @@ from pai.domains.goals.service import (
     upsert_goal_from_anchors,
 )
 from pai.domains.goals.types import GoalType, GoalWriteAction
+from pai.kernel.contracts.vault import VaultReader
 
 _LIFE_AIM = "life_aim"
 
@@ -103,6 +104,7 @@ async def resolve(
     *,
     llm_goal: Any | None,
     user_message: str,
+    vault_reader: VaultReader | None = None,
 ) -> ResolverResult:
     """
     Decide what to do with the goal signal from this turn.
@@ -115,8 +117,8 @@ async def resolve(
         return ResolverResult(
             action=GoalWriteAction.NONE.value, goal=None, intelligence_enqueued=False
         )
-    from pai.domains.student.public import lock_owner
-    await lock_owner(session, person_id)
+    if vault_reader is not None:
+        await vault_reader.lock_revision(person_id)
     intent = parsed.intent
     supersedes = parsed.supersedes
 

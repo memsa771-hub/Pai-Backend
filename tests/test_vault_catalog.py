@@ -7,6 +7,10 @@ def test_vault_catalog_covers_guidance_core():
     assert get_catalog_field("application.test_scores") is not None
     assert get_catalog_field("identity.phone").priority == "C"
     assert get_catalog_field("application.study_country").priority == "C"
+    assert get_catalog_field("application.study_country").editable is False
+    assert get_catalog_field("application.career_interest").editable is False
+    assert get_catalog_field("application.target_universities").editable is False
+    assert get_catalog_field("application.admission_cycle").editable is False
 
 
 def test_grow_vault_schema_is_idempotent():

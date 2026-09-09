@@ -13,7 +13,7 @@ from pai.intelligences.documents.config import policy
 from pai.domains.documents.models import Document, DocumentFact, VerificationCase
 from pai.kernel.contracts.vault import StudentIdentity as Person
 from pai.config import get_settings
-from pai.domains.student.vault.security import SensitiveValueCodec
+from pai.platform.security.sensitive_values import SensitiveValueCodec
 from pai.intelligences.documents.evidence.criticality import field_sensitivity
 
 RESOLUTIONS = {

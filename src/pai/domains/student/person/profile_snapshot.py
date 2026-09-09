@@ -8,7 +8,6 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pai.domains.goals.public import profile_records
 from pai.domains.student.education.timeline import order_timeline
 from pai.domains.student.person.models import (
     Certification,
@@ -83,9 +82,8 @@ async def load_typed_profile_records(
     person_id: uuid.UUID,
     *,
     limit_per_type: int = 20,
-    include_goals: bool = True,
 ) -> dict[str, Any]:
-    """Full typed records for the counselor (contents, not counts)."""
+    """Student-owned typed records. Cross-domain composition lives in workflows."""
     educations = order_timeline(
         list(
             (
@@ -98,7 +96,6 @@ async def load_typed_profile_records(
             ).scalars()
         )
     )
-    goals = await profile_records(session, person_id, limit=limit_per_type) if include_goals else []
     work = list(
         (
             await session.execute(
@@ -144,7 +141,6 @@ async def load_typed_profile_records(
         # Education is returned in academic order so the counselor reads it as a
         # timeline rather than as whatever was edited most recently.
         "educations": [_edu_dict(r) for r in educations],
-        "goals": goals,
         "workExperiences": [_work_dict(r) for r in work],
         "projects": [_project_dict(r) for r in projects],
         "skills": [_skill_dict(r) for r in skills],
@@ -152,7 +148,6 @@ async def load_typed_profile_records(
         "testAttempts": [attempt_dict(r) for r in attempts],
         "counts": {
             "educations": len(educations),
-            "goals": len(goals),
             "workExperiences": len(work),
             "projects": len(projects),
             "skills": len(skills),

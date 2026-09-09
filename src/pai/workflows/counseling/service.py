@@ -42,7 +42,6 @@ from pai.kernel.contracts.schemas import (
     RunError,
     VaultChange,
 )
-from pai.kernel.gates import accept_vault_candidates, evaluate_candidates_batch
 from pai.platform.database.db import get_session_factory
 from pai.platform.latency import timed
 from pai.platform.llm.gateway import LLMGateway
@@ -334,8 +333,10 @@ class PAIOrchestrator:
 
     async def node_validate_candidates(self, state: PAIState) -> PAIState:
         assert self._session and self._person
-        state["candidate_results"] = await evaluate_candidates_batch(
-            self._session, self._person, list(state.get("fact_candidates") or [])
+        from pai.domains.student.public import VaultWriter
+
+        state["candidate_results"] = await VaultWriter(self._session).evaluate_observations(
+            self._person.id, list(state.get("fact_candidates") or [])
         )
         if self._run:
             self._run.current_step = "apply_vault_changes"
@@ -370,8 +371,10 @@ class PAIOrchestrator:
                 )
         applied: list[VaultChange] = []
         if to_apply:
-            outcomes, pend_llm = await accept_vault_candidates(
-                self._session, self._person, to_apply
+            from pai.domains.student.public import VaultWriter
+
+            outcomes, pend_llm = await VaultWriter(self._session).submit_observations(
+                self._person.id, to_apply
             )
             for o in outcomes:
                 applied.append(
@@ -606,37 +609,41 @@ class PAIOrchestrator:
         if conversation_id is None:
             return False
         try:
+            from pai.domains.goals.public import GoalService
             from pai.domains.journey.service import record_goal_event
-            from pai.intelligences.goals.resolver import resolve as resolve_goal
+            from pai.domains.student.public import VaultReader
 
-            resolver_result = await resolve_goal(
-                self._session,
+            resolver_result = await GoalService(
+                self._session, vault_reader=VaultReader(self._session, self._settings)
+            ).observe_turn(
                 self._person.id,
-                conversation_id,
+                conversation_id=conversation_id,
                 llm_goal=llm_goal,
                 user_message=text,
             )
-            if resolver_result.action == GoalWriteAction.NONE.value or resolver_result.goal is None:
+            action = resolver_result["action"]
+            goal = resolver_result["goal"]
+            if action == GoalWriteAction.NONE.value or goal is None:
                 return False
             kind = {
                 GoalWriteAction.CREATE.value: "goal.created",
                 GoalWriteAction.CREATE_SECONDARY.value: "goal.created",
                 GoalWriteAction.SWITCH.value: "goal.changed",
                 GoalWriteAction.REINFORCE.value: "goal.changed",
-            }.get(resolver_result.action)
-            if kind and resolver_result.action != GoalWriteAction.REINFORCE.value:
+            }.get(action)
+            if kind and action != GoalWriteAction.REINFORCE.value:
                 await record_goal_event(
                     self._session,
                     self._person.id,
                     kind=kind,
-                    title=resolver_result.goal.title,
-                    goal_id=resolver_result.goal.id,
+                    title=goal["title"],
+                    goal_id=uuid.UUID(goal["id"]),
                 )
             logger.debug(
                 "Goal resolver: action=%s goal_id=%s enqueued=%s",
-                resolver_result.action,
-                resolver_result.goal.id,
-                resolver_result.intelligence_enqueued,
+                action,
+                goal["id"],
+                resolver_result["intelligence_enqueued"],
             )
             return True
         except Exception:

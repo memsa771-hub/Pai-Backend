@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-CATALOG_VERSION = "1.5.0"
+CATALOG_VERSION = "1.6.0"
 AUTH_PROVIDER_NAME = "supabase"
 # Always-on scopes so PAI can see what a student still needs for guidance.
 GUIDANCE_SCOPES = ("universal", "education", "application", "career")
@@ -359,7 +359,7 @@ def _fields() -> tuple[CatalogField, ...]:
             storage="vault_value",
             applicable_scope="application",
             value_type="string",
-            editable=True,
+            editable=False,  # legacy read-only; new intent belongs to Goals
             repeatable=True,
         ),
         # Admissions / PK counseling sparse fields (vault_value — no fabricated typed rows)
@@ -432,7 +432,7 @@ def _fields() -> tuple[CatalogField, ...]:
             storage="vault_value",
             applicable_scope="application",
             value_type="string",
-            editable=True,
+            editable=False,  # legacy read-only; target country belongs to Goals
             repeatable=False,
         ),
         CatalogField(
@@ -444,7 +444,7 @@ def _fields() -> tuple[CatalogField, ...]:
             storage="vault_value",
             applicable_scope="application",
             value_type="array",
-            editable=True,
+            editable=False,  # legacy read-only; targets belong to Goals
             repeatable=False,
         ),
         CatalogField(
@@ -456,7 +456,7 @@ def _fields() -> tuple[CatalogField, ...]:
             storage="vault_value",
             applicable_scope="application",
             value_type="string",
-            editable=True,
+            editable=False,  # legacy read-only; intake belongs to Goals
             repeatable=False,
         ),
         CatalogField(
@@ -619,10 +619,6 @@ def extraction_catalog_hint() -> str:
         '  career.certifications → {"name","issuer"?}',
         "",
         "Goals / admissions:",
-        "  application.career_interest → string program/goal as stated (e.g. MS AI in Germany)",
-        "  application.study_country → string (ISO name or code as given)",
-        "  application.target_universities → institution names the student named",
-        "  application.admission_cycle → string",
         '  application.test_scores → [{"name":"ielts","score":"7.5"}, ...]',
         "",
         "Identity / location / other writable keys:",

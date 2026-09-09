@@ -24,7 +24,7 @@ from pai.domains.student.person.models import (
 )
 from pai.domains.student.vault.catalog import CATALOG_VERSION, GUIDANCE_SCOPES, CatalogField, get_catalog_field
 from pai.domains.student.vault.completion import apply_completion_to_vault
-from pai.domains.student.vault.security import SensitiveValueCodec, mask_value
+from pai.platform.security.sensitive_values import SensitiveValueCodec, mask_value
 
 
 class VaultService:
@@ -342,7 +342,6 @@ class VaultService:
     async def _load_typed_summary(self, session: AsyncSession, person_id: uuid.UUID) -> dict[str, str]:
         from sqlalchemy import func
 
-        from pai.domains.goals.public import count_goals
         from pai.domains.student.person.models import (
             Certification,
             Education,
@@ -366,7 +365,6 @@ class VaultService:
                 select(func.count()).select_from(model).where(model.person_id == person_id)
             )
             summary[name] = str(count or 0)
-        summary["goals"] = str(await count_goals(session, person_id))
         return summary
 
     async def upsert_sparse_field(

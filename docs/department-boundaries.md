@@ -13,11 +13,11 @@ boundaries separate code ownership without adding services or network calls.
 - `domains/student/handlers` owns education, identity, skills, work, projects,
   certifications and test writes. `typed_apply.py` dispatches by schema storage.
   Pending writes remain evidence proposals and do not mutate canonical entities.
-- Goals owns its ORM, legacy profile CRUD and profile projections. Student code
-  requests Goal projections through `domains/goals/public.py`. Goals are excluded
-  from Vault completion scoring and from student assessment inputs.
-- Documents receives a `StudentIdentity` and submits `DocumentEvidence` through
-  `VaultWriter`. Extraction no longer depends on Counselor. Existing document
+- Goals owns its ORM, legacy profile CRUD and projections. The counseling workflow
+  combines Goal projections with the Student World for clients. Vault snapshots,
+  typed-resource summaries and completion contain student data only.
+- Documents receives injected `VaultReader` and `VaultWriter` ports, and submits
+  `DocumentEvidence` through the writer. Extraction no longer depends on Counselor. Existing document
   identity, grounding and reconciliation gates still control auto-application.
 - Memory consumes `MemoryObservation`. The Vault outcome conversion and sensitive
   field filtering live in `workflows/student_learning/memory.py`; Memory formation
@@ -40,8 +40,9 @@ This is an import boundary check, not a general SQL or dynamic-import analyzer.
 ## Compatibility scope
 
 Existing API routes and stored data remain readable. Legacy application target
-fields (country, universities, intake and career interest) remain in the sparse
-catalog so existing clients and evidence history are preserved. Consolidating
+fields (country, universities, intake and career interest) remain read-only in the
+sparse catalog so existing clients and evidence history are preserved. New extraction
+and manual writes cannot update them. Consolidating
 those historical values into particular Goals still requires an evidence-aware
 migration: multiple goals make an automatic assignment unsafe. No data migration
 or global education equivalency mapping is introduced here.

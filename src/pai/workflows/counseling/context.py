@@ -15,6 +15,7 @@ from pai.domains.conversations.models import Conversation, Message
 from pai.domains.documents.models import Document, VerificationCase
 from pai.domains.student.person.models import Person, VaultValue
 from pai.domains.student.person.profile_snapshot import load_typed_profile_records
+from pai.domains.goals.public import profile_records
 from pai.domains.student.vault.service import VaultService
 
 
@@ -151,6 +152,12 @@ async def build_counselor_context(
         "preferredName": person.preferred_name,
     }
     typed_records = await load_typed_profile_records(session, person.id)
+    goals = await profile_records(session, person.id)
+    typed_records = {
+        **typed_records,
+        "goals": goals,
+        "counts": {**typed_records.get("counts", {}), "goals": len(goals)},
+    }
     vault_svc = VaultService(settings)
     unified = await vault_svc.get_unified_vault(
         session,
@@ -456,6 +463,12 @@ async def build_person_context_pack(
         await session.refresh(person, attribute_names=["vault"])
     vault_svc = VaultService(settings)
     typed_records = await load_typed_profile_records(session, person.id)
+    goals = await profile_records(session, person.id)
+    typed_records = {
+        **typed_records,
+        "goals": goals,
+        "counts": {**typed_records.get("counts", {}), "goals": len(goals)},
+    }
     unified = await vault_svc.get_unified_vault(
         session,
         person,

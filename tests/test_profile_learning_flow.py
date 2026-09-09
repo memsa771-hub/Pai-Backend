@@ -30,8 +30,10 @@ def test_extraction_catalog_lists_admissions_keys():
     hint = extraction_catalog_hint()
     assert "education.program" in hint
     assert "education.marks" in hint
-    assert "application.career_interest" in hint
-    assert "application.target_universities" in hint
+    # Goal targets remain readable as legacy Vault data, but new observations
+    # are owned by GoalService and must not be offered to Vault extraction.
+    assert "application.career_interest" not in hint
+    assert "application.target_universities" not in hint
     assert "location.current_city" in hint
     assert "career.work_history" in hint
     assert "career.skills" in hint

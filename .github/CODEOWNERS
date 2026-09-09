@@ -1,0 +1,12 @@
+# Replace the repository owner below with department teams as they are created.
+* @memsa771-hub
+
+/src/pai/domains/student/ @memsa771-hub
+/src/pai/intelligences/vault/ @memsa771-hub
+/src/pai/domains/goals/ @memsa771-hub
+/src/pai/intelligences/goals/ @memsa771-hub
+/src/pai/domains/documents/ @memsa771-hub
+/src/pai/intelligences/documents/ @memsa771-hub
+/src/pai/domains/memory/ @memsa771-hub
+/src/pai/workflows/ @memsa771-hub
+/src/pai/kernel/contracts/ @memsa771-hub

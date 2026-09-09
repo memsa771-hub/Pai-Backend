@@ -23,16 +23,24 @@ def imports(tree, module):
 
 
 def forbidden(source, target):
-    if source.startswith(("pai.domains.goals.", "pai.intelligences.goals.")):
+    if source.startswith("pai.intelligences.goals."):
+        if target.startswith("pai.domains.student.public"):
+            return "Goals must receive a Vault port from a composition workflow"
         if target.startswith("pai.domains.student.") and not target.startswith("pai.domains.student.public"):
             return "Goals must use the public Vault interface"
-    if source.startswith("pai.domains.student.") and target.startswith("pai.domains.goals.models"):
-        return "Vault must not access Goal ORM"
+    if source.startswith("pai.domains.student.") and target.startswith(
+        ("pai.domains.goals.models", "pai.domains.goals.public")
+    ):
+        return "Vault must not access Goal implementations"
     if source.startswith(("pai.domains.documents.", "pai.intelligences.documents.")):
         if target.startswith("pai.intelligences.counselor"):
             return "Documents must not depend on Counselor"
         if target.startswith("pai.domains.student.person"):
             return "Documents must use Vault interfaces, not student ORM/services"
+        if target.startswith("pai.domains.student.vault.security"):
+            return "Documents must use shared platform encryption"
+        if source == "pai.intelligences.documents.pipeline" and target.startswith("pai.domains.student.public"):
+            return "Document intelligence must receive injected Vault ports"
     if source.startswith("pai.intelligences.counselor."):
         if target.startswith(("pai.domains.student.person", "pai.domains.goals.models")):
             return "Counselor must not access canonical ORM"
@@ -42,6 +50,10 @@ def forbidden(source, target):
     if source.startswith("pai.domains.memory."):
         if target.startswith("pai.domains.student.") or target.endswith(".VaultCandidate"):
             return "Memory input conversion belongs to student_learning"
+    if source.startswith("pai.workflows.counseling.") and target.startswith(
+        ("pai.kernel.gates", "pai.kernel.evidence.vault_apply")
+    ):
+        return "Counseling must write through VaultWriter"
     return None
 
 

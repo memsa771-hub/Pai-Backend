@@ -15,7 +15,7 @@ from pai.domains.student.typed_apply import apply_typed_candidate
 from pai.domains.student.person.models import Person, VaultEvidence, VaultHistory, VaultValue
 from pai.domains.student.vault.catalog import get_catalog_field
 from pai.domains.student.vault.completion import apply_completion_to_vault
-from pai.domains.student.vault.security import SensitiveValueCodec
+from pai.platform.security.sensitive_values import SensitiveValueCodec
 from pai.domains.student.vault.service import _history_value
 
 

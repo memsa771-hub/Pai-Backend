@@ -46,9 +46,11 @@ async def process_document_job(
     storage: SupabaseStorageProvider,
     gateway: LLMGateway,
 ) -> None:
-    from pai.intelligences.documents.pipeline import run_document_analysis
+    from pai.workflows.document_ingestion.runner import run_document_analysis_with_vault
 
-    await run_document_analysis(session, settings, job, storage=storage, gateway=gateway)
+    await run_document_analysis_with_vault(
+        session, settings, job, storage=storage, gateway=gateway
+    )
 
 
 async def claim_next_job(session: AsyncSession) -> DocumentJob | None:

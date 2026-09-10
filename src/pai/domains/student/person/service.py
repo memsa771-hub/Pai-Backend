@@ -103,6 +103,12 @@ class PersonBootstrapService:
                 await session.refresh(person, attribute_names=["vault"])
                 person.vault = vault
                 completion = await apply_completion_to_vault(session, person, vault)
+                # Serialize before begin() commits and expires the instance —
+                # async lazy-load of updated_at would raise MissingGreenlet.
+                return {
+                    "person": self._person_dict(person),
+                    "vault": self._vault_summary(vault, completion),
+                }
         except IntegrityError:
             await session.rollback()
             async with session.begin():
@@ -119,11 +125,10 @@ class PersonBootstrapService:
                 await session.refresh(person, attribute_names=["vault"])
                 person.vault = vault
                 completion = await apply_completion_to_vault(session, person, vault)
-
-        return {
-            "person": self._person_dict(person),
-            "vault": self._vault_summary(person.vault, completion),
-        }
+                return {
+                    "person": self._person_dict(person),
+                    "vault": self._vault_summary(vault, completion),
+                }
 
     async def ensure_person(self, session: AsyncSession, provider_user: ProviderUser) -> Person:
         """Create the Person Vault on first verified auth; skip heavy work on later logins."""

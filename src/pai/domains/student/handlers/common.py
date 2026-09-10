@@ -51,6 +51,72 @@ async def _log_typed_history(
     )
 
 
+_MANUAL_TYPED = {
+    "educations": (
+        "education",
+        "education.program",
+        ("institution", "degree", "major", "gpa", "percentage", "graduation_year"),
+    ),
+    "work_experiences": ("work", "career.work_history", ("organization", "title")),
+    "projects": ("project", "career.projects", ("name", "role")),
+    "skills": ("skill", "career.skills", ("name", "proficiency")),
+    "certifications": ("certification", "career.certifications", ("name", "issuer")),
+}
+
+
+def _typed_snapshot(row: Any, attributes: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        name: getattr(row, name, None)
+        for name in attributes
+        if getattr(row, name, None) is not None
+    }
+
+
+async def audit_manual_typed_write(
+    session: AsyncSession,
+    person: Person,
+    row: Any,
+    *,
+    old_value: Any = None,
+) -> None:
+    spec = _MANUAL_TYPED.get(getattr(row, "__tablename__", None))
+    if spec is None or person.vault is None or getattr(row, "id", None) is None:
+        return
+    entity_type, field_key, attributes = spec
+    snapshot = _typed_snapshot(row, attributes)
+    if not snapshot:
+        return
+    from pai.domains.student.evidence import record_entity_evidence
+
+    candidate = VaultCandidate(
+        field_key=field_key,
+        value=snapshot,
+        confidence=1.0,
+        source_type="manual",
+        source_reference=str(person.id),
+        evidence_text="",
+        assertion_status="explicit",
+    )
+    for attribute in snapshot:
+        record_entity_evidence(
+            session,
+            entity_type=entity_type,
+            entity_id=row.id,
+            attribute=attribute,
+            candidate=candidate,
+        )
+    await _log_typed_history(
+        session,
+        person,
+        field_key,
+        old_value=old_value,
+        new_value=snapshot,
+        candidate=candidate,
+        entity_type=entity_type,
+        entity_id=row.id,
+    )
+
+
 def _as_items(value: Any) -> list[Any]:
     if value is None:
         return []

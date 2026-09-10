@@ -100,11 +100,15 @@ class PersonBootstrapService:
                     await session.flush()
 
                 await self._import_auth_fields(session, person, vault, provider_user)
-                await session.refresh(person, attribute_names=["vault"])
+                # Person updates use a DB-generated updated_at value.
+                # Explicitly refresh it so serialization never triggers implicit async IO.
+                await session.flush()
+                await session.refresh(
+                    person,
+                    attribute_names=["vault", "updated_at"],
+                )
                 person.vault = vault
                 completion = await apply_completion_to_vault(session, person, vault)
-                # Serialize before begin() commits and expires the instance —
-                # async lazy-load of updated_at would raise MissingGreenlet.
                 return {
                     "person": self._person_dict(person),
                     "vault": self._vault_summary(vault, completion),
@@ -122,7 +126,11 @@ class PersonBootstrapService:
                 vault = await self._get_vault_for_update(session, person.id)
                 if vault is None:
                     raise
-                await session.refresh(person, attribute_names=["vault"])
+                await session.flush()
+                await session.refresh(
+                    person,
+                    attribute_names=["vault", "updated_at"],
+                )
                 person.vault = vault
                 completion = await apply_completion_to_vault(session, person, vault)
                 return {

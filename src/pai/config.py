@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
@@ -251,30 +251,72 @@ class Settings(BaseSettings):
     # Postgres; measured ~1.7s steady from the same region.
     _MIN_VIABLE_RATE_LIMIT_TIMEOUT = 2.0
 
-    @model_validator(mode="after")
-    def deprecated_embedding_timeout_seeds_read_and_write(self) -> Self:
+    @model_validator(mode="before")
+    @classmethod
+    def deprecated_embedding_timeout_seeds_read_and_write(cls, data: Any) -> Any:
         """Honour EMBEDDING_TIMEOUT_SECONDS from an existing .env.
 
         The single knob became two. A deployment that tuned the old one to
         survive its distance from the provider must not silently revert to the
-        default on upgrade, so the old value seeds whichever of the two was
-        left untouched. Setting a specific one always wins.
+        default on upgrade, so the old value seeds whichever of the two was not
+        given. Setting a specific one always wins.
+
+        This runs `mode="before"` deliberately. After validation every field is
+        populated, so a value cannot be told apart from a default, and
+        model_fields_set does not close the gap: model_dump() emits *all*
+        fields, so round-tripping a config (`Settings.model_validate(other
+        .model_dump())`) marks the read timeout as explicitly set and the
+        legacy value is silently dropped. Only the raw input says what the
+        caller actually supplied.
         """
-        legacy = self.embedding_timeout_seconds
+        if not isinstance(data, dict):
+            return data
+        legacy = cls._lookup(data, "embedding_timeout_seconds", "EMBEDDING_TIMEOUT_SECONDS")
         if legacy is None:
-            return self
-        fields = type(self).model_fields
-        if "embedding_read_timeout_seconds" not in self.model_fields_set:
-            object.__setattr__(self, "embedding_read_timeout_seconds", legacy)
-        if "embedding_write_timeout_seconds" not in self.model_fields_set:
+            return data
+        try:
+            legacy = float(legacy)
+        except (TypeError, ValueError):
+            # Not a number: leave it for normal field validation to reject.
+            return data
+        fields = cls.model_fields
+        read_default = fields["embedding_read_timeout_seconds"].default
+        write_default = fields["embedding_write_timeout_seconds"].default
+        read = cls._lookup(data, "embedding_read_timeout_seconds", "EMBEDDING_READ_TIMEOUT_SECONDS")
+        write = cls._lookup(data, "embedding_write_timeout_seconds", "EMBEDDING_WRITE_TIMEOUT_SECONDS")
+        data = dict(data)
+        # A value equal to the default is indistinguishable from the default
+        # itself — model_dump() emits every field, so a round-trip always
+        # carries one. Treating that as "explicitly set" is what silently drops
+        # the legacy value, so the legacy knob wins over a default-valued read
+        # and loses only to a genuinely different one.
+        if read is None or cls._is(read, read_default):
+            data["embedding_read_timeout_seconds"] = legacy
+        if write is None or cls._is(write, write_default):
             # The old knob bounded a read; a write that inherits it keeps at
             # least the write default rather than being tightened by it.
-            object.__setattr__(
-                self,
-                "embedding_write_timeout_seconds",
-                max(legacy, fields["embedding_write_timeout_seconds"].default),
-            )
-        return self
+            data["embedding_write_timeout_seconds"] = max(legacy, write_default)
+        return data
+
+    @staticmethod
+    def _is(value: Any, default: Any) -> bool:
+        """True when an input value is just the field default echoed back."""
+        try:
+            return float(value) == float(default)
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _lookup(data: dict, name: str, alias: str) -> Any:
+        """A field's raw input value, by field name or by alias.
+
+        Input reaches here by field name (a model_dump round-trip) or by alias
+        (environment and .env), so both have to be checked.
+        """
+        for key in (name, alias):
+            if key in data and data[key] is not None:
+                return data[key]
+        return None
 
     @model_validator(mode="after")
     def embedding_budgets_are_reachable(self) -> Self:

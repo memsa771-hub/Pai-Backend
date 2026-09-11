@@ -251,106 +251,32 @@ class Settings(BaseSettings):
     # Postgres; measured ~1.7s steady from the same region.
     _MIN_VIABLE_RATE_LIMIT_TIMEOUT = 2.0
 
-    # Which of the two new timeouts the caller actually supplied. Captured
-    # before validation because that is the only point where "absent" is still
-    # distinguishable; consulted after, because that is the only point where
-    # the value cannot still be overwritten. See the validators below.
-    _legacy_embedding_seed: dict[str, float] = {}
-
     @model_validator(mode="before")
     @classmethod
-    def _capture_legacy_embedding_timeout(cls, data: Any) -> Any:
-        """Record what EMBEDDING_TIMEOUT_SECONDS should seed, if anything.
+    def _legacy_embedding_timeout(cls, data: Any) -> Any:
+        """EMBEDDING_TIMEOUT_SECONDS (one knob) seeds the two that replaced it.
 
-        The single knob became two. A deployment that tuned the old one to
-        survive its distance from the provider must not silently revert to the
-        default on upgrade, so the old value seeds whichever of the two was not
-        supplied. Setting a specific one always wins.
-
-        Deciding that here is unavoidable: once validation finishes, every
-        field is populated and an omitted timeout is indistinguishable from a
-        supplied one. model_fields_set does not close the gap either, because
-        model_dump() emits *all* fields, so a round-trip
-        (`Settings.model_validate(other.model_dump())`) marks the read timeout
-        as explicitly set. Only the raw input says what the caller passed.
-
-        Applying it here does not work, though: pydantic-settings merges its
-        own sources (environment, .env) *after* this runs, so a value in .env —
-        `.env.example` ships one — silently overwrites whatever is written
-        here. Hence the split: decide now, apply in the after-validator.
+        A deployment that raised the old knob to survive its distance from the
+        provider must not silently revert to the default on upgrade. Setting
+        either new knob explicitly wins.
         """
         if not isinstance(data, dict):
             return data
-        legacy = cls._lookup(data, "embedding_timeout_seconds", "EMBEDDING_TIMEOUT_SECONDS")
+        legacy = data.get("embedding_timeout_seconds") or data.get("EMBEDDING_TIMEOUT_SECONDS")
         if legacy is None:
-            cls._legacy_embedding_seed = {}
             return data
-        try:
-            legacy = float(legacy)
-        except (TypeError, ValueError):
-            # Not a number: leave it for normal field validation to reject.
-            cls._legacy_embedding_seed = {}
-            return data
-        write_default = cls.model_fields["embedding_write_timeout_seconds"].default
-        seed: dict[str, float] = {}
-        if not cls._caller_supplied(data, "embedding_read_timeout_seconds"):
-            seed["embedding_read_timeout_seconds"] = legacy
-        if not cls._caller_supplied(data, "embedding_write_timeout_seconds"):
-            # The old knob bounded a read; a write that inherits it keeps at
-            # least the write default rather than being tightened by it.
-            seed["embedding_write_timeout_seconds"] = max(legacy, write_default)
-        cls._legacy_embedding_seed = seed
+        data = dict(data)
+        for name, alias in (
+            ("embedding_read_timeout_seconds", "EMBEDDING_READ_TIMEOUT_SECONDS"),
+            ("embedding_write_timeout_seconds", "EMBEDDING_WRITE_TIMEOUT_SECONDS"),
+        ):
+            if data.get(name) is None and data.get(alias) is None:
+                data[name] = float(legacy)
+        # The old knob bounded a read; inheriting it must not shorten writes.
+        write = "embedding_write_timeout_seconds"
+        if write in data:
+            data[write] = max(data[write], cls.model_fields[write].default)
         return data
-
-    @staticmethod
-    def _caller_supplied(data: dict, name: str) -> bool:
-        """Whether the field was set deliberately, ignoring .env boilerplate.
-
-        Three origins have to be told apart, because only the third is weak
-        enough to be overridden by the legacy knob:
-
-        * the field NAME — a caller passing a dict, or a model_dump
-          round-trip. Always deliberate.
-        * a real process environment variable under the ALIAS. Deliberate: an
-          operator exported it for this run.
-        * the same ALIAS coming from the `.env` file, which `.env.example`
-          ships pre-filled with the defaults. Not a statement of intent, so a
-          deployment that still tunes only EMBEDDING_TIMEOUT_SECONDS is not
-          overruled by boilerplate it never edited.
-        """
-        import os
-
-        if data.get(name) is not None:
-            return True
-        alias = Settings.model_fields[name].alias
-        return bool(alias) and os.environ.get(alias) is not None
-
-    @model_validator(mode="after")
-    def _apply_legacy_embedding_timeout(self) -> Self:
-        """Apply the seed decided before validation, after the sources merged.
-
-        Ordered before embedding_budgets_are_reachable so the reachability
-        check sees the timeouts that will actually be used.
-        """
-        seed = type(self)._legacy_embedding_seed
-        if not seed:
-            return self
-        type(self)._legacy_embedding_seed = {}
-        for name, value in seed.items():
-            object.__setattr__(self, name, value)
-        return self
-
-    @staticmethod
-    def _lookup(data: dict, name: str, alias: str) -> Any:
-        """A field's raw input value, by field name or by alias.
-
-        Input reaches here by field name (a model_dump round-trip) or by alias
-        (environment and .env), so both have to be checked.
-        """
-        for key in (name, alias):
-            if key in data and data[key] is not None:
-                return data[key]
-        return None
 
     @model_validator(mode="after")
     def embedding_budgets_are_reachable(self) -> Self:

@@ -74,7 +74,9 @@ async def main() -> int:
                 embedding_text(r.content, (r.formation or {}).get("evidence", ""))
                 for r in rows
             ]
-            vectors = await provider.embed(texts)
+            vectors = await provider.embed(
+                texts, timeout_seconds=settings.embedding_write_timeout_seconds
+            )
             if not vectors or len(vectors) != len(rows):
                 failed += len(rows)
                 print(f"  batch failed ({len(rows)} rows) — stopping")

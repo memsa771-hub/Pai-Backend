@@ -39,7 +39,9 @@ def _warn_once(message: str) -> None:
 class EmbeddingProvider(Protocol):
     dimensions: int
 
-    async def embed(self, texts: list[str]) -> list[list[float]] | None: ...
+    async def embed(
+        self, texts: list[str], *, timeout_seconds: float | None = None
+    ) -> list[list[float]] | None: ...
 
 
 class OpenAIEmbeddingProvider:
@@ -51,8 +53,48 @@ class OpenAIEmbeddingProvider:
         # Cheap running totals so spend is visible without a metrics backend.
         self.calls = 0
         self.tokens = 0
+        # Circuit breaker. During a provider outage every turn would otherwise
+        # wait the full read timeout before falling back to lexical; the student
+        # feels that as a counselor that stalls on every message. After
+        # `threshold` consecutive failures the call is skipped outright until
+        # the cooldown expires, then one turn probes and either reopens the
+        # circuit or restarts the cooldown.
+        self._consecutive_failures = 0
+        self._open_until = 0.0
 
-    async def embed(self, texts: list[str]) -> list[list[float]] | None:
+    def _breaker_is_open(self) -> bool:
+        if self._consecutive_failures < self._settings.embedding_breaker_threshold:
+            return False
+        if time.monotonic() >= self._open_until:
+            # Cooldown elapsed: let one call through to probe the provider.
+            return False
+        return True
+
+    def _record_success(self) -> None:
+        if self._consecutive_failures:
+            logger.info(
+                "Embedding provider recovered after %s consecutive failures",
+                self._consecutive_failures,
+            )
+        self._consecutive_failures = 0
+        self._open_until = 0.0
+
+    def _record_failure(self) -> None:
+        self._consecutive_failures += 1
+        threshold = self._settings.embedding_breaker_threshold
+        if self._consecutive_failures >= threshold:
+            cooldown = self._settings.embedding_breaker_cooldown_seconds
+            self._open_until = time.monotonic() + cooldown
+            logger.warning(
+                "Embedding provider failed %s times consecutively; skipping embedding "
+                "calls for %ss. Recall stays lexical until then.",
+                self._consecutive_failures,
+                cooldown,
+            )
+
+    async def embed(
+        self, texts: list[str], *, timeout_seconds: float | None = None
+    ) -> list[list[float]] | None:
         clean = [(t or "").strip() for t in texts]
         if not any(clean):
             return None
@@ -60,6 +102,11 @@ class OpenAIEmbeddingProvider:
         if not key:
             _warn_once("OPENAI_API_KEY is not set")
             return None
+        if self._breaker_is_open():
+            # Not a failure of this call — the provider is known-down, so the
+            # caller falls back immediately instead of paying the timeout.
+            return None
+        budget = timeout_seconds or self._settings.embedding_read_timeout_seconds
         started = time.perf_counter()
         try:
             from pai.platform.limits import consume, usage_subject
@@ -69,8 +116,8 @@ class OpenAIEmbeddingProvider:
                 ("llm_tokens", usage_subject.get(), sum(len(t.encode()) for t in clean),
                  self._settings.llm_token_limit_per_day, 86400)])
             import httpx
-            async with asyncio.timeout(self._settings.embedding_timeout_seconds):
-                async with httpx.AsyncClient(timeout=self._settings.embedding_timeout_seconds) as client:
+            async with asyncio.timeout(budget):
+                async with httpx.AsyncClient(timeout=budget) as client:
                     response = await client.post(
                         self._settings.openai_base_url.rstrip("/") + "/embeddings",
                         headers={"Authorization": f"Bearer {key}"},
@@ -101,13 +148,16 @@ class OpenAIEmbeddingProvider:
             # Distinct from a request failure: the budget is too small for this
             # deployment's distance to the provider, and every call will fail
             # the same way. Name the knob so the log says what to change.
+            self._record_failure()
             logger.warning(
-                "Embedding timed out after EMBEDDING_TIMEOUT_SECONDS=%ss; "
-                "recall falls back to keyword matching",
-                self._settings.embedding_timeout_seconds,
+                "Embedding timed out after %ss; recall falls back to keyword matching. "
+                "Raise EMBEDDING_READ_TIMEOUT_SECONDS (reads) or "
+                "EMBEDDING_WRITE_TIMEOUT_SECONDS (writes) if this persists.",
+                budget,
             )
             return None
         except Exception:
+            self._record_failure()
             logger.exception("Embedding request failed")
             return None
         # A vector of the wrong width cannot be stored in vector(N) and would
@@ -123,7 +173,10 @@ class OpenAIEmbeddingProvider:
                 len(bad),
                 self.dimensions,
             )
+            # A misconfiguration, not an outage — retrying sooner will not help
+            # and the breaker is not the right instrument, so leave it alone.
             return None
+        self._record_success()
         return vectors
 
 
@@ -145,7 +198,7 @@ def get_embedding_provider(settings: Settings | None = None) -> EmbeddingProvide
 
 
 def reset_embedding_provider() -> None:
-    """Test hook."""
+    """Test hook. Drops the provider, and with it any open circuit."""
     global _provider
     _provider = None
     global _warned

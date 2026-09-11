@@ -247,3 +247,137 @@ async def test_results_are_ordered_by_api_index(monkeypatch):
     provider = OpenAIEmbeddingProvider(_settings(openai_api_key="sk-test"))
     provider.dimensions = 2
     assert await provider.embed(["first", "second"]) == [[1.0, 1.0], [9.0, 9.0]]
+
+
+# ── read/write deadlines ───────────────────────────────────────────────────
+
+
+def _transport(monkeypatch, handler):
+    import httpx
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+    seen: dict[str, float | None] = {}
+
+    def factory(**kw):
+        seen["timeout"] = kw.get("timeout")
+        return original(transport=transport, **kw)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    return seen
+
+
+def _ok(request):
+    import httpx
+    return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 1.0]}]})
+
+
+async def test_caller_timeout_overrides_the_read_default(monkeypatch):
+    """The write path must get its own deadline, not the read one."""
+    seen = _transport(monkeypatch, _ok)
+    provider = OpenAIEmbeddingProvider(
+        _settings(openai_api_key="sk-test", embedding_read_timeout_seconds=8.0)
+    )
+    provider.dimensions = 2
+    await provider.embed(["text"], timeout_seconds=15.0)
+    assert seen["timeout"] == 15.0
+
+
+async def test_read_timeout_is_the_default_when_caller_passes_none(monkeypatch):
+    seen = _transport(monkeypatch, _ok)
+    provider = OpenAIEmbeddingProvider(
+        _settings(openai_api_key="sk-test", embedding_read_timeout_seconds=6.0)
+    )
+    provider.dimensions = 2
+    await provider.embed(["text"])
+    assert seen["timeout"] == 6.0
+
+
+# ── circuit breaker ────────────────────────────────────────────────────────
+
+
+def _failing_provider(monkeypatch, **kw):
+    import httpx
+    def boom(request):
+        raise httpx.ConnectError("provider down")
+    _transport(monkeypatch, boom)
+    return OpenAIEmbeddingProvider(
+        _settings(
+            openai_api_key="sk-test",
+            embedding_breaker_threshold=3,
+            embedding_breaker_cooldown_seconds=60.0,
+            **kw,
+        )
+    )
+
+
+async def test_breaker_opens_after_threshold_consecutive_failures(monkeypatch):
+    """During an outage, recall must stop paying the timeout on every turn."""
+    provider = _failing_provider(monkeypatch)
+    for _ in range(3):
+        assert await provider.embed(["q"]) is None
+    assert provider._breaker_is_open(), "three consecutive failures must open it"
+
+
+async def test_breaker_short_circuits_without_calling_the_provider(monkeypatch):
+    provider = _failing_provider(monkeypatch)
+    for _ in range(3):
+        await provider.embed(["q"])
+
+    called = False
+    import httpx
+    original = httpx.AsyncClient
+
+    def tripwire(**kw):
+        nonlocal called
+        called = True
+        return original(**kw)
+
+    monkeypatch.setattr(httpx, "AsyncClient", tripwire)
+    assert await provider.embed(["q"]) is None
+    assert not called, "an open circuit must not reach the network at all"
+
+
+async def test_success_before_threshold_resets_the_counter(monkeypatch):
+    """Intermittent failures must not accumulate into an open circuit."""
+    import httpx
+    provider = OpenAIEmbeddingProvider(
+        _settings(openai_api_key="sk-test", embedding_breaker_threshold=3)
+    )
+    provider.dimensions = 2
+
+    calls = {"n": 0}
+
+    def flaky(request):
+        calls["n"] += 1
+        if calls["n"] % 2:
+            raise httpx.ConnectError("blip")
+        return _ok(request)
+
+    _transport(monkeypatch, flaky)
+    for _ in range(6):
+        await provider.embed(["q"])
+    assert not provider._breaker_is_open()
+
+
+async def test_cooldown_expiry_allows_a_probe(monkeypatch):
+    provider = _failing_provider(monkeypatch)
+    for _ in range(3):
+        await provider.embed(["q"])
+    assert provider._breaker_is_open()
+    # Pretend the cooldown elapsed; one call must be allowed through.
+    provider._open_until = 0.0
+    assert not provider._breaker_is_open()
+
+
+async def test_dimension_mismatch_does_not_open_the_breaker(monkeypatch):
+    """A config error is not an outage; a cooldown would only hide it."""
+    import httpx
+    _transport(monkeypatch, lambda r: httpx.Response(
+        200, json={"data": [{"index": 0, "embedding": [0.1] * 384}]}))
+    provider = OpenAIEmbeddingProvider(
+        _settings(openai_api_key="sk-test", embedding_breaker_threshold=2)
+    )
+    provider.dimensions = 1536
+    for _ in range(4):
+        assert await provider.embed(["q"]) is None
+    assert not provider._breaker_is_open()

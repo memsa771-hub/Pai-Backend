@@ -3,7 +3,7 @@
 Recall embeds the query before it can search, so a budget at or under the
 embedding timeout guarantees the deadline fires first. Both failures are
 swallowed and recall drops to keyword matching, which looks like working
-software — measured here, EMBEDDING_TIMEOUT_SECONDS=0.6 against a provider
+software — measured here, EMBEDDING_READ_TIMEOUT_SECONDS=0.6 against a provider
 answering in ~1.8s meant semantic recall never once ran.
 """
 
@@ -25,11 +25,11 @@ def test_the_shipped_misconfiguration_is_rejected():
     why the relationship alone is not enough — the absolute value is what
     made every call fail.
     """
-    with pytest.raises(ValueError, match="EMBEDDING_TIMEOUT_SECONDS"):
+    with pytest.raises(ValueError, match="EMBEDDING_READ_TIMEOUT_SECONDS"):
         Settings.model_validate(
             _settings(
                 enable_semantic_embeddings=True,
-                embedding_timeout_seconds=0.6,
+                embedding_read_timeout_seconds=0.6,
                 memory_recall_budget_seconds=0.9,
             ).model_dump()
         )
@@ -40,7 +40,7 @@ def test_budget_below_embedding_timeout_is_rejected():
         Settings.model_validate(
             _settings(
                 enable_semantic_embeddings=True,
-                embedding_timeout_seconds=6.0,
+                embedding_read_timeout_seconds=6.0,
                 memory_recall_budget_seconds=0.9,
             ).model_dump()
         )
@@ -52,7 +52,7 @@ def test_equal_values_are_rejected():
         Settings.model_validate(
             _settings(
                 enable_semantic_embeddings=True,
-                embedding_timeout_seconds=3.0,
+                embedding_read_timeout_seconds=3.0,
                 memory_recall_budget_seconds=3.0,
             ).model_dump()
         )
@@ -62,11 +62,11 @@ def test_budget_above_embedding_timeout_is_accepted():
     ok = Settings.model_validate(
         _settings(
             enable_semantic_embeddings=True,
-            embedding_timeout_seconds=6.0,
+            embedding_read_timeout_seconds=6.0,
             memory_recall_budget_seconds=8.0,
         ).model_dump()
     )
-    assert ok.memory_recall_budget_seconds > ok.embedding_timeout_seconds
+    assert ok.memory_recall_budget_seconds > ok.embedding_read_timeout_seconds
 
 
 def test_lexical_only_deployments_are_left_alone():
@@ -74,7 +74,7 @@ def test_lexical_only_deployments_are_left_alone():
     ok = Settings.model_validate(
         _settings(
             enable_semantic_embeddings=False,
-            embedding_timeout_seconds=0.1,
+            embedding_read_timeout_seconds=0.1,
             memory_recall_budget_seconds=0.5,
         ).model_dump()
     )
@@ -86,7 +86,7 @@ def test_recall_budget_has_no_hardcoded_ceiling():
     provider could not raise the budget past two seconds at all."""
     ok = Settings.model_validate(
         _settings(
-            embedding_timeout_seconds=6.0, memory_recall_budget_seconds=15.0
+            embedding_read_timeout_seconds=6.0, memory_recall_budget_seconds=15.0
         ).model_dump()
     )
     assert ok.memory_recall_budget_seconds == 15.0
@@ -95,7 +95,7 @@ def test_recall_budget_has_no_hardcoded_ceiling():
 def test_shipped_defaults_are_self_consistent():
     live = get_settings()
     if live.enable_semantic_embeddings:
-        assert live.memory_recall_budget_seconds > live.embedding_timeout_seconds
+        assert live.memory_recall_budget_seconds > live.embedding_read_timeout_seconds
 
 
 def test_unreachable_rate_limit_timeout_is_rejected():
@@ -127,3 +127,71 @@ def test_disabled_limits_skip_the_check():
         ).model_dump()
     )
     assert ok.enable_rate_limits is False
+
+
+# ── read/write split ───────────────────────────────────────────────
+
+
+def test_write_timeout_may_exceed_the_recall_budget():
+    """Writes run after the reply, so the turn budget does not bound them.
+
+    The write embed is not inside the student's turn — tying it to the recall
+    budget would be the old single-knob behaviour the split exists to remove.
+    """
+    ok = Settings.model_validate(
+        _settings(
+            embedding_read_timeout_seconds=8.0,
+            embedding_write_timeout_seconds=15.0,
+            memory_recall_budget_seconds=10.0,
+        ).model_dump()
+    )
+    assert ok.embedding_write_timeout_seconds > ok.memory_recall_budget_seconds
+
+
+def test_unreachable_write_timeout_is_rejected():
+    """A write timeout under the round trip leaves every row unembedded."""
+    with pytest.raises(ValueError, match="EMBEDDING_WRITE_TIMEOUT_SECONDS"):
+        Settings.model_validate(
+            _settings(
+                enable_semantic_embeddings=True,
+                embedding_write_timeout_seconds=0.5,
+            ).model_dump()
+        )
+
+
+def test_legacy_timeout_still_configures_reads():
+    """An existing .env tuned for a distant provider must not silently revert.
+
+    EMBEDDING_TIMEOUT_SECONDS was the only knob; a deployment that raised it
+    to 12s has to keep 12s on upgrade rather than dropping to the 8s default.
+    """
+    ok = Settings.model_validate(
+        _settings(
+            embedding_timeout_seconds=12.0, memory_recall_budget_seconds=14.0
+        ).model_dump(exclude={"embedding_read_timeout_seconds", "embedding_write_timeout_seconds"})
+    )
+    assert ok.embedding_read_timeout_seconds == 12.0
+
+
+def test_legacy_timeout_never_tightens_the_write_deadline():
+    """The old knob bounded a read; inheriting it must not shorten writes."""
+    ok = Settings.model_validate(
+        _settings(embedding_timeout_seconds=3.0).model_dump(
+            exclude={"embedding_read_timeout_seconds", "embedding_write_timeout_seconds"}
+        )
+    )
+    assert ok.embedding_read_timeout_seconds == 3.0
+    assert ok.embedding_write_timeout_seconds == 15.0
+
+
+def test_explicit_values_win_over_the_legacy_knob():
+    ok = Settings.model_validate(
+        _settings(
+            embedding_timeout_seconds=3.0,
+            embedding_read_timeout_seconds=7.0,
+            embedding_write_timeout_seconds=20.0,
+            memory_recall_budget_seconds=9.0,
+        ).model_dump()
+    )
+    assert ok.embedding_read_timeout_seconds == 7.0
+    assert ok.embedding_write_timeout_seconds == 20.0

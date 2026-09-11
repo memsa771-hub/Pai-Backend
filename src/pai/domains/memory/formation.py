@@ -272,7 +272,11 @@ async def embed_pending_memories(
                 embedding_text(r.content, (r.formation or {}).get("evidence", ""))
                 for r in rows
             ]
-            vectors = await provider.embed(texts)
+            # Write deadline: the student already has their reply, so waiting
+            # longer here is cheaper than leaving the rows unembedded.
+            vectors = await provider.embed(
+                texts, timeout_seconds=settings.embedding_write_timeout_seconds
+            )
             if not vectors or len(vectors) != len(rows):
                 return 0
             expected = settings.embedding_dimensions

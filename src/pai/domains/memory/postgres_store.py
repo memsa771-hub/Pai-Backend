@@ -92,7 +92,10 @@ class AsyncPostgresMemoryStore:
         if provider is None:
             return None
         with span("memory_embedding"):
-            vectors = await provider.embed([query])
+            # Read deadline: this call is inside the student's turn.
+            vectors = await provider.embed(
+                [query], timeout_seconds=settings.embedding_read_timeout_seconds
+            )
         if not vectors:
             return None
         vector_started = perf_counter()

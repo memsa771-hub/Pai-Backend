@@ -116,16 +116,47 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1536, alias="EMBEDDING_DIMENSIONS")
     # Rows pulled by vector search before structural re-ranking in Python.
     embedding_candidate_limit: int = Field(default=40, alias="EMBEDDING_CANDIDATE_LIMIT")
+    # Read and write embed on different deadlines because they sit in different
+    # places. A read blocks the student's reply; a write runs after the reply is
+    # already sent, so it can afford to wait rather than leave a row unembedded.
+    #
     # Measured: text-embedding-3-small answers in ~1.8s from ap-southeast-2,
     # occasionally 8s. At 0.6s every call timed out and recall silently fell
     # back to lexical ranking, which looks like working software. Latency is
     # regional, so this is a knob — but the default must let a normal call
-    # finish, not merely bound the wait.
-    embedding_timeout_seconds: float = Field(default=8.0, gt=0, alias="EMBEDDING_TIMEOUT_SECONDS")
-    # Must exceed embedding_timeout_seconds: recall embeds the query first, so a
-    # budget below it can never succeed. No le= ceiling — a deployment far from
-    # the provider has to be able to raise this.
-    memory_recall_budget_seconds: float = Field(default=9.0, gt=0, alias="MEMORY_RECALL_BUDGET_SECONDS")
+    # finish, not merely bound the wait. 8s covers the measured tail; trimming
+    # it toward "typical" would cut off exactly the slow-but-fine calls.
+    embedding_read_timeout_seconds: float = Field(
+        default=8.0, gt=0, alias="EMBEDDING_READ_TIMEOUT_SECONDS"
+    )
+    # Writes embed a batch of rows in one request, after the transaction has
+    # committed and after the student has their reply. A failure costs only a
+    # retry — the rows keep embedding=NULL and the next turn (or
+    # scripts/backfill_memory_embeddings.py) picks them up — so this deadline
+    # can be generous where the read deadline cannot.
+    embedding_write_timeout_seconds: float = Field(
+        default=15.0, gt=0, alias="EMBEDDING_WRITE_TIMEOUT_SECONDS"
+    )
+    # Deprecated: set the two above instead. Kept so an existing .env keeps
+    # starting — when set it seeds whichever of the two was left at default.
+    embedding_timeout_seconds: float | None = Field(
+        default=None, gt=0, alias="EMBEDDING_TIMEOUT_SECONDS"
+    )
+    # Must exceed embedding_read_timeout_seconds: recall embeds the query first,
+    # so a budget below it can never succeed. The margin covers the pgvector
+    # search and ranking that follow the embedding. No le= ceiling — a
+    # deployment far from the provider has to be able to raise this.
+    memory_recall_budget_seconds: float = Field(default=10.0, gt=0, alias="MEMORY_RECALL_BUDGET_SECONDS")
+    # Consecutive embedding failures before recall stops calling the provider.
+    # During an outage every turn otherwise pays the full read timeout before
+    # falling back to lexical; the student feels that as a stalled counselor.
+    embedding_breaker_threshold: int = Field(
+        default=3, ge=1, alias="EMBEDDING_BREAKER_THRESHOLD"
+    )
+    # How long recall stays lexical before one turn probes the provider again.
+    embedding_breaker_cooldown_seconds: float = Field(
+        default=60.0, gt=0, alias="EMBEDDING_BREAKER_COOLDOWN_SECONDS"
+    )
     turn_understanding_budget_seconds: float = Field(default=2.0, gt=0, le=3, alias="TURN_UNDERSTANDING_BUDGET_SECONDS")
     memory_rerank_url: str = Field(default="", alias="MEMORY_RERANK_URL")
     memory_rerank_api_key: str = Field(default="", alias="MEMORY_RERANK_API_KEY")
@@ -221,6 +252,31 @@ class Settings(BaseSettings):
     _MIN_VIABLE_RATE_LIMIT_TIMEOUT = 2.0
 
     @model_validator(mode="after")
+    def deprecated_embedding_timeout_seeds_read_and_write(self) -> Self:
+        """Honour EMBEDDING_TIMEOUT_SECONDS from an existing .env.
+
+        The single knob became two. A deployment that tuned the old one to
+        survive its distance from the provider must not silently revert to the
+        default on upgrade, so the old value seeds whichever of the two was
+        left untouched. Setting a specific one always wins.
+        """
+        legacy = self.embedding_timeout_seconds
+        if legacy is None:
+            return self
+        fields = type(self).model_fields
+        if "embedding_read_timeout_seconds" not in self.model_fields_set:
+            object.__setattr__(self, "embedding_read_timeout_seconds", legacy)
+        if "embedding_write_timeout_seconds" not in self.model_fields_set:
+            # The old knob bounded a read; a write that inherits it keeps at
+            # least the write default rather than being tightened by it.
+            object.__setattr__(
+                self,
+                "embedding_write_timeout_seconds",
+                max(legacy, fields["embedding_write_timeout_seconds"].default),
+            )
+        return self
+
+    @model_validator(mode="after")
     def embedding_budgets_are_reachable(self) -> Self:
         """Refuse timeouts that can never succeed.
 
@@ -231,21 +287,26 @@ class Settings(BaseSettings):
         """
         if not self.enable_semantic_embeddings:
             return self
-        if self.embedding_timeout_seconds < self._MIN_VIABLE_EMBEDDING_TIMEOUT:
-            raise ValueError(
-                f"EMBEDDING_TIMEOUT_SECONDS ({self.embedding_timeout_seconds}s) is below "
-                f"{self._MIN_VIABLE_EMBEDDING_TIMEOUT}s, which no embeddings round trip "
-                "meets — every call would time out and recall would silently fall back to "
-                "keyword matching. Raise it, or set ENABLE_SEMANTIC_EMBEDDINGS=false to "
-                "choose lexical recall deliberately."
-            )
+        for alias, value in (
+            ("EMBEDDING_READ_TIMEOUT_SECONDS", self.embedding_read_timeout_seconds),
+            ("EMBEDDING_WRITE_TIMEOUT_SECONDS", self.embedding_write_timeout_seconds),
+        ):
+            if value < self._MIN_VIABLE_EMBEDDING_TIMEOUT:
+                raise ValueError(
+                    f"{alias} ({value}s) is below "
+                    f"{self._MIN_VIABLE_EMBEDDING_TIMEOUT}s, which no embeddings round trip "
+                    "meets — every call would time out and recall would silently fall back to "
+                    "keyword matching. Raise it, or set ENABLE_SEMANTIC_EMBEDDINGS=false to "
+                    "choose lexical recall deliberately."
+                )
         # Recall embeds the query before it can search, so the budget has to
         # outlast the call it contains.
-        if self.memory_recall_budget_seconds <= self.embedding_timeout_seconds:
+        if self.memory_recall_budget_seconds <= self.embedding_read_timeout_seconds:
             raise ValueError(
                 f"MEMORY_RECALL_BUDGET_SECONDS ({self.memory_recall_budget_seconds}s) must "
-                f"exceed EMBEDDING_TIMEOUT_SECONDS ({self.embedding_timeout_seconds}s), or "
-                "the budget kills the embedding it is waiting for."
+                f"exceed EMBEDDING_READ_TIMEOUT_SECONDS "
+                f"({self.embedding_read_timeout_seconds}s), or the budget kills the "
+                "embedding it is waiting for."
             )
         return self
 

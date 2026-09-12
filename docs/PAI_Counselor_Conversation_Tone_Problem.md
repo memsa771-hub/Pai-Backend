@@ -1,7 +1,7 @@
 # PAI Counselor Conversation Tone — Problem Analysis
 
 **Status:** Analysis only (no implementation)
-**Related:** [`PAI_Intelligent_Counselor_Architecture.md`](../PAI_Intelligent_Counselor_Architecture.md)
+**Related:** [`counselor_architecture.md`](../code/counselor/counselor_architecture.md)
 
 ---
 

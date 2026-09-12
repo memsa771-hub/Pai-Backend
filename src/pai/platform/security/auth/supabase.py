@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -52,31 +53,25 @@ class SupabaseAuthProvider:
             write=settings.auth_http_timeout_seconds,
             pool=3.0,
         )
-        # ponytail: bind IPv4 so Windows doesn't wait ~5s on a dead IPv6 route to Supabase.
+        limits = httpx.Limits(
+            max_keepalive_connections=settings.auth_http_keepalive_connections,
+            max_connections=settings.auth_http_max_connections,
+            keepalive_expiry=30.0,
+        )
+        # Configure the transport itself: client limits do not override a supplied transport.
         self._client = client or httpx.AsyncClient(
             timeout=timeout,
-            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
-            limits=httpx.Limits(
-                max_keepalive_connections=20,
-                max_connections=40,
-                keepalive_expiry=30.0,
-            ),
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0", limits=limits),
         )
+        from pai.platform.security.auth.jwt import JWTVerifier
+
+        self._verifier = JWTVerifier(settings, self._client)
 
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
-    async def signup(
-        self, email: str, password: str, full_name: str = ""
-    ) -> SignupResult:
-        try:
-            if await self._admin_user_exists(email):
-                raise EmailAlreadyInUseError()
-        except EmailAlreadyInUseError:
-            raise
-        except AuthError:
-            pass
+    async def signup(self, email: str, password: str, full_name: str = "") -> SignupResult:
         redirect_to = self._settings.email_verification_redirect_url
         payload: dict[str, Any] = {
             "email": email,
@@ -107,21 +102,16 @@ class SupabaseAuthProvider:
         )
 
     async def login(self, email: str, password: str) -> ProviderSession:
+        payload: dict[str, Any] = {"email": email, "password": password}
         try:
             data = await self._request_json(
                 "POST",
                 "/token",
                 params={"grant_type": "password"},
-                json_body={"email": email, "password": password},
+                json_body=payload,
             )
-        except InvalidCredentialsError:
-            try:
-                exists = await self._admin_user_exists(email)
-            except AuthError:
-                raise InvalidCredentialsError("Email or password is incorrect.") from None
-            if exists:
-                raise IncorrectPasswordError() from None
-            raise UserNotFoundError() from None
+        except (InvalidCredentialsError, UserNotFoundError, IncorrectPasswordError):
+            raise InvalidCredentialsError("Email or password is incorrect.") from None
         session = self._parse_token_response(data)
         if not session.user.email_verified:
             raise EmailNotVerifiedError()
@@ -140,13 +130,12 @@ class SupabaseAuthProvider:
         await self._request_json(
             "POST",
             "/logout",
+            params={"scope": "local"},
             bearer_token=access_token,
             allow_empty_body=True,
         )
 
     async def resend_verification(self, email: str) -> GenericActionResult:
-        if not await self._admin_user_exists(email):
-            raise UserNotFoundError()
         payload = {
             "type": "signup",
             "email": email,
@@ -161,36 +150,78 @@ class SupabaseAuthProvider:
         verifier: str | None,
         email: str,
     ) -> ProviderSession:
-        payload: dict[str, Any] = {
-            "type": "signup",
-            "token": code,
-            "email": email,
-        }
-        data = await self._request_json("POST", "/verify", json_body=payload)
+        if verifier:
+            data = await self._request_json(
+                "POST",
+                "/token",
+                params={"grant_type": "pkce"},
+                json_body={"auth_code": code, "code_verifier": verifier},
+            )
+        else:
+            # Numeric OTPs use email+token; email-link hashes use token_hash.
+            payload = (
+                {"type": "signup", "token": code, "email": email}
+                if code.isdigit()
+                else {"type": "signup", "token_hash": code}
+            )
+            data = await self._request_json("POST", "/verify", json_body=payload)
         session = self._parse_token_response(data)
         if not session.user.email_verified:
             raise EmailNotVerifiedError()
         return session
 
     async def request_password_reset(self, email: str) -> GenericActionResult:
-        if not await self._admin_user_exists(email):
-            raise UserNotFoundError()
         payload = {
             "email": email,
             "redirect_to": self._settings.password_reset_redirect_url,
         }
-        await self._request_json("POST", "/recover", json_body=payload)
+        await self._request_json(
+            "POST",
+            "/recover",
+            json_body=payload,
+            params={"redirect_to": self._settings.password_reset_redirect_url},
+        )
         return GenericActionResult(
             message=f"A password recovery email has been sent to {email}.",
         )
 
-    async def reset_password(self, ticket: str, new_password: str) -> GenericActionResult:
-        data = await self._request_json(
-            "POST",
-            "/verify",
-            json_body={"type": "recovery", "token": ticket},
-        )
-        access_token = str(data.get("access_token", ""))
+    async def reset_password(
+        self,
+        ticket: str,
+        new_password: str,
+        *,
+        email: str | None = None,
+        verifier: str | None = None,
+    ) -> GenericActionResult:
+        if ticket.count(".") == 2:
+            # Default implicit redirect already redeemed the recovery link.
+            # /user checks this bearer with Supabase before any password mutation.
+            access_token = ticket
+            from pai.platform.security.auth.jwt import require_recent_auth
+
+            claims = await self._verifier.verify(access_token)
+            require_recent_auth(claims, self._settings, methods={"otp", "recovery"})
+        else:
+            if verifier:
+                data = await self._request_json(
+                    "POST",
+                    "/token",
+                    params={"grant_type": "pkce"},
+                    json_body={"auth_code": ticket, "code_verifier": verifier},
+                )
+            else:
+                payload = (
+                    {"type": "recovery", "token": ticket, "email": email}
+                    if email
+                    else {"type": "recovery", "token_hash": ticket}
+                )
+                data = await self._request_json("POST", "/verify", json_body=payload)
+            access_token = str(data.get("access_token", ""))
+            if verifier and access_token:
+                from pai.platform.security.auth.jwt import require_recent_auth
+
+                claims = await self._verifier.verify(access_token)
+                require_recent_auth(claims, self._settings, methods={"otp", "recovery"})
         if not access_token:
             raise InvalidTokenError()
         await self._request_json(
@@ -235,19 +266,6 @@ class SupabaseAuthProvider:
         except (httpx.TimeoutException, httpx.RequestError):
             return False
 
-    async def _admin_user_exists(self, email: str) -> bool:
-        data = await self._request_json(
-            "GET",
-            "/admin/users",
-            params={"page": "1", "per_page": "1", "email": email},
-            use_service_role=True,
-        )
-        needle = email.lower()
-        users = data.get("users")
-        if isinstance(users, list):
-            return any(str(user.get("email") or "").lower() == needle for user in users)
-        return str(data.get("email") or "").lower() == needle
-
     def _anon_headers(self, bearer_token: str | None = None) -> dict[str, str]:
         key = self._settings.supabase_anon_key
         headers: dict[str, str] = {"apikey": key, "Content-Type": "application/json"}
@@ -261,11 +279,14 @@ class SupabaseAuthProvider:
 
     def _service_headers(self) -> dict[str, str]:
         key = self._settings.supabase_service_role_key
-        return {
+        headers = {
             "apikey": key,
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
+        if key.startswith("sb_secret_"):
+            headers.pop("Authorization")
+        return headers
 
     async def _request_json(
         self,
@@ -281,14 +302,15 @@ class SupabaseAuthProvider:
         headers = self._service_headers() if use_service_role else self._anon_headers(bearer_token)
         url = f"{self._settings.supabase_auth_base}{path}"
         try:
-            response = await self._client.request(
-                method,
-                url,
-                json=json_body,
-                params=params,
-                headers=headers,
-            )
-        except httpx.TimeoutException as exc:
+            async with asyncio.timeout(self._settings.auth_http_timeout_seconds):
+                response = await self._client.request(
+                    method,
+                    url,
+                    json=json_body,
+                    params=params,
+                    headers=headers,
+                )
+        except (httpx.TimeoutException, TimeoutError) as exc:
             raise ProviderUnavailableError() from exc
         except httpx.RequestError as exc:
             logger.warning("Supabase auth request failed: %s", type(exc).__name__)
@@ -297,6 +319,16 @@ class SupabaseAuthProvider:
         if response.status_code >= 500:
             raise ProviderUnavailableError()
 
+        if response.status_code == 429:
+            exc = AuthError(
+                "AUTH_RATE_LIMITED", "Too many attempts. Please try again shortly.", 429
+            )
+            try:
+                exc.retry_after = max(1, min(3600, int(response.headers.get("Retry-After", "60"))))
+            except ValueError:
+                exc.retry_after = 60
+            raise exc
+
         if response.status_code >= 400:
             self._raise_from_response(response)
 
@@ -304,10 +336,13 @@ class SupabaseAuthProvider:
             return {}
 
         if response.headers.get("content-type", "").startswith("application/json"):
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError:
+                raise ProviderUnavailableError() from None
             if isinstance(data, dict):
                 return data
-        return {}
+        raise ProviderUnavailableError("Authentication returned an unexpected response.")
 
     def _raise_from_response(self, response: httpx.Response) -> None:
         message = "Request could not be processed."
@@ -315,7 +350,10 @@ class SupabaseAuthProvider:
         status = response.status_code
 
         if response.headers.get("content-type", "").startswith("application/json"):
-            body = response.json()
+            try:
+                body = response.json()
+            except ValueError:
+                raise ProviderUnavailableError() from None
             if isinstance(body, dict):
                 error_code = str(body.get("error") or body.get("error_code") or "")
                 message = str(

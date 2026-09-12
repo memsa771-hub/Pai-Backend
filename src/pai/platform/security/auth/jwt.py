@@ -1,174 +1,160 @@
-"""Access-token verification for Supabase (HS256 legacy + ES256/RS256 JWKS)."""
+"""Strict user JWT verification with an asynchronous, per-project signing-key cache."""
 
 from __future__ import annotations
 
-import logging
-import threading
+import asyncio
 import time
 from typing import Any
 
 import httpx
-from jose import JWTError, jwk, jwt
+from jose import JOSEError, JWTError, jwk, jwt
 
 from pai.config import Settings
-from pai.kernel.errors import InvalidTokenError
-
-logger = logging.getLogger(__name__)
-
-_jwks_lock = threading.Lock()
-_jwks_cache: dict[str, Any] = {"fetched_at": 0.0, "keys": []}
-_JWKS_TTL_SECONDS = 600
+from pai.kernel.errors import InvalidTokenError, ProviderUnavailableError
 
 
-def _jwks_url(settings: Settings) -> str:
-    return f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
-
-
-def _supabase_http_get(url: str, headers: dict[str, str]) -> httpx.Response:
-    # ponytail: IPv4 bind — same Windows AAAA stall as login (~5s).
-    with httpx.Client(
-        timeout=httpx.Timeout(connect=3.0, read=5.0, write=5.0, pool=3.0),
-        transport=httpx.HTTPTransport(local_address="0.0.0.0"),
-    ) as client:
-        return client.get(url, headers=headers)
-
-
-def _fetch_jwks(settings: Settings) -> list[dict[str, Any]]:
-    global _jwks_cache
-    now = time.time()
-    with _jwks_lock:
-        if _jwks_cache["keys"] and (now - float(_jwks_cache["fetched_at"])) < _JWKS_TTL_SECONDS:
-            return list(_jwks_cache["keys"])
-
-    try:
-        response = _supabase_http_get(
-            _jwks_url(settings),
-            {"apikey": settings.supabase_anon_key},
-        )
-        response.raise_for_status()
-        keys = list((response.json() or {}).get("keys") or [])
-    except Exception as exc:
-        logger.warning("Failed to fetch Supabase JWKS: %s", exc)
-        with _jwks_lock:
-            if _jwks_cache["keys"]:
-                return list(_jwks_cache["keys"])
-        raise InvalidTokenError(
-            "Could not verify token (JWKS unavailable). Retry in a moment."
-        ) from exc
-
-    with _jwks_lock:
-        _jwks_cache = {"fetched_at": now, "keys": keys}
-    return keys
-
-
-def _key_for_token(token: str, settings: Settings) -> Any:
+def _header(token: str, settings: Settings) -> dict:
+    if not token or len(token) > 16384:
+        raise InvalidTokenError("Invalid access token.")
     try:
         header = jwt.get_unverified_header(token)
-    except JWTError as exc:
-        raise InvalidTokenError("Malformed access token.") from exc
-
-    alg = str(header.get("alg") or "HS256")
-    kid = header.get("kid")
-
-    if alg == "HS256":
-        return settings.supabase_jwt_secret, ["HS256"]
-
-    keys = _fetch_jwks(settings)
-    if not keys:
-        raise InvalidTokenError(
-            "Token uses asymmetric signing but project JWKS has no keys."
-        )
-
-    matching = [k for k in keys if not kid or k.get("kid") == kid]
-    if not matching:
-        # Force refresh once if kid unknown (rotation).
-        with _jwks_lock:
-            _jwks_cache["fetched_at"] = 0.0
-        keys = _fetch_jwks(settings)
-        matching = [k for k in keys if not kid or k.get("kid") == kid]
-    if not matching:
-        raise InvalidTokenError("No matching JWKS signing key for this token.")
-
-    try:
-        return jwk.construct(matching[0]), [alg]
-    except Exception as exc:
-        raise InvalidTokenError("Invalid JWKS signing key material.") from exc
+    except (JWTError, ValueError, TypeError) as exc:
+        raise InvalidTokenError("Invalid access token.") from exc
+    allowed = {"ES256", "RS256"}
+    if settings.auth_allow_legacy_hs256:
+        allowed.add("HS256")
+    if header.get("alg") not in allowed:
+        raise InvalidTokenError("Unsupported access token signing algorithm.")
+    if header["alg"] != "HS256" and not isinstance(header.get("kid"), str):
+        raise InvalidTokenError("Access token is missing its signing key ID.")
+    return header
 
 
-def validate_access_token(token: str, settings: Settings) -> dict[str, Any]:
-    """Verify Supabase user JWT (HS256 secret or ES256/RS256 via JWKS)."""
-    raw = (token or "").strip()
-    if not raw:
-        raise InvalidTokenError("Missing access token.")
-
-    key, algorithms = _key_for_token(raw, settings)
+def validate_access_token(
+    token: str, settings: Settings, keys: list[dict] | None = None
+) -> dict[str, Any]:
+    """CPU-only verification. Network callers must use JWTVerifier.verify()."""
+    header = _header(token, settings)
+    algorithm = header["alg"]
+    key: Any = settings.supabase_jwt_secret
+    if algorithm != "HS256":
+        matching = [
+            key
+            for key in (keys or [])
+            if key.get("kid") == header["kid"]
+            and key.get("alg") == algorithm
+            and key.get("use", "sig") == "sig"
+        ]
+        if len(matching) != 1:
+            raise InvalidTokenError("Unknown access token signing key. Retry shortly.")
+        try:
+            key = jwk.construct(matching[0], algorithm=algorithm)
+        except (JOSEError, ValueError, TypeError) as exc:
+            raise InvalidTokenError("Invalid signing key.") from exc
+    elif not key:
+        raise InvalidTokenError("Legacy token signing is not configured.")
     try:
         payload = jwt.decode(
-            raw,
+            token,
             key,
-            algorithms=algorithms,
+            algorithms=[algorithm],
             audience=settings.supabase_jwt_audience,
-            options={"verify_aud": True},
+            issuer=settings.supabase_auth_base,
+            options={
+                "require_exp": True,
+                "require_iat": True,
+                "require_sub": True,
+                "require_aud": True,
+                "require_iss": True,
+                "leeway": 30,
+            },
         )
-    except JWTError as exc:
-        # Fallback: some jose/EC combinations are picky — verify with Auth server.
-        if algorithms != ["HS256"]:
-            payload = _verify_via_supabase_user(raw, settings)
-            if payload is not None:
-                return payload
-        message = str(exc) or "Invalid or expired token."
-        lower = message.lower()
-        if "expired" in lower:
-            raise InvalidTokenError("Access token expired. Login again and re-Authorize.") from exc
-        if "audience" in lower:
-            raise InvalidTokenError(
-                f"Token audience mismatch (expected '{settings.supabase_jwt_audience}')."
-            ) from exc
-        if "signature" in lower:
-            raise InvalidTokenError(
-                "Token signature invalid. Re-login and paste only data.accessToken in Authorize."
-            ) from exc
-        raise InvalidTokenError("Invalid or expired token. Login again and re-Authorize.") from exc
-
-    user_id = payload.get("sub")
-    if not user_id:
-        raise InvalidTokenError("Token missing subject.")
-    role = payload.get("role")
-    if role not in (None, "authenticated", "service_role"):
-        raise InvalidTokenError("Token role is not allowed.")
+        now = time.time()
+        if (
+            not payload["sub"]
+            or payload.get("role") != "authenticated"
+            or isinstance(payload["iat"], bool)
+            or isinstance(payload["exp"], bool)
+            or float(payload["iat"]) > now + 30
+            or float(payload["exp"]) <= float(payload["iat"])
+        ):
+            raise InvalidTokenError("Invalid user access token.")
+    except (JWTError, ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise InvalidTokenError(
+            "Your session has expired or is invalid. Refresh and retry."
+        ) from exc
     return payload
 
 
-def _verify_via_supabase_user(token: str, settings: Settings) -> dict[str, Any] | None:
-    """Network verification fallback for asymmetric JWTs."""
-    try:
-        response = _supabase_http_get(
-            f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
-            {
-                "apikey": settings.supabase_anon_key,
-                "Authorization": f"Bearer {token}",
-            },
-        )
-        if response.status_code >= 400:
-            return None
-        data = response.json()
-        user_id = data.get("id")
-        if not user_id:
-            return None
-        # Prefer claims from the token for consistency with local path.
-        claims = jwt.get_unverified_claims(token)
-        if str(claims.get("sub")) != str(user_id):
-            return None
-        role = claims.get("role")
-        if role not in (None, "authenticated", "service_role"):
-            return None
-        return claims
-    except Exception as exc:
-        logger.warning("Supabase /user token fallback failed: %s", exc)
-        return None
+class JWTVerifier:
+    def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None):
+        self.settings = settings
+        self._owns_client = client is None
+        self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(3.0))
+        self._lock = asyncio.Lock()
+        self._keys: list[dict] = []
+        self._fetched_at = float("-inf")
+        self._attempted_at = float("-inf")
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self.client.aclose()
+
+    async def _get_keys(self, kid: str) -> list[dict]:
+        now = time.monotonic()
+        known = any(key.get("kid") == kid for key in self._keys)
+        if known and now - self._fetched_at < 600:
+            return self._keys
+        async with self._lock:
+            now = time.monotonic()
+            known = any(key.get("kid") == kid for key in self._keys)
+            if known and now - self._fetched_at < 600:
+                return self._keys
+            # One refresh per project per cooldown, including unknown-key traffic.
+            if now - self._attempted_at >= 30:
+                self._attempted_at = now
+                try:
+                    response = await self.client.get(
+                        f"{self.settings.supabase_auth_base}/.well-known/jwks.json",
+                        headers={"apikey": self.settings.supabase_anon_key},
+                    )
+                    response.raise_for_status()
+                    keys = response.json()["keys"]
+                    if not isinstance(keys, list) or not all(isinstance(k, dict) for k in keys):
+                        raise ValueError("Invalid JWKS response")
+                    self._keys = keys
+                    self._fetched_at = time.monotonic()
+                except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                    if not known or now - self._fetched_at >= 900:
+                        raise ProviderUnavailableError(
+                            "Session verification is temporarily unavailable."
+                        ) from None
+            if time.monotonic() - self._fetched_at >= 900:
+                raise ProviderUnavailableError("Session verification is temporarily unavailable.")
+            return self._keys
+
+    async def verify(self, token: str) -> dict[str, Any]:
+        header = _header(token, self.settings)
+        keys = await self._get_keys(header["kid"]) if header["alg"] != "HS256" else None
+        return validate_access_token(token, self.settings, keys)
 
 
 def reset_jwks_cache_for_tests() -> None:
-    global _jwks_cache
-    with _jwks_lock:
-        _jwks_cache = {"fetched_at": 0.0, "keys": []}
+    """Compatibility: caches are now owned by each app, not process globals."""
+
+
+def require_recent_auth(payload: dict, settings: Settings, *, methods=None) -> None:
+    from pai.kernel.errors import AuthError
+
+    allowed = methods or {"password", "otp", "totp", "oauth", "webauthn", "sso/saml"}
+    now = time.time()
+    for entry in payload.get("amr", []):
+        if not isinstance(entry, dict) or entry.get("method") not in allowed:
+            continue
+        timestamp = entry.get("timestamp")
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            if -30 <= now - timestamp <= settings.auth_recent_login_seconds:
+                return
+    raise AuthError(
+        "REAUTHENTICATION_REQUIRED", "Please sign in again to confirm this change.", 403
+    )

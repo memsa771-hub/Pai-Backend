@@ -3,7 +3,15 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 
-from pai.kernel.errors import AuthError, EmailNotVerifiedError, InvalidTokenError
+from pai.kernel.errors import (
+    AuthError,
+    EmailAlreadyInUseError,
+    EmailNotVerifiedError,
+    IncorrectPasswordError,
+    InvalidCredentialsError,
+    InvalidTokenError,
+    UserNotFoundError,
+)
 from pai.platform.security.auth.provider import AuthProvider, ProviderSession, ProviderUser
 
 
@@ -24,27 +32,27 @@ class AuthService:
     def new_csrf_token() -> str:
         return secrets.token_urlsafe(32)
 
-    async def signup(
-        self, email: str, password: str, full_name: str = ""
-    ) -> dict:
+    async def signup(self, email: str, password: str, full_name: str = "") -> dict:
         normalized = email.strip().lower()
-        result = await self._provider.signup(normalized, password, full_name)
-        if result.session:
-            return {
-                "message": "Account created successfully.",
-                "email": normalized,
-                "session": self._public_session(result.session, include_refresh=False),
-            }
+        try:
+            await self._provider.signup(normalized, password, full_name)
+        except EmailAlreadyInUseError:
+            pass
         return {
             "message": (
-                "Account created. Verification link has been sent to your email, "
-                "verify to continue."
+                "If registration is available for this email, a verification link has been sent. "
+                "If you already have an account, sign in or reset your password."
             ),
             "email": normalized,
         }
 
     async def login(self, email: str, password: str) -> SessionBundle:
-        session = await self._provider.login(email.strip().lower(), password)
+        try:
+            session = await self._provider.login(email.strip().lower(), password)
+        except (UserNotFoundError, IncorrectPasswordError, InvalidCredentialsError):
+            raise InvalidCredentialsError() from None
+        if not session.user.email_verified:
+            raise EmailNotVerifiedError()
         return self._to_bundle(session)
 
     async def refresh(self, refresh_token: str) -> SessionBundle:
@@ -54,12 +62,28 @@ class AuthService:
         return self._to_bundle(session)
 
     async def logout(self, access_token: str, refresh_token: str) -> None:
-        await self._provider.logout(access_token, refresh_token)
+        if access_token:
+            try:
+                await self._provider.logout(access_token, refresh_token)
+                return
+            except AuthError as exc:
+                if exc.status_code not in {401, 403}:
+                    raise
+        if refresh_token:
+            try:
+                session = await self._provider.refresh(refresh_token)
+                await self._provider.logout(session.access_token, session.refresh_token)
+            except AuthError as exc:
+                if exc.status_code not in {401, 403}:
+                    raise
 
     async def resend_verification(self, email: str) -> dict:
         normalized = email.strip().lower()
-        await self._provider.resend_verification(normalized)
-        return {"message": f"Verification email has been sent to {normalized}."}
+        try:
+            await self._provider.resend_verification(normalized)
+        except UserNotFoundError:
+            pass
+        return {"message": "If this account needs verification, an email has been sent."}
 
     async def confirm_verification(
         self, code: str, verifier: str | None, email: str
@@ -74,26 +98,28 @@ class AuthService:
         user = await self._provider.get_user(access_token)
         if not user.email_verified:
             raise EmailNotVerifiedError()
-        try:
-            session = await self._provider.refresh(refresh_token)
-        except InvalidTokenError:
-            session = ProviderSession(
-                access_token=access_token,
-                access_token_expires_in=3600,
-                refresh_token=refresh_token,
-                user=user,
-            )
+        session = await self._provider.refresh(refresh_token)
+        if session.user.id != user.id:
+            raise InvalidTokenError("Session tokens do not belong to the same account.")
         if not session.user.email_verified:
             raise EmailNotVerifiedError()
         return self._to_bundle(session)
 
     async def request_password_reset(self, email: str) -> dict:
         normalized = email.strip().lower()
-        await self._provider.request_password_reset(normalized)
-        return {"message": f"A password recovery email has been sent to {normalized}."}
+        try:
+            await self._provider.request_password_reset(normalized)
+        except UserNotFoundError:
+            pass
+        return {"message": "If an account exists for this email, a recovery link has been sent."}
 
-    async def reset_password(self, ticket: str, new_password: str) -> dict:
-        result = await self._provider.reset_password(ticket, new_password)
+    async def reset_password(
+        self, ticket: str, new_password: str, *, email=None, verifier=None
+    ) -> dict:
+        options = {
+            key: value for key, value in {"email": email, "verifier": verifier}.items() if value
+        }
+        result = await self._provider.reset_password(ticket, new_password, **options)
         return {"message": result.message}
 
     async def change_password(self, access_token: str, new_password: str) -> dict:

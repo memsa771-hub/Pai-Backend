@@ -30,48 +30,42 @@ def test_submit_schema_requires_critical_fields():
         OnboardingSubmit.model_validate({"nationality": "Pakistani"})
     names = {error["loc"][-1] for error in exc.value.errors()}
     for field in (
-        "phone",
         "dateOfBirth",
-        "currentCountry",
-        "currentCity",
         "currentStatus",
-        "educationLevel",
         "gender",
         "primaryGoal",
     ):
         assert field in names
+    assert "phone" not in names
+    assert "educationLevel" not in names
+    assert "currentCountry" not in names
+    assert "currentCity" not in names
     assert "institution" not in names
     assert "degree" not in names
 
 
 def test_submit_schema_optional_fields_can_be_omitted():
     body = OnboardingSubmit.model_validate(ONBOARDING_PAYLOAD)
-    assert body.linkedinUrl is None
-    assert body.skills == []
-    assert body.workExperience == []
-    assert body.testScores == []
+    assert body.currentStatus == "student"
+    assert body.gender == "male"
 
 
 def test_submit_schema_minimal_criticals_are_enough():
     body = OnboardingSubmit.model_validate(
         {
-            "phone": "+923001234567",
             "dateOfBirth": "2004-03-12",
-            "nationality": "PK",
-            "currentCountry": "PK",
-            "currentCity": "Lahore",
             "currentStatus": "student",
             "gender": "male",
-            "educationLevel": "bachelor",
             "primaryGoal": "admission",
         }
     )
-    assert body.institution is None
-    assert body.degree is None
-    assert body.gpa is None
+    assert body.phone is None
+    assert body.currentCountry is None
+    assert body.currentCity is None
+    assert body.nationality is None
 
 
-def test_submit_schema_high_school_does_not_need_degree():
+def test_submit_schema_ignores_extra_fields():
     payload = {
         **ONBOARDING_PAYLOAD,
         "educationLevel": "high_school",
@@ -81,6 +75,7 @@ def test_submit_schema_high_school_does_not_need_degree():
     }
     body = OnboardingSubmit.model_validate(payload)
     assert body.resolved_degree() is None
+
 
 
 def test_submit_schema_rejects_vague_primary_goal():
@@ -146,12 +141,17 @@ def test_onboarding_offers_manual_or_cv_choice(verified_user):
     assert body["path"] is None
     ids = {c["id"] for c in body["choices"]}
     assert ids == {"manual", "cv"}
-    assert "phone" in body["requiredFields"]
+    assert "phone" not in body["requiredFields"]
     assert "gender" in body["requiredFields"]
+
+
     assert "primaryGoal" in body["requiredFields"]
+    assert "dateOfBirth" in body["requiredFields"]
+    assert "currentStatus" in body["requiredFields"]
     assert "institution" not in body["requiredFields"]
-    assert "institution" in body["conditionalFields"]
-    assert "linkedinUrl" in body["optionalFields"]
+    assert body["conditionalFields"] == []
+    assert "phone" in body["optionalFields"]
+    assert "currentCountry" in body["optionalFields"]
     goal_ids = {item["id"] for item in body["enums"]["primaryGoal"]}
     assert goal_ids == {
         "exploring",
@@ -165,9 +165,8 @@ def test_onboarding_offers_manual_or_cv_choice(verified_user):
     assert body["countryFields"] == [
         "nationality",
         "currentCountry",
-        "studyCountry",
-        "targetCountries",
     ]
+
     assert {item["id"] for item in body["enums"]["educationLevel"]} >= {
         "high_school",
         "diploma",
@@ -213,10 +212,8 @@ def test_manual_onboarding_unlocks_pai(verified_user):
     me = client.get("/api/v1/person/me", headers=headers).json()["data"]
     assert me["onboardingCompleted"] is True
     assert me["phone"] == "+923001234567"
-    educations = client.get("/api/v1/person/educations", headers=headers).json()["data"]["items"]
-    assert educations[0]["institution"] == "Bahria University"
     goals = client.get("/api/v1/person/goals", headers=headers).json()["data"]["items"]
-    assert goals[0]["title"] == "MS Computer Science in Germany"
+    assert goals[0]["title"] == "University admission"
 
 
 def test_onboarding_submit_is_idempotent(verified_user):
@@ -229,8 +226,7 @@ def test_onboarding_submit_is_idempotent(verified_user):
     data = again.json()["data"]
     assert data["onboardingCompleted"] is True
     assert data["onboardingCompletedAt"] == completed_at
-    educations = client.get("/api/v1/person/educations", headers=headers).json()["data"]["items"]
-    assert len(educations) == 1
+
 
 
 def test_cv_choice_does_not_require_form_fields():

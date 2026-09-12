@@ -23,9 +23,12 @@ from pai.interfaces.workers.documents import document_worker_loop
 from pai.interfaces.workers.goals import goal_worker_loop
 from pai.interfaces.workers.intelligence import intelligence_worker_loop
 from pai.kernel.errors import AuthError
+from pai.platform.bounded_io import close_pending
 from pai.platform.database.db import warmup_database
 from pai.platform.latency import LatencyMiddleware, configure_logging
 from pai.platform.llm.gateway import LLMGateway
+from pai.platform.redis_limits import close_clients
+from pai.platform.security.auth.jwt import JWTVerifier
 from pai.platform.security.auth.supabase import SupabaseAuthProvider
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+    app.state.jwt_verifier = JWTVerifier(settings)
     validate_prompt_templates()
     await init_graph_checkpointer(
         settings.database_url,
@@ -92,6 +96,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if getattr(app.state, "_owns_provider", False):
             await app.state.auth_provider.aclose()
         await close_graph_checkpointer()
+        await app.state.jwt_verifier.aclose()
+        await close_pending()
+        await close_clients()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

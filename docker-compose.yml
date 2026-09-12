@@ -1,4 +1,16 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - auth-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
   postgres:
     image: postgres:16-alpine
     environment:
@@ -12,3 +24,5 @@ services:
       interval: 3s
       timeout: 5s
       retries: 10
+volumes:
+  auth-redis:

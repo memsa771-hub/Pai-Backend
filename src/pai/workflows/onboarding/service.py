@@ -28,7 +28,7 @@ from pai.workflows.onboarding.contracts import (
 from pai.domains.goals.models import Goal
 from pai.domains.goals.service import enqueue_goal_intelligence_job, upsert_goal_from_anchors
 from pai.domains.goals.types import GoalWriteAction
-from pai.domains.student.person.models import Education, Person, Skill, WorkExperience
+from pai.domains.student.person.models import Person
 from pai.domains.student.vault.service import VaultService, grow_vault_schema
 
 
@@ -83,11 +83,8 @@ class OnboardingService:
         sparse = await self._vault.get_sparse_fields(
             session, person, include_sensitive=True
         )
-        education = await self._first_education(session, person)
         goal = await self._first_goal(session, person)
-        values = self._current_values(person, sparse, education, goal)
-        values["skills"] = await self._skill_values(session, person)
-        values["workExperience"] = await self._work_values(session, person)
+        values = self._current_values(person, sparse, goal)
         missing = self._missing_required(values)
         public = onboarding_public_status(person, self._settings)
         return {
@@ -128,7 +125,7 @@ class OnboardingService:
             person.onboarding_completed_at = datetime.now(UTC)
         from pai.domains.journey.service import record_onboarding
 
-        title = (body.goalDetail or PRIMARY_GOAL_TITLES[body.primaryGoal.value])[:256]
+        title = PRIMARY_GOAL_TITLES[body.primaryGoal.value]
         await record_onboarding(session, person.id, intent=title)
         await session.commit()
         return self._result(person)
@@ -231,118 +228,37 @@ class OnboardingService:
     async def _apply_submit(
         self, session: AsyncSession, person: Person, body: OnboardingSubmit
     ) -> None:
-        person.phone = body.phone
+        if body.phone:
+            person.phone = body.phone
+        if body.fullName:
+            person.full_name = body.fullName
         consents = ["demographics"]
-        if body.budget is not None or body.scholarships is not None:
-            consents.append("finance")
         await self._vault.ensure_consents(session, person.id, consents)
 
         updates: list[tuple[str, Any]] = [
             ("demographics.date_of_birth", body.dateOfBirth.isoformat()),
-            ("demographics.nationality", body.nationality),
-            ("location.current_country", body.currentCountry),
-            ("location.current_city", body.currentCity),
-            ("identity.current_status", body.currentStatus.value),
             ("demographics.gender", body.gender.value),
-            ("education.highest_level", body.educationLevel),
+            ("identity.current_status", body.currentStatus.value),
         ]
-        if body.linkedinUrl:
-            updates.append(("social.linkedin_url", body.linkedinUrl))
-        destinations = list(body.targetCountries)
-        if body.studyCountry and body.studyCountry not in destinations:
-            destinations.insert(0, body.studyCountry)
-        if destinations:
-            updates.append(("application.study_country", destinations[0]))
-            if len(destinations) > 1:
-                updates.append(("mobility.preferred_regions", destinations))
-        if body.intake:
-            cycle = body.intake
-            if body.intakeYear:
-                cycle = f"{cycle} {body.intakeYear}"
-            updates.append(("application.admission_cycle", cycle))
-        if body.budget:
-            updates.append(("finance.funding_status", body.budget.value))
-        if body.scholarships is not None:
-            updates.append(("finance.scholarship_interest", body.scholarships))
-        if body.testScores:
-            updates.append(
-                (
-                    "application.test_scores",
-                    [{"name": item.name, "score": item.score} for item in body.testScores],
-                )
-            )
+        if body.nationality:
+            updates.append(("demographics.nationality", body.nationality))
+        if body.currentCountry:
+            updates.append(("location.current_country", body.currentCountry))
+        if body.currentCity:
+            updates.append(("location.current_city", body.currentCity))
+
         await self._vault.upsert_sparse_fields(
             session, person, updates, skip_consent_check=True
         )
-        await self._upsert_education(session, person, body)
         await self._upsert_goal(session, person, body)
-        await self._upsert_skills(session, person, body)
-        await self._upsert_work(session, person, body)
-
-    async def _upsert_education(
-        self, session: AsyncSession, person: Person, body: OnboardingSubmit
-    ) -> None:
-        if not (
-            body.institution
-            or body.degree
-            or body.major
-            or body.gpa is not None
-            or body.graduationYear is not None
-        ):
-            return
-        degree = body.resolved_degree()
-        row = (
-            None
-            if person.onboarding_completed_at is None
-            else await self._first_education(session, person)
-        )
-        from pai.domains.student.handlers.common import _MANUAL_TYPED, _typed_snapshot, audit_manual_typed_write
-
-        spec = _MANUAL_TYPED["educations"]
-        old_value = _typed_snapshot(row, spec[2]) if row is not None else None
-        if row is None:
-            row = Education(
-                person_id=person.id,
-                institution=body.institution,
-                degree=degree,
-                major=body.major if body.major else None,
-                gpa=body.gpa,
-                gpa_scale=body.gpaScale,
-                graduation_year=body.graduationYear,
-                status="unknown",
-                qualification_data={"original_level": body.educationLevel, "original_name": degree},
-            )
-            session.add(row)
-            await session.flush()
-            await audit_manual_typed_write(session, person, row)
-        else:
-            if body.institution:
-                row.institution = body.institution
-            if degree:
-                row.degree = degree
-            if body.major is not None:
-                row.major = body.major
-            if body.gpa is not None:
-                row.gpa = body.gpa
-                row.gpa_scale = body.gpaScale
-            if body.graduationYear is not None:
-                row.graduation_year = body.graduationYear
-            await session.flush()
-            await audit_manual_typed_write(session, person, row, old_value=old_value)
-        if person.vault:
-            scopes = list(person.vault.applicable_scopes or [])
-            if "education" not in scopes:
-                person.vault.applicable_scopes = scopes + ["education"]
 
     async def _upsert_goal(
         self, session: AsyncSession, person: Person, body: OnboardingSubmit
     ) -> None:
         goal_key = body.primaryGoal.value
-        title = (body.goalDetail or PRIMARY_GOAL_TITLES[goal_key])[:256]
+        title = PRIMARY_GOAL_TITLES[goal_key]
         goal_type = GOAL_TYPE_FOR_PRIMARY[goal_key]
         anchors: dict[str, Any] = {"goal_type": goal_type, "title": title}
-        if body.studyCountry:
-            anchors["target_country"] = body.studyCountry
         goal, action = await upsert_goal_from_anchors(
             session,
             person.id,
@@ -360,99 +276,26 @@ class OnboardingService:
             if "application" not in scopes:
                 person.vault.applicable_scopes = scopes + ["application"]
 
-    async def _upsert_skills(
-        self, session: AsyncSession, person: Person, body: OnboardingSubmit
-    ) -> None:
-        if not body.skills:
-            return
-        known: set[str] = set()
-        if person.onboarding_completed_at is not None:
-            existing = await session.execute(select(Skill).where(Skill.person_id == person.id))
-            known = {row.name.strip().lower() for row in existing.scalars() if row.name}
-        for item in body.skills:
-            key = item.name.strip().lower()
-            if key in known:
-                continue
-            known.add(key)
-            session.add(
-                Skill(
-                    person_id=person.id,
-                    name=item.name.strip(),
-                    proficiency=item.proficiency.value if item.proficiency else None,
-                )
-            )
-        if person.vault:
-            scopes = list(person.vault.applicable_scopes or [])
-            if "career" not in scopes:
-                person.vault.applicable_scopes = scopes + ["career"]
-
-    async def _upsert_work(
-        self, session: AsyncSession, person: Person, body: OnboardingSubmit
-    ) -> None:
-        if not body.workExperience:
-            return
-        known: set[tuple[str, str]] = set()
-        if person.onboarding_completed_at is not None:
-            existing = await session.execute(
-                select(WorkExperience).where(WorkExperience.person_id == person.id)
-            )
-            known = {
-                (row.organization.strip().lower(), row.title.strip().lower())
-                for row in existing.scalars()
-                if row.organization and row.title
-            }
-        for item in body.workExperience:
-            key = (item.organization.strip().lower(), item.title.strip().lower())
-            if key in known:
-                continue
-            known.add(key)
-            session.add(
-                WorkExperience(
-                    person_id=person.id,
-                    organization=item.organization.strip(),
-                    title=item.title.strip(),
-                    employment_type=item.employmentType.value if item.employmentType else None,
-                    is_current=item.isCurrent,
-                    description=item.description,
-                )
-            )
-        if person.vault:
-            scopes = list(person.vault.applicable_scopes or [])
-            if "career" not in scopes:
-                person.vault.applicable_scopes = scopes + ["career"]
-
     def _current_values(
         self,
         person: Person,
         sparse: dict[str, Any],
-        education: Education | None,
         goal: Goal | None,
     ) -> dict[str, Any]:
         return {
+            "fullName": person.full_name,
             "phone": person.phone,
             "dateOfBirth": _sparse_get(sparse, "demographics.date_of_birth"),
-            "nationality": _sparse_get(sparse, "demographics.nationality"),
-            "currentCountry": _sparse_get(sparse, "location.current_country"),
-            "currentCity": _sparse_get(sparse, "location.current_city"),
-            "currentStatus": _sparse_get(sparse, "identity.current_status"),
             "gender": _sparse_get(sparse, "demographics.gender"),
-            "linkedinUrl": _sparse_get(sparse, "social.linkedin_url"),
-            "educationLevel": _sparse_get(sparse, "education.highest_level"),
-            "institution": education.institution if education else None,
-            "degree": education.degree if education else None,
-            "major": education.major if education else None,
-            "gpa": education.gpa if education else None,
-            "graduationYear": education.graduation_year if education else None,
+            "currentStatus": _sparse_get(sparse, "identity.current_status"),
             "primaryGoal": (
                 goal.description
                 if goal and goal.description in {item.value for item in PrimaryGoal}
                 else None
             ),
-            "goalDetail": goal.title if goal else None,
-            "studyCountry": _sparse_get(sparse, "application.study_country"),
-            "intake": _sparse_get(sparse, "application.admission_cycle"),
-            "budget": _sparse_get(sparse, "finance.funding_status"),
-            "scholarships": _sparse_get(sparse, "finance.scholarship_interest"),
+            "nationality": _sparse_get(sparse, "demographics.nationality"),
+            "currentCountry": _sparse_get(sparse, "location.current_country"),
+            "currentCity": _sparse_get(sparse, "location.current_city"),
         }
 
     def _missing_required(self, values: dict[str, Any]) -> list[str]:
@@ -462,16 +305,6 @@ class OnboardingService:
                 missing.append(name)
         return missing
 
-    async def _first_education(
-        self, session: AsyncSession, person: Person
-    ) -> Education | None:
-        result = await session.execute(
-            select(Education)
-            .where(Education.person_id == person.id)
-            .order_by(Education.created_at.asc())
-        )
-        return result.scalars().first()
-
     async def _first_goal(self, session: AsyncSession, person: Person) -> Goal | None:
         result = await session.execute(
             select(Goal)
@@ -480,25 +313,3 @@ class OnboardingService:
         )
         return result.scalars().first()
 
-    async def _skill_values(self, session: AsyncSession, person: Person) -> list[dict[str, Any]]:
-        result = await session.execute(select(Skill).where(Skill.person_id == person.id))
-        return [
-            {"name": row.name, "proficiency": row.proficiency}
-            for row in result.scalars()
-            if row.name
-        ]
-
-    async def _work_values(self, session: AsyncSession, person: Person) -> list[dict[str, Any]]:
-        result = await session.execute(
-            select(WorkExperience).where(WorkExperience.person_id == person.id)
-        )
-        return [
-            {
-                "organization": row.organization,
-                "title": row.title,
-                "employmentType": row.employment_type,
-                "isCurrent": row.is_current,
-                "description": row.description,
-            }
-            for row in result.scalars()
-        ]

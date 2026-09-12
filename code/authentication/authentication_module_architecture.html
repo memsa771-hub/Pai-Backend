@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Placement AI (PAI) - Authentication Module Architecture Specification</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 16mm 14mm;
+    @bottom-right {
+      content: counter(page);
+    }
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1e293b;
+    background: #ffffff;
+    line-height: 1.55;
+    font-size: 10pt;
+  }
+  .header-banner {
+    border-bottom: 2px solid #059669;
+    padding-bottom: 14px;
+    margin-bottom: 20px;
+  }
+  .badge {
+    display: inline-block;
+    background: #ecfdf5;
+    color: #047857;
+    font-weight: 700;
+    font-size: 8pt;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  h1 {
+    font-size: 20pt;
+    color: #0f172a;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 10.5pt;
+    color: #64748b;
+  }
+  h2 {
+    font-size: 13pt;
+    color: #065f46;
+    border-bottom: 1.5px solid #e2e8f0;
+    padding-bottom: 4px;
+    margin-top: 18px;
+    margin-bottom: 10px;
+    font-weight: 700;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-size: 11pt;
+    color: #0f172a;
+    margin-top: 12px;
+    margin-bottom: 6px;
+    font-weight: 700;
+    page-break-after: avoid;
+  }
+  p {
+    margin-bottom: 8px;
+  }
+  ul, ol {
+    margin-left: 18px;
+    margin-bottom: 10px;
+  }
+  li {
+    margin-bottom: 4px;
+  }
+  .highlight-box {
+    background: #f8fafc;
+    border-left: 4px solid #10b981;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 9.5pt;
+  }
+  .highlight-box.alert {
+    border-left-color: #f59e0b;
+    background: #fffbeb;
+  }
+  .highlight-box.blue {
+    border-left-color: #3b82f6;
+    background: #eff6ff;
+  }
+  .flow-diagram {
+    background: #0f172a;
+    color: #f8fafc;
+    padding: 14px 18px;
+    border-radius: 6px;
+    font-family: Consolas, "Courier New", Courier, monospace;
+    font-size: 8.5pt;
+    line-height: 1.45;
+    margin: 14px 0;
+    white-space: pre;
+    overflow-x: auto;
+    page-break-inside: avoid;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 16px 0;
+    font-size: 9pt;
+    page-break-inside: avoid;
+  }
+  th, td {
+    padding: 6px 10px;
+    border: 1px solid #cbd5e1;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f1f5f9;
+    color: #0f172a;
+    font-weight: 700;
+  }
+  tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+  code {
+    font-family: Consolas, "Courier New", Courier, monospace;
+    background: #f1f5f9;
+    color: #0f172a;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 8.5pt;
+  }
+  .file-path {
+    font-weight: 700;
+    color: #047857;
+  }
+  .page-break {
+    page-break-before: always;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 7.5pt;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .tag-post { background: #dcfce7; color: #15803d; }
+  .tag-get  { background: #e0e7ff; color: #3730a3; }
+  .tag-del  { background: #fee2e2; color: #991b1b; }
+</style>
+</head>
+<body>
+
+<div class="header-banner">
+  <div class="badge">Security & Identity Specification</div>
+  <h1>Placement AI (PAI) Authentication Module Architecture</h1>
+  <div class="subtitle">Technical guide: Supabase GoTrue IdP, JWT local validation, Person bootstrap, session cookies, and security gates</div>
+</div>
+
+<h2>1. Core Architectural Principles</h2>
+<div class="highlight-box">
+  <strong>Key Security & Design Invariants:</strong>
+  <ul>
+    <li><strong>Decoupled Identity vs Profile:</strong> Credentials and passwords reside in Supabase GoTrue. PAI's internal database stores the canonical <code>Person</code> and <code>PersonVault</code>, lazily provisioned on verified authentication.</li>
+    <li><strong>Local Stateless JWT Verification:</strong> Incoming Bearer tokens are cryptographically checked locally in-memory (symmetric HS256 secret or asymmetric ES256/RS256 via 600s cached JWKS).</li>
+    <li><strong>Double-Submit CSRF + HttpOnly Refresh Tokens:</strong> Access tokens are returned in JSON; refresh tokens reside in <code>HttpOnly, SameSite=Lax</code> cookies. Sensitive state changes require an matching <code>X-CSRF-Token</code> header.</li>
+    <li><strong>Onboarding Gatekeeper:</strong> Authenticated tokens cannot access counseling or document APIs until the student's initial onboarding is marked complete.</li>
+  </ul>
+</div>
+
+<h2>2. Authentication Workflows</h2>
+
+<h3>A. Registration & Email Confirmation Flow</h3>
+<div class="flow-diagram">
+Client (Web/Mobile)            FastAPI API Gateway            Supabase GoTrue (IdP)        PostgreSQL (PAI DB)
+  │                                     │                                     │                           │
+  ├── POST /api/v1/auth/signup ────────>│                                     │                           │
+  │   (email, password, fullName)       ├── POST /signup ────────────────────>│                           │
+  │                                     │   (triggers verification email)     │                           │
+  │<── 201 Created (Verify Email) ──────│<────────────────────────────────────│                           │
+  │                                     │                                     │                           │
+  │── [Student clicks verification] ───>│                                     │                           │
+  │   or POST /email-verification/confirm                                     │                           │
+  │   (code, email)                     ├── POST /verify ────────────────────>│                           │
+  │                                     │<── Session Tokens (Access+Refresh) ─│                           │
+  │                                     │                                     │                           │
+  │                                     │── PersonBootstrapService.bootstrap() ──────────────────────────>│
+  │                                     │   (Atomically creates Person & PersonVault if missing)          │
+  │<── 200 OK + Session Cookies ────────│                                                                 │
+       (accessToken, user profile, cookies)
+</div>
+
+<h3>B. Authenticated Request Guard Pipeline</h3>
+<div class="flow-diagram">
+HTTP Request: `Authorization: Bearer <accessToken>`
+  │
+  ├── 1. Bearer Scheme Check: Strips whitespace, rejects non-Bearer or malformed prefixes.
+  │
+  ├── 2. JWT Verification (validate_access_token):
+  │      • Algorithm detection (HS256 vs ES256/RS256).
+  │      • Signature validation against local secret or cached JWKS (TTL: 600s).
+  │      • Audience validation: `aud == 'authenticated'`. Expiration: `exp > now`.
+  │
+  ├── 3. Distributed Rate Limiter:
+  │      • Consumes 1 token from user request bucket (e.g. 60 requests/min).
+  │
+  ├── 4. Person Resolution:
+  │      • Queries `persons` table where `external_auth_id == sub`.
+  │
+  └── 5. Onboarding Verification:
+         • Enforces `person.onboarding_completed_at is not None`.
+         • If None, returns 403 ONBOARDING_INCOMPLETE.
+</div>
+
+<div class="page-break"></div>
+
+<h2>3. Comprehensive Code & Directory Index</h2>
+
+<h3>Layer 1: Interfaces & Security Dependencies</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 35%;">File Path</th>
+      <th style="width: 65%;">Component Responsibilities & Key Handlers</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="file-path">src/pai/interfaces/api/auth.py</span></td>
+      <td>
+        Defines FastAPI authentication and account management endpoints:
+        <ul>
+          <li><code>signup()</code>: Registers user, checks existing identities.</li>
+          <li><code>login()</code>: Issues session bundle and sets session cookies.</li>
+          <li><code>refresh_tokens()</code>: Rotates tokens using HttpOnly cookie; guarded by CSRF.</li>
+          <li><code>logout()</code>: Revokes session on Supabase and clears cookies.</li>
+          <li><code>confirm_email_verification()</code>: Confirms 6-digit OTP code.</li>
+          <li><code>change_password()</code> / <code>reset_password()</code>: Password lifecycle.</li>
+          <li><code>me()</code>: Returns current user identity and onboarding status.</li>
+          <li><code>delete_account()</code>: Anonymizes local student records and deletes identity from GoTrue.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/interfaces/api/dependencies.py</span></td>
+      <td>
+        Security dependency injection guards:
+        <ul>
+          <li><code>get_current_access_token()</code>: Extracts Bearer token.</li>
+          <li><code>get_validated_access_token()</code>: Cryptographically validates token and checks rate limits.</li>
+          <li><code>resolve_person_from_token()</code>: Maps JWT <code>sub</code> to local <code>Person</code> model.</li>
+          <li><code>require_onboarding_complete()</code>: Enforces onboarding completion.</li>
+          <li><code>require_csrf()</code>: Validates Double-Submit CSRF cookie pattern against header.</li>
+        </ul>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Layer 2: Platform Security & Identity Providers</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 35%;">File Path</th>
+      <th style="width: 65%;">Component Responsibilities</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="file-path">src/pai/platform/security/auth/provider.py</span></td>
+      <td>
+        Defines the <code>AuthProvider</code> abstract protocol and data models (<code>ProviderUser</code>, <code>ProviderSession</code>, <code>SignupResult</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/platform/security/auth/supabase.py</span></td>
+      <td>
+        Implements <code>AuthProvider</code> via Supabase GoTrue REST API. Contains custom IPv4 transport binding (bypassing Windows IPv6 resolution latency) and error translation mapping.
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/platform/security/auth/jwt.py</span></td>
+      <td>
+        Stateless JWT validator. Manages JWKS cache with thread-safe locking, handles HS256/ES256/RS256 algorithms, and validates audience/subject claims.
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/platform/security/auth/service.py</span></td>
+      <td>
+        <code>AuthService</code> domain orchestrator. Manages <code>SessionBundle</code> generation (access token, refresh token, CSRF secret creation).
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/platform/security/sensitive_values.py</span></td>
+      <td>
+        <code>SensitiveValueCodec</code>: Fernet symmetric encryption engine protecting sensitive fields at rest using <code>VAULT_ENCRYPTION_KEY</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Layer 3: Student Domain & Person Provisioning</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 35%;">File Path</th>
+      <th style="width: 65%;">Component Responsibilities</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="file-path">src/pai/domains/student/person/models.py</span></td>
+      <td>
+        Defines the student database entities:
+        <ul>
+          <li><code>Person</code>: Local identity record (<code>external_auth_id</code>, <code>email</code>, <code>onboarding_completed_at</code>).</li>
+          <li><code>PersonVault</code>: Root vault entity storing catalog schema and completion metrics.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/domains/student/person/service.py</span></td>
+      <td>
+        <code>PersonBootstrapService</code>: Executes atomic row-locking provisioning (<code>_get_person_for_update</code>) to link the Supabase user to a local <code>Person</code> and initialize their <code>PersonVault</code> upon verification.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<h2>4. Session, Cookie & Security Configuration</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 30%;">Configuration Key</th>
+      <th style="width: 25%;">Default / Recommended</th>
+      <th style="width: 45%;">Security Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>COOKIE_SECURE</code></td>
+      <td><code>false</code> (dev) / <code>true</code> (prod)</td>
+      <td>Enforces HTTPS-only transmission for session cookies.</td>
+    </tr>
+    <tr>
+      <td><code>COOKIE_SAME_SITE</code></td>
+      <td><code>lax</code></td>
+      <td>Defends against Cross-Site Request Forgery (CSRF).</td>
+    </tr>
+    <tr>
+      <td><code>REFRESH_COOKIE_NAME</code></td>
+      <td><code>pai_refresh_token</code></td>
+      <td>HttpOnly cookie storing the long-lived refresh token.</td>
+    </tr>
+    <tr>
+      <td><code>CSRF_COOKIE_NAME</code></td>
+      <td><code>pai_csrf_token</code></td>
+      <td>Readable cookie for client double-submit token verification.</td>
+    </tr>
+    <tr>
+      <td><code>SUPABASE_JWT_AUDIENCE</code></td>
+      <td><code>authenticated</code></td>
+      <td>Audience claim verified against incoming JWTs.</td>
+    </tr>
+    <tr>
+      <td><code>AUTH_HTTP_TIMEOUT_SECONDS</code></td>
+      <td><code>10.0</code></td>
+      <td>Network timeout for outbound calls to Supabase GoTrue.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>5. Swagger API Quick Reference</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 15%;">Method</th>
+      <th style="width: 35%;">Endpoint</th>
+      <th style="width: 30%;">Summary</th>
+      <th style="width: 20%;">Auth Guard</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/signup</code></td>
+      <td>Register student account</td>
+      <td>Public</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/login</code></td>
+      <td>Authenticate with email & password</td>
+      <td>Public</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/refresh</code></td>
+      <td>Rotate access token</td>
+      <td>Cookie + CSRF</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/logout</code></td>
+      <td>Revoke session</td>
+      <td>Bearer + CSRF</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/email-verification/request</code></td>
+      <td>Resend confirmation email</td>
+      <td>Public</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/email-verification/confirm</code></td>
+      <td>Confirm 6-digit OTP</td>
+      <td>Public</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/session</code></td>
+      <td>Establish session from redirect tokens</td>
+      <td>Public</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/password/forgot</code></td>
+      <td>Send recovery email</td>
+      <td>Public</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/password/reset</code></td>
+      <td>Set new password with ticket</td>
+      <td>Public</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/auth/password/change</code></td>
+      <td>Update password (logged in)</td>
+      <td>Bearer JWT</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-get">GET</span></td>
+      <td><code>/api/v1/auth/me</code></td>
+      <td>Get profile & onboarding progress</td>
+      <td>Bearer JWT</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-del">DELETE</span></td>
+      <td><code>/api/v1/account</code></td>
+      <td>Anonymize & delete account</td>
+      <td>Bearer + Cookie</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>

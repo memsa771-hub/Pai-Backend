@@ -1,5 +1,7 @@
 .git
 .env
+env
+.tmp_pkgs
 .env.*
 *.env
 .venv

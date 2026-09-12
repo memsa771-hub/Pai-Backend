@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated
 
@@ -8,23 +9,18 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pai.config import Settings, get_settings
-from pai.kernel.errors import AuthError, PersonNotFoundError
-from pai.platform.security.auth.provider import ProviderUser
-from pai.platform.security.auth.service import AuthService, SessionBundle
-from pai.platform.database.db import get_session_factory
+from pai.domains.student.person.models import Person
+from pai.domains.student.person.service import (
+    PersonBootstrapService,
+    soft_delete_person_data,
+)
 from pai.interfaces.api.dependencies import (
     get_db,
     get_pai,
     get_validated_access_token,
+    limit_auth_attempt,
     require_csrf,
-    validate_access_token,
-)
-from pai.workflows.onboarding.service import onboarding_public_status
-from pai.domains.student.person.models import Person
-from pai.domains.student.person.service import (
-    PersonBootstrapService,
-    get_person_by_auth,
-    soft_delete_person_data,
+    require_recent_login,
 )
 from pai.interfaces.api.schemas import (
     ApiErrorResponse,
@@ -42,6 +38,12 @@ from pai.interfaces.api.schemas import (
     VerificationConfirmRequest,
     success,
 )
+from pai.kernel.errors import AuthError, PersonNotFoundError
+from pai.platform.database.db import get_session_factory
+from pai.platform.latency import span
+from pai.platform.security.auth.provider import ProviderUser
+from pai.platform.security.auth.service import AuthService, SessionBundle
+from pai.workflows.onboarding.service import onboarding_public_status
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,7 @@ account_router = APIRouter(prefix="/api/v1", tags=["account"])
 
 def _set_session_cookies(response: Response, bundle: SessionBundle, settings: Settings) -> None:
     max_age = 60 * 60 * 24 * 30
+    response.headers["Cache-Control"] = "no-store"
     response.set_cookie(
         key=settings.refresh_cookie_name,
         value=bundle.refresh_token,
@@ -72,8 +75,10 @@ def _set_session_cookies(response: Response, bundle: SessionBundle, settings: Se
 
 
 def _clear_session_cookies(response: Response, settings: Settings) -> None:
-    response.delete_cookie(settings.refresh_cookie_name, path="/")
-    response.delete_cookie(settings.csrf_cookie_name, path="/")
+    for name in (settings.refresh_cookie_name, settings.csrf_cookie_name):
+        response.delete_cookie(
+            name, path="/", secure=settings.cookie_secure, samesite=settings.cookie_same_site
+        )
 
 
 def _session_json(bundle: SessionBundle, onboarding: dict | None = None) -> dict:
@@ -90,7 +95,9 @@ def _session_json(bundle: SessionBundle, onboarding: dict | None = None) -> dict
             "createdAt": bundle.user.created_at,
         },
     }
-    payload.update(onboarding or onboarding_public_status(None))
+    payload.update(
+        onboarding or {"profilePending": True, "onboardingCompleted": None, "nextPath": None}
+    )
     return success(payload)
 
 
@@ -102,19 +109,48 @@ def _session_response(
     return response
 
 
-async def _person_after_verified_auth(
-    settings: Settings, user: ProviderUser
-) -> Person | None:
+async def _person_after_verified_auth(settings: Settings, user: ProviderUser) -> Person | None:
     """Attach Person after auth. Uses the token user (no extra Supabase /user call)."""
     if not user.email_verified:
         return None
-    try:
+
+    async def lookup():
         factory = get_session_factory(settings)
         async with factory() as session:
+            # Existing logins need a read, not identity/vault writes and row locks.
+            from sqlalchemy import select
+
+            person = (
+                await session.execute(
+                    select(Person).where(
+                        Person.external_auth_id == user.id,
+                        Person.auth_provider == "supabase",
+                    )
+                )
+            ).scalar_one_or_none()
+            if person is not None:
+                if person.deleted_at is not None or person.account_status != "active":
+                    raise AuthError("ACCOUNT_UNAVAILABLE", "This account is not active.", 403)
+                return person
             return await PersonBootstrapService(settings).ensure_person(session, user)
-    except Exception:
-        logger.exception("Person bootstrap failed after authentication")
+
+    try:
+        from pai.platform.bounded_io import run_bounded
+
+        return await run_bounded(
+            lookup, settings.auth_profile_timeout_seconds, group="auth-profile"
+        )
+    except AuthError:
+        raise
+    except Exception as exc:
+        logger.warning("Auth profile deferred (%s)", type(exc).__name__)
         return None
+
+
+def _profile_status(person: Person | None, settings: Settings) -> dict:
+    if person is None:
+        return {"profilePending": True, "onboardingCompleted": None, "nextPath": None}
+    return {"profilePending": False, **onboarding_public_status(person, settings)}
 
 
 @router.post(
@@ -124,9 +160,12 @@ async def _person_after_verified_auth(
     summary="Register",
 )
 async def signup(
+    request: Request,
     body: SignupRequest,
     service: Annotated[AuthService, Depends(get_pai)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> JSONResponse:
+    await limit_auth_attempt(request, settings, "signup", body.email)
     data = await service.signup(body.email, body.password, body.fullName)
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=success(data))
 
@@ -138,13 +177,18 @@ async def signup(
     summary="Login",
 )
 async def login(
+    request: Request,
     body: LoginRequest,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> JSONResponse:
-    bundle = await service.login(body.email, body.password)
-    person = await _person_after_verified_auth(settings, bundle.user)
-    return _session_response(bundle, settings, onboarding_public_status(person, settings))
+    with span("auth_login_limit"):
+        await limit_auth_attempt(request, settings, "login", body.email)
+    with span("auth_provider_login"):
+        bundle = await service.login(body.email, body.password)
+    with span("auth_profile"):
+        person = await _person_after_verified_auth(settings, bundle.user)
+    return _session_response(bundle, settings, _profile_status(person, settings))
 
 
 @router.post(
@@ -165,6 +209,9 @@ async def refresh_tokens(
 
         raise InvalidTokenError("Refresh token cookie is missing.")
     bundle = await service.refresh(refresh_token)
+    # Refresh is independent of profile availability. Keep its existing CSRF token
+    # stable so concurrent tabs do not invalidate each other's in-flight requests.
+    bundle.csrf_token = request.cookies[settings.csrf_cookie_name]
     return _session_response(bundle, settings)
 
 
@@ -178,12 +225,13 @@ async def logout(
     request: Request,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
-    access_token: Annotated[str, Depends(get_validated_access_token)],
-    _: Annotated[None, Depends(require_csrf)],
 ) -> JSONResponse:
     refresh_token = request.cookies.get(settings.refresh_cookie_name, "")
     if refresh_token:
-        await service.logout(access_token, refresh_token)
+        await require_csrf(request, settings, request.headers.get("X-CSRF-Token"))
+    authorization = request.headers.get("Authorization", "")
+    access_token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    await service.logout(access_token, refresh_token)
     response = JSONResponse(content=success({"message": "Signed out successfully."}))
     _clear_session_cookies(response, settings)
     return response
@@ -195,9 +243,12 @@ async def logout(
     summary="Resend verification email",
 )
 async def request_email_verification(
+    request: Request,
     body: EmailOnlyRequest,
     service: Annotated[AuthService, Depends(get_pai)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> JSONResponse:
+    await limit_auth_attempt(request, settings, "resend", body.email)
     data = await service.resend_verification(body.email)
     return JSONResponse(content=success(data))
 
@@ -209,13 +260,15 @@ async def request_email_verification(
     summary="Confirm email",
 )
 async def confirm_email_verification(
+    request: Request,
     body: VerificationConfirmRequest,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> JSONResponse:
+    await limit_auth_attempt(request, settings, "verify", body.email)
     bundle = await service.confirm_verification(body.code, body.verifier, body.email)
     person = await _person_after_verified_auth(settings, bundle.user)
-    return _session_response(bundle, settings, onboarding_public_status(person, settings))
+    return _session_response(bundle, settings, _profile_status(person, settings))
 
 
 @router.post(
@@ -231,7 +284,7 @@ async def establish_session(
 ) -> JSONResponse:
     bundle = await service.establish_session(body.accessToken, body.refreshToken)
     person = await _person_after_verified_auth(settings, bundle.user)
-    return _session_response(bundle, settings, onboarding_public_status(person, settings))
+    return _session_response(bundle, settings, _profile_status(person, settings))
 
 
 @router.post(
@@ -240,9 +293,12 @@ async def establish_session(
     summary="Forgot password",
 )
 async def forgot_password(
+    request: Request,
     body: EmailOnlyRequest,
     service: Annotated[AuthService, Depends(get_pai)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> JSONResponse:
+    await limit_auth_attempt(request, settings, "forgot", body.email)
     data = await service.request_password_reset(body.email)
     return JSONResponse(content=success(data))
 
@@ -254,11 +310,18 @@ async def forgot_password(
     summary="Reset password",
 )
 async def reset_password(
+    request: Request,
     body: PasswordResetRequest,
     service: Annotated[AuthService, Depends(get_pai)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> JSONResponse:
-    data = await service.reset_password(body.ticket, body.newPassword)
-    return JSONResponse(content=success(data))
+    await limit_auth_attempt(request, settings, "recovery", body.email or body.ticket)
+    data = await service.reset_password(
+        body.ticket, body.newPassword, email=body.email, verifier=body.verifier
+    )
+    response = JSONResponse(content=success(data))
+    _clear_session_cookies(response, settings)
+    return response
 
 
 @router.post(
@@ -275,7 +338,7 @@ async def change_password(
     body: PasswordChangeRequest,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
-    access_token: Annotated[str, Depends(get_validated_access_token)],
+    access_token: Annotated[str, Depends(require_recent_login)],
 ) -> JSONResponse:
     data = await service.change_password(access_token, body.newPassword)
     response = JSONResponse(content=success(data))
@@ -290,24 +353,25 @@ async def change_password(
     summary="Get current user",
 )
 async def me(
+    request: Request,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
     access_token: Annotated[str, Depends(get_validated_access_token)],
 ) -> JSONResponse:
     user = await service.get_me(access_token)
-    onboarding = onboarding_public_status(None, settings)
+    onboarding = _profile_status(None, settings)
     try:
         from pai.platform.database.db import get_session_factory
 
-        payload = validate_access_token(access_token, settings)
         factory = get_session_factory(settings)
-        async with factory() as session:
-            person = await get_person_by_auth(session, str(payload["sub"]))
-            onboarding = onboarding_public_status(person, settings)
-    except PersonNotFoundError:
-        pass
-    except Exception:
-        logger.warning("Onboarding status skipped (database unavailable).", exc_info=True)
+        async with asyncio.timeout(5):
+            async with factory() as session:
+                person = await PersonBootstrapService(settings).ensure_person(session, user)
+                onboarding = _profile_status(person, settings)
+    except AuthError:
+        raise
+    except Exception as exc:
+        logger.warning("Auth profile deferred (%s)", type(exc).__name__)
     return JSONResponse(
         content=success(
             {
@@ -336,18 +400,22 @@ async def delete_account(
     request: Request,
     service: Annotated[AuthService, Depends(get_pai)],
     settings: Annotated[Settings, Depends(get_settings)],
-    access_token: Annotated[str, Depends(get_validated_access_token)],
+    access_token: Annotated[str, Depends(require_recent_login)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> JSONResponse:
     refresh_token = request.cookies.get(settings.refresh_cookie_name)
-    payload = validate_access_token(access_token, settings)
+    payload = request.state.auth_claims
     person = None
     try:
         from sqlalchemy import select
+
         from pai.domains.student.person.models import Person
-        person = (await session.execute(select(Person).where(
-            Person.external_auth_id == str(payload["sub"])
-        ))).scalar_one_or_none()
+
+        person = (
+            await session.execute(
+                select(Person).where(Person.external_auth_id == str(payload["sub"]))
+            )
+        ).scalar_one_or_none()
         if person is not None:
             await soft_delete_person_data(session, person)
     except PersonNotFoundError:
@@ -355,8 +423,11 @@ async def delete_account(
     except Exception as exc:
         await session.rollback()
         logger.exception("Application account cleanup failed; identity retained for retry")
-        raise AuthError("ACCOUNT_DELETE_INCOMPLETE",
-            "Account cleanup is incomplete. Retry account deletion.", 503) from exc
+        raise AuthError(
+            "ACCOUNT_DELETE_INCOMPLETE",
+            "Account cleanup is incomplete. Retry account deletion.",
+            503,
+        ) from exc
     try:
         await service.delete_account(access_token, refresh_token)
     except Exception as exc:

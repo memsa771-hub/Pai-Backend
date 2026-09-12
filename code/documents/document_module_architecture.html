@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Placement AI (PAI) - Document Module Architecture Specification</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 16mm 14mm;
+    @bottom-right {
+      content: counter(page);
+    }
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1e293b;
+    background: #ffffff;
+    line-height: 1.55;
+    font-size: 10pt;
+  }
+  .header-banner {
+    border-bottom: 2px solid #2563eb;
+    padding-bottom: 14px;
+    margin-bottom: 20px;
+  }
+  .badge {
+    display: inline-block;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-weight: 700;
+    font-size: 8pt;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  h1 {
+    font-size: 20pt;
+    color: #0f172a;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 10.5pt;
+    color: #64748b;
+  }
+  h2 {
+    font-size: 13pt;
+    color: #1e3a8a;
+    border-bottom: 1.5px solid #e2e8f0;
+    padding-bottom: 4px;
+    margin-top: 18px;
+    margin-bottom: 10px;
+    font-weight: 700;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-size: 11pt;
+    color: #0f172a;
+    margin-top: 12px;
+    margin-bottom: 6px;
+    font-weight: 700;
+    page-break-after: avoid;
+  }
+  h4 {
+    font-size: 10pt;
+    color: #334155;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  p {
+    margin-bottom: 8px;
+  }
+  ul, ol {
+    margin-left: 18px;
+    margin-bottom: 10px;
+  }
+  li {
+    margin-bottom: 4px;
+  }
+  .highlight-box {
+    background: #f8fafc;
+    border-left: 4px solid #3b82f6;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 9.5pt;
+  }
+  .highlight-box.alert {
+    border-left-color: #f59e0b;
+    background: #fffbeb;
+  }
+  .highlight-box.success {
+    border-left-color: #10b981;
+    background: #f0fdf4;
+  }
+  .flow-diagram {
+    background: #0f172a;
+    color: #f8fafc;
+    padding: 14px 18px;
+    border-radius: 6px;
+    font-family: Consolas, "Courier New", Courier, monospace;
+    font-size: 8.5pt;
+    line-height: 1.45;
+    margin: 14px 0;
+    white-space: pre;
+    overflow-x: auto;
+    page-break-inside: avoid;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 16px 0;
+    font-size: 9pt;
+    page-break-inside: avoid;
+  }
+  th, td {
+    padding: 6px 10px;
+    border: 1px solid #cbd5e1;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f1f5f9;
+    color: #0f172a;
+    font-weight: 700;
+  }
+  tr:nth-child(even) td {
+    background: #f8fafc;
+  }
+  code {
+    font-family: Consolas, "Courier New", Courier, monospace;
+    background: #f1f5f9;
+    color: #0f172a;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 8.5pt;
+  }
+  .file-path {
+    font-weight: 700;
+    color: #1d4ed8;
+  }
+  .page-break {
+    page-break-before: always;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 7.5pt;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .tag-post { background: #dcfce7; color: #15803d; }
+  .tag-get  { background: #e0e7ff; color: #3730a3; }
+  .tag-del  { background: #fee2e2; color: #991b1b; }
+</style>
+</head>
+<body>
+
+<div class="header-banner">
+  <div class="badge">Internal Engineering Specification</div>
+  <h1>Placement AI (PAI) Document Module Architecture</h1>
+  <div class="subtitle">Complete technical guide: Directory breakdown, data models, worker pipeline, and Vault reconciliation</div>
+</div>
+
+<h2>1. Core Architectural Philosophy</h2>
+<div class="highlight-box success">
+  <strong>The Fundamental Constitution:</strong>
+  <ul>
+    <li><strong>AI Never Writes Truth Directly:</strong> Models and OCR engines are only permitted to propose interpretations into a quarantined staging table (<code>document_candidates</code> with <code>review_status = 'pending'</code>).</li>
+    <li><strong>Human-in-the-Loop Gate:</strong> Extracted facts are only promoted to the canonical <strong>Student Vault</strong> (<code>vault_values</code>) when the student confirms them via <code>POST /api/v1/documents/{id}/review</code>.</li>
+    <li><strong>Evidence-Backed Profile:</strong> Every fact in the Vault links to immutable source records in <code>vault_evidence</code> (document ID, snippet, and confidence).</li>
+    <li><strong>Strict Tenant Isolation:</strong> Storage paths, database queries, and background advisory locks strictly scope to the student’s authenticated <code>person_id</code>.</li>
+  </ul>
+</div>
+
+<h2>2. End-to-End Processing Flow</h2>
+<div class="flow-diagram">
+[ 1. CLIENT UPLOAD ]
+   │  POST /api/v1/documents (file: UploadFile, optional documentType)
+   ▼
+[ 2. INGESTION & SECURE STORAGE ]
+   │  Validated by: src/pai/intelligences/documents/security/validation.py
+   │  Saved to: Supabase Storage at documents/{person_id}/{doc_id}/{version_id}/original
+   │  Created DB records: `documents` (uploaded) & `document_jobs` (pending)
+   │  Response: 202 Accepted (Non-blocking)
+   ▼
+[ 3. ASYNC WORKER POLLING & LEASING ]
+   │  Worker: src/pai/intelligences/documents/workers/analysis_worker.py
+   │  Lock: SELECT c.id FROM document_jobs ... FOR UPDATE SKIP LOCKED
+   │  Advisory Lock: pg_try_advisory_xact_lock(lock_ns, hashtext(document_id))
+   ▼
+[ 4. DIGITIZATION & OCR STAGE ]
+   │  Orchestrator: src/pai/intelligences/documents/digitization/service.py
+   │  Provider 1: NativeDocumentProvider (pypdf text extraction from digital PDF/DOCX)
+   │  Provider 2 (Fallback): OpenAIVisionProvider (GPT-4o-mini multimodal OCR for scans/photos)
+   ▼
+[ 5. CLASSIFICATION STAGE ]
+   │  Classifier: src/pai/intelligences/documents/classification/classifier.py
+   │  Categorizes: academic, identity, financial, legal (e.g. transcript, passport, diploma)
+   ▼
+[ 6. STRUCTURED FACT EXTRACTION ]
+   │  Extractor: src/pai/intelligences/documents/extraction/extractor.py
+   │  Schemas: src/pai/intelligences/documents/extraction/schemas/*.py
+   │  Extracts: GPA, degrees, test bands, institutions, completion dates
+   │  Sensitive fields encrypted using Fernet (VAULT_ENCRYPTION_KEY)
+   ▼
+[ 7. IDENTITY MATCHING & RECONCILIATION ]
+   │  Matcher: src/pai/intelligences/documents/identity/matcher.py (compares subject vs student account)
+   │  Engine: src/pai/intelligences/documents/reconciliation/engine.py (reconciles with current Vault)
+   │  Proposals written to: `document_candidates` table (status: pending)
+   │  Conflicts flagged in: `verification_cases` table
+   ▼
+[ 8. STUDENT REVIEW & VAULT WRITE GATE ]
+   │  API: POST /api/v1/documents/{document_id}/review
+   │  Write Gate: src/pai/kernel/evidence/vault_apply.py
+   │  Results: Accepted candidates committed to `vault_values` + `vault_evidence`
+   │           Document status updated to 'processed'
+</div>
+
+<div class="page-break"></div>
+
+<h2>3. Detailed Directory & Code Map</h2>
+
+<p>Every file responsible for document functionality is organized into three architectural layers:</p>
+
+<h3>Layer 1: Interfaces & Workers (Network Entrypoints)</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 35%;">File Path</th>
+      <th style="width: 65%;">Component Responsibilities & Handlers</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="file-path">src/pai/interfaces/api/documents.py</span></td>
+      <td>
+        Exposes the FastAPI document endpoints. Validates onboarding state, handles multipart uploads, streams signed URLs, and processes candidate accept/reject reviews.
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/interfaces/workers/documents.py</span></td>
+      <td>
+        CLI process entrypoint (<code>py run.py --service documents</code>). Runs the asynchronous loop polling for pending jobs.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Layer 2: Domain Layer (Models, Storage & Business Logic)</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 35%;">File Path</th>
+      <th style="width: 65%;">Component Responsibilities & Handlers</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="file-path">src/pai/domains/documents/models.py</span></td>
+      <td>
+        Defines SQLAlchemy database entities:
+        <ul>
+          <li><code>Document</code>: Main metadata record (lifecycle, category, status).</li>
+          <li><code>DocumentVersion</code>: Revision tracking, SHA256 checksums, extracted text.</li>
+          <li><code>DocumentJob</code>: Worker queue tracking lease, stage, attempts, errors.</li>
+          <li><code>DocumentCandidate</code>: <strong>The Staging Area</strong> holding pending AI proposals.</li>
+          <li><code>DocumentAnalysisRun</code>: Run-level audit record.</li>
+          <li><code>MessageDocument</code>: Attachment mapping to chat messages.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/domains/documents/service.py</span></td>
+      <td>
+        Contains domain operations: <code>review_document_candidates()</code>, <code>list_documents()</code>, <code>get_document_owned()</code>, and <code>mark_document_deleted()</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/domains/documents/text.py</span></td>
+      <td>
+        Low-level text extraction from binary buffers using <code>pypdf</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/platform/storage/supabase.py</span></td>
+      <td>
+        Manages raw object storage in Supabase private buckets (<code>upload_private</code>, <code>download_bytes</code>, <code>create_signed_download_url</code>, <code>delete_object</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><span class="file-path">src/pai/kernel/evidence/vault_apply.py</span></td>
+      <td>
+        The deterministic gate that writes approved candidates to <code>vault_values</code>, links evidence to <code>vault_evidence</code>, and logs to <code>vault_history</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Layer 3: Intelligences Layer (The Processing Pipeline)</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 35%;">Folder / File</th>
+      <th style="width: 65%;">Functionality</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="file-path">intelligences/documents/ingest.py</span></td>
+      <td>Immediate upload orchestrator: validates bytes, uploads to Supabase, creates DB entities.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">intelligences/documents/pipeline.py</span></td>
+      <td>The master analysis pipeline: coordinates digitization, classification, extraction, identity checks, and candidate generation.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">digitization/service.py</span></td>
+      <td>Routes files between native text parsers and AI vision OCR.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">providers/native.py</span></td>
+      <td>Zero-latency extraction for digital PDFs, DOCX, and text.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">providers/openai_vision.py</span></td>
+      <td>Multimodal OCR engine using <code>gpt-4o-mini</code> for scans, photos, and handwritten documents.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">classification/classifier.py</span></td>
+      <td>Classifies document category and specific type (e.g. transcript, test_score, passport).</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">extraction/extractor.py</span></td>
+      <td>Prompts LLM with structured Pydantic schemas to output strictly typed JSON facts.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">extraction/schemas/</span></td>
+      <td>Structured Pydantic definitions: <code>transcript.py</code>, <code>degree.py</code>, <code>passport.py</code>, <code>test_score.py</code>, <code>resume.py</code>.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">identity/matcher.py</span></td>
+      <td>Validates that the document subject name/DOB matches the student account.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">normalization/</span></td>
+      <td>Normalizes variations into global standards: <code>gpa.py</code>, <code>dates.py</code>, <code>institutions.py</code>, <code>names.py</code>.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">reconciliation/engine.py</span></td>
+      <td>Compares extracted candidates with existing profile data; creates proposals and flags conflicts.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">verification/service.py</span></td>
+      <td>Opens, resolves, and tracks <code>verification_cases</code>.</td>
+    </tr>
+    <tr>
+      <td><span class="file-path">workers/analysis_worker.py</span></td>
+      <td>Background daemon polling loop, lease management, and advisory locks.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<h2>4. Database Schema Reference</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 25%;">Table Name</th>
+      <th style="width: 35%;">Key Columns</th>
+      <th style="width: 40%;">Purpose & State</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>documents</code></td>
+      <td><code>id</code>, <code>person_id</code>, <code>document_type</code>, <code>category</code>, <code>status</code>, <code>storage_path</code></td>
+      <td>Master record. Status moves: <code>uploaded</code> ➔ <code>digitizing</code> ➔ <code>classifying</code> ➔ <code>extracting</code> ➔ <code>reconciling</code> ➔ <code>ready</code> / <code>awaiting_review</code> ➔ <code>processed</code>.</td>
+    </tr>
+    <tr>
+      <td><code>document_versions</code></td>
+      <td><code>id</code>, <code>document_id</code>, <code>version_number</code>, <code>sha256</code>, <code>content_text</code></td>
+      <td>Tracks revisions, file hash, digitized raw text, and encrypted JSON extraction.</td>
+    </tr>
+    <tr>
+      <td><code>document_jobs</code></td>
+      <td><code>id</code>, <code>document_id</code>, <code>status</code>, <code>attempts</code>, <code>current_stage</code>, <code>locked_at</code></td>
+      <td>Worker queue. Status: <code>pending</code> ➔ <code>processing</code> ➔ <code>completed</code> (or <code>failed</code> after 3 attempts).</td>
+    </tr>
+    <tr>
+      <td><strong><code>document_candidates</code></strong></td>
+      <td><code>id</code>, <code>document_id</code>, <code>field_key</code>, <code>value</code>, <code>confidence</code>, <code>review_status</code></td>
+      <td><strong>The Staging Area:</strong> AI-extracted proposals awaiting human approval (<code>pending</code>, <code>accepted</code>, or <code>rejected</code>).</td>
+    </tr>
+    <tr>
+      <td><strong><code>vault_values</code></strong></td>
+      <td><code>id</code>, <code>vault_id</code>, <code>field_key</code>, <code>value</code>, <code>status</code>, <code>verification_level</code></td>
+      <td><strong>The Official Student Vault:</strong> Active student profile truth (<code>status = 'active'</code>).</td>
+    </tr>
+    <tr>
+      <td><strong><code>vault_evidence</code></strong></td>
+      <td><code>id</code>, <code>vault_value_id</code>, <code>source_reference</code>, <code>evidence_text</code>, <code>confidence</code></td>
+      <td>Auditable link connecting a Vault fact back to the document ID and exact text snippet.</td>
+    </tr>
+    <tr>
+      <td><code>verification_cases</code></td>
+      <td><code>id</code>, <code>person_id</code>, <code>document_id</code>, <code>case_type</code>, <code>severity</code>, <code>status</code></td>
+      <td>Logged when identity mismatches or critical grade discrepancies are found.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>5. Swagger API Quick Reference</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 15%;">Method</th>
+      <th style="width: 35%;">Endpoint</th>
+      <th style="width: 50%;">Summary</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/documents</code></td>
+      <td>Upload document (returns <code>202 Accepted</code> immediately).</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-get">GET</span></td>
+      <td><code>/api/v1/documents</code></td>
+      <td>List all documents for the authenticated student.</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-get">GET</span></td>
+      <td><code>/api/v1/documents/{id}/status</code></td>
+      <td>Poll worker processing stage and job status.</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-get">GET</span></td>
+      <td><code>/api/v1/documents/{id}/candidates</code></td>
+      <td><strong>Inspect AI-extracted proposals waiting in the staging area.</strong></td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-post">POST</span></td>
+      <td><code>/api/v1/documents/{id}/review</code></td>
+      <td><strong>Accept or reject candidate proposals into the Student Vault.</strong></td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-get">GET</span></td>
+      <td><code>/api/v1/documents/{id}</code></td>
+      <td>Get metadata, decrypted extraction, and signed download URL.</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-del">DELETE</span></td>
+      <td><code>/api/v1/documents/{id}</code></td>
+      <td>Delete document from database and purge from Supabase storage.</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>

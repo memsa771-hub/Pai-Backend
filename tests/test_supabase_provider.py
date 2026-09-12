@@ -8,9 +8,8 @@ from pydantic import ValidationError
 from pai.config import Settings
 from pai.kernel.errors import (
     EmailAlreadyInUseError,
-    IncorrectPasswordError,
+    InvalidCredentialsError,
     ProviderUnavailableError,
-    UserNotFoundError,
 )
 from pai.platform.security.auth.supabase import SupabaseAuthProvider
 
@@ -18,6 +17,8 @@ from pai.platform.security.auth.supabase import SupabaseAuthProvider
 @pytest.fixture
 def supabase_settings() -> Settings:
     return Settings(
+        _env_file=None,
+        LLM_DEFAULT_PROVIDER="deepseek",
         SUPABASE_URL="https://project.supabase.co",
         SUPABASE_ANON_KEY="anon-key",
         SUPABASE_SERVICE_ROLE_KEY="service-key",
@@ -50,7 +51,7 @@ async def test_supabase_login_unknown_email(supabase_settings: Settings):
     client = httpx.AsyncClient(transport=transport)
     provider = SupabaseAuthProvider(supabase_settings, client=client)
 
-    with pytest.raises(UserNotFoundError):
+    with pytest.raises(InvalidCredentialsError):
         await provider.login("a@example.com", "wrong")
 
     await provider.aclose()
@@ -78,7 +79,7 @@ async def test_supabase_login_incorrect_password(supabase_settings: Settings):
     client = httpx.AsyncClient(transport=transport)
     provider = SupabaseAuthProvider(supabase_settings, client=client)
 
-    with pytest.raises(IncorrectPasswordError):
+    with pytest.raises(InvalidCredentialsError):
         await provider.login("a@example.com", "wrong")
 
     await provider.aclose()
@@ -133,12 +134,8 @@ async def test_supabase_signup_without_session(supabase_settings: Settings):
 @pytest.mark.asyncio
 async def test_supabase_signup_rejects_existing_email(supabase_settings: Settings):
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/admin/users"):
-            return httpx.Response(
-                200,
-                json={"users": [{"id": "u1", "email": "taken@example.com"}]},
-            )
-        return httpx.Response(500, json={"message": "signup should not be called"})
+        assert request.url.path.endswith("/signup")
+        return httpx.Response(200, json={"id": "u1", "identities": []})
 
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport)
@@ -152,6 +149,8 @@ async def test_supabase_signup_rejects_existing_email(supabase_settings: Setting
 
 def _settings_kwargs(**overrides) -> dict:
     data = {
+        "_env_file": None,
+        "LLM_DEFAULT_PROVIDER": "deepseek",
         "SUPABASE_URL": "https://project.supabase.co",
         "SUPABASE_ANON_KEY": "anon-key",
         "SUPABASE_SERVICE_ROLE_KEY": "service-key",

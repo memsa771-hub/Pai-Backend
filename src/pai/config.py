@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     supabase_url: str = Field(..., alias="SUPABASE_URL")
     supabase_anon_key: str = Field(..., alias="SUPABASE_ANON_KEY")
     supabase_service_role_key: str = Field(..., alias="SUPABASE_SERVICE_ROLE_KEY")
-    supabase_jwt_secret: str = Field(..., alias="SUPABASE_JWT_SECRET")
+    supabase_jwt_secret: str = Field(default="", alias="SUPABASE_JWT_SECRET")
     supabase_jwt_audience: str = Field(default="authenticated", alias="SUPABASE_JWT_AUDIENCE")
 
     email_verification_redirect_url: str = Field(..., alias="EMAIL_VERIFICATION_REDIRECT_URL")
@@ -46,10 +46,23 @@ class Settings(BaseSettings):
     frontend_onboarding_path: str = Field(default="/onboarding", alias="FRONTEND_ONBOARDING_PATH")
     frontend_home_path: str = Field(default="/", alias="FRONTEND_HOME_PATH")
 
-    auth_http_timeout_seconds: float = Field(default=10.0, alias="AUTH_HTTP_TIMEOUT_SECONDS")
+    auth_http_timeout_seconds: float = Field(default=6.0, gt=0, le=30, alias="AUTH_HTTP_TIMEOUT_SECONDS")
+    auth_allow_legacy_hs256: bool = Field(default=True, alias="AUTH_ALLOW_LEGACY_HS256")
+    auth_profile_timeout_seconds: float = Field(default=1.0, gt=0, le=5, alias="AUTH_PROFILE_TIMEOUT_SECONDS")
+    auth_recent_login_seconds: int = Field(default=600, gt=0, alias="AUTH_RECENT_LOGIN_SECONDS")
+    auth_http_max_connections: int = Field(default=100, gt=0, alias="AUTH_HTTP_MAX_CONNECTIONS")
+    auth_http_keepalive_connections: int = Field(default=40, gt=0, alias="AUTH_HTTP_KEEPALIVE_CONNECTIONS")
+    auth_rate_limit_fail_closed: bool = Field(default=True, alias="AUTH_RATE_LIMIT_FAIL_CLOSED")
+    rate_limit_redis_url: str = Field(default="", alias="RATE_LIMIT_REDIS_URL")
+    redis_timeout_seconds: float = Field(default=0.5, gt=0, le=5, alias="REDIS_TIMEOUT_SECONDS")
+    auth_ip_limit_per_minute: int = Field(default=120, gt=0, alias="AUTH_IP_LIMIT_PER_MINUTE")
+    auth_login_limit_per_account: int = Field(default=30, gt=0, alias="AUTH_LOGIN_LIMIT_PER_ACCOUNT")
+    auth_email_limit_per_hour: int = Field(default=5, gt=0, alias="AUTH_EMAIL_LIMIT_PER_HOUR")
+    auth_verify_limit_per_account: int = Field(default=10, gt=0, alias="AUTH_VERIFY_LIMIT_PER_ACCOUNT")
 
     database_url: str = Field(..., alias="DATABASE_URL")
     database_ssl_verify: bool = Field(default=True, alias="DATABASE_SSL_VERIFY")
+    database_ssl_ca_file: str = Field(default="", alias="DATABASE_SSL_CA_FILE")
     vault_encryption_key: str = Field(..., alias="VAULT_ENCRYPTION_KEY")
 
     llm_default_provider: str = Field(default="openai", alias="LLM_DEFAULT_PROVIDER")
@@ -243,6 +256,27 @@ class Settings(BaseSettings):
                 )
         return self
 
+    @model_validator(mode="after")
+    def production_security(self) -> Self:
+        if self.cookie_same_site == "none" and not self.cookie_secure:
+            raise ValueError("SameSite=None requires COOKIE_SECURE=true.")
+        if self.app_env.lower() in {"production", "prod"}:
+            if not self.cookie_secure or not self.database_ssl_verify:
+                raise ValueError("Production requires secure cookies and database TLS verification.")
+            if "*" in self.cors_origins or "*" in self.trusted_hosts:
+                raise ValueError("Production requires explicit CORS_ORIGINS and TRUSTED_HOSTS.")
+            if any(not url.startswith("https://") for url in
+                   [self.supabase_url, *self.cors_origins,
+                    self.email_verification_redirect_url, self.password_reset_redirect_url]):
+                raise ValueError("Production authentication URLs must use HTTPS.")
+            if not self.enable_rate_limits or not self.auth_rate_limit_fail_closed:
+                raise ValueError("Production authentication requires fail-closed rate limits.")
+            if not self.rate_limit_redis_url:
+                raise ValueError("Set RATE_LIMIT_REDIS_URL to a shared Redis for production.")
+            if self.auth_allow_legacy_hs256 and len(self.supabase_jwt_secret) < 32:
+                raise ValueError("Legacy JWT verification requires a strong signing secret.")
+        return self
+
     # A round trip to an embeddings API does not finish in under a second from
     # most regions — measured at ~2s, occasionally 8s, from ap-southeast-2. Any
     # budget below this is not "tight", it is off, and the failure is swallowed.
@@ -322,6 +356,7 @@ class Settings(BaseSettings):
         """
         if (
             self.enable_rate_limits
+            and not self.rate_limit_redis_url
             and self.rate_limit_backend_timeout_seconds < self._MIN_VIABLE_RATE_LIMIT_TIMEOUT
         ):
             raise ValueError(

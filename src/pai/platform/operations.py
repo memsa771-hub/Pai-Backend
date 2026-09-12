@@ -17,6 +17,16 @@ async def heartbeat(settings, kind):
 
 async def readiness(settings, provider):
     checks = {"auth": False, "database": False, "migration": False, "workers": False}
+    if settings.rate_limit_redis_url:
+        checks["rate_limits"] = False
+    async def rate_limits():
+        if not settings.rate_limit_redis_url:
+            return
+        try:
+            from pai.platform.redis_limits import get_client
+            checks["rate_limits"] = bool(await get_client(settings).ping())
+        except Exception:
+            pass
     async def auth():
         try:
             checks["auth"] = bool(await provider.health_check())
@@ -51,7 +61,7 @@ async def readiness(settings, provider):
             pass
     try:
         async with asyncio.timeout(settings.readiness_timeout_seconds):
-            await asyncio.gather(auth(), database())
+            await asyncio.gather(auth(), database(), rate_limits())
     except TimeoutError:
         pass
     return checks

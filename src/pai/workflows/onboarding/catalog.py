@@ -151,13 +151,12 @@ def _options(values: list[str], labels: dict[str, str]) -> list[dict[str, str]]:
     ]
 
 
-# nationality, currentCountry, studyCountry, targetCountries all bind to enums.countries.
+# nationality, currentCountry bind to enums.countries.
 COUNTRY_FIELDS = (
     "nationality",
     "currentCountry",
-    "studyCountry",
-    "targetCountries",
 )
+
 
 
 @lru_cache(maxsize=1)

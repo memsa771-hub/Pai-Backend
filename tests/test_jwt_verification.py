@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from jose import jwt
 
@@ -16,6 +18,9 @@ def test_hs256_token_still_validates(test_settings):
             "sub": "user-1",
             "role": "authenticated",
             "aud": "authenticated",
+            "iss": test_settings.supabase_auth_base,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600,
         },
         test_settings.supabase_jwt_secret,
         algorithm="HS256",

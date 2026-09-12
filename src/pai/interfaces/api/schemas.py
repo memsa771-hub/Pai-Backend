@@ -110,6 +110,12 @@ class SignupRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"email": "user@example.com", "password": "Str0ngPass#1"}
+        }
+    )
+
     email: EmailStr = Field(examples=["user@example.com"])
     password: str = Field(min_length=1, max_length=128, examples=["Str0ngPass#1"])
 
@@ -119,16 +125,29 @@ class EmailOnlyRequest(BaseModel):
 
 
 class VerificationConfirmRequest(BaseModel):
-    code: str = Field(min_length=1, description="Verification token from the email link (`token=` query param).")
+    code: str = Field(
+        min_length=1, max_length=2048,
+        description="Numeric email OTP, email-link token hash, or PKCE authorization code.",
+    )
     email: EmailStr = Field(examples=["user@example.com"], description="Same email used at signup.")
     verifier: str | None = Field(
         default=None,
+        min_length=43,
+        max_length=128,
         description="Optional PKCE code verifier. Leave empty unless your signup flow uses PKCE.",
     )
 
 
 class PasswordResetRequest(BaseModel):
-    ticket: str = Field(min_length=1, description="Password reset ticket from the email link.")
+    ticket: str = Field(
+        min_length=1, max_length=16384,
+        description=(
+            "Recovery hash, email OTP (with email), PKCE code (with verifier), "
+            "or recovery access token."
+        ),
+    )
+    email: EmailStr | None = None
+    verifier: str | None = Field(default=None, min_length=43, max_length=128)
     newPassword: str = Field(min_length=8, max_length=128, examples=["NewStr0ngPass#1"])
     confirmPassword: str = Field(min_length=8, max_length=128, examples=["NewStr0ngPass#1"])
 
@@ -151,8 +170,8 @@ class PasswordChangeRequest(BaseModel):
 class SessionFromTokensRequest(BaseModel):
     """Tokens from the Supabase email-verification redirect hash (never log these)."""
 
-    accessToken: str = Field(min_length=16)
-    refreshToken: str = Field(min_length=8)
+    accessToken: str = Field(min_length=16, max_length=16384)
+    refreshToken: str = Field(min_length=8, max_length=4096)
 
 
 class UserPublic(BaseModel):
@@ -171,10 +190,11 @@ class AuthSessionPublic(BaseModel):
     accessToken: str
     accessTokenExpiresIn: int
     user: UserPublic
-    onboardingCompleted: bool = False
+    onboardingCompleted: bool | None = None
+    profilePending: bool = False
     onboardingCompletedAt: str | None = None
     onboardingPath: str | None = None
-    nextPath: str = "/onboarding"
+    nextPath: str | None = None
 
 
 class SignupResponseData(BaseModel):
@@ -193,10 +213,11 @@ class LoginResponseData(AuthSessionPublic):
 
 class MeResponseData(BaseModel):
     user: UserPublic
-    onboardingCompleted: bool = False
+    onboardingCompleted: bool | None = None
+    profilePending: bool = False
     onboardingCompletedAt: str | None = None
     onboardingPath: str | None = None
-    nextPath: str = "/onboarding"
+    nextPath: str | None = None
 
 
 class HealthData(BaseModel):

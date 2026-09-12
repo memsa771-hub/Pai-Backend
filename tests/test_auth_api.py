@@ -18,8 +18,8 @@ def test_signup_flow(client, fake_provider):
     body = response.json()
     assert body["success"] is True
     assert body["data"]["message"] == (
-        "Account created. Verification link has been sent to your email, "
-        "verify to continue."
+        "If registration is available for this email, a verification link has been sent. "
+        "If you already have an account, sign in or reset your password."
     )
     assert body["data"]["email"] == "new@example.com"
     assert body["data"].get("session") is None
@@ -72,8 +72,9 @@ def test_login_unknown_email(client):
         json={"email": "missing@example.com", "password": "Password123!"},
     )
     error = response.json()["error"]
-    assert error["code"] == "USER_NOT_FOUND"
-    assert "no account" in error["message"].lower()
+    assert response.status_code == 401
+    assert error["code"] == "INVALID_CREDENTIALS"
+    assert error["message"] == "Email or password is incorrect."
 
 
 def test_login_incorrect_password(client, fake_provider):
@@ -88,7 +89,7 @@ def test_login_incorrect_password(client, fake_provider):
         json={"email": "ali@example.com", "password": "WrongPass123!"},
     )
     assert response.status_code == 401
-    assert response.json()["error"]["code"] == "INCORRECT_PASSWORD"
+    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
     assert "password" in response.json()["error"]["message"].lower()
 
 
@@ -146,7 +147,7 @@ def test_forgot_and_reset_password(client, fake_provider):
     )
     assert forgot.status_code == 200
     assert forgot.json()["data"]["message"] == (
-        "A password recovery email has been sent to reset@example.com."
+        "If an account exists for this email, a recovery link has been sent."
     )
 
     reset = client.post(
@@ -207,6 +208,7 @@ def test_account_cleanup_failure_retains_identity(client, fake_provider):
     assert me.json()["data"]["user"]["email"] == "me@example.com"
 
     from unittest.mock import AsyncMock
+
     from pai.interfaces.api.dependencies import get_db
     async def unavailable_db():
         session = AsyncMock()
@@ -224,12 +226,11 @@ def test_account_cleanup_failure_retains_identity(client, fake_provider):
 def test_signup_duplicate_email(client, fake_provider):
     client.post("/api/v1/auth/signup", json=_signup_body("dup@example.com"))
     again = client.post("/api/v1/auth/signup", json=_signup_body("dup@example.com"))
-    assert again.status_code == 409
-    assert again.json()["error"]["code"] == "EMAIL_ALREADY_IN_USE"
-    assert "already exists" in again.json()["error"]["message"].lower()
+    assert again.status_code == 201
+    assert "If registration is available" in again.json()["data"]["message"]
 
     mixed = client.post("/api/v1/auth/signup", json=_signup_body("Dup@example.com"))
-    assert mixed.status_code == 409
+    assert mixed.status_code == 201
 
 
 def test_signup_password_mismatch(client):
@@ -315,7 +316,7 @@ def test_resend_verification(client, fake_provider):
     )
     assert response.status_code == 200
     assert response.json()["data"]["message"] == (
-        "Verification email has been sent to any@example.com."
+        "If this account needs verification, an email has been sent."
     )
 
 
@@ -324,8 +325,8 @@ def test_resend_verification_unknown_email(client):
         "/api/v1/auth/email-verification/request",
         json={"email": "missing@example.com"},
     )
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "USER_NOT_FOUND"
+    assert response.status_code == 200
+    assert response.json()["success"] is True
 
 
 def test_forgot_password_unknown_email(client):
@@ -333,8 +334,8 @@ def test_forgot_password_unknown_email(client):
         "/api/v1/auth/password/forgot",
         json={"email": "missing@example.com"},
     )
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "USER_NOT_FOUND"
+    assert response.status_code == 200
+    assert response.json()["success"] is True
 
 
 def test_session_from_verification_tokens(client, fake_provider):
@@ -352,8 +353,9 @@ def test_session_from_verification_tokens(client, fake_provider):
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["user"]["emailVerified"] is True
-    assert body["onboardingCompleted"] is False
-    assert body["nextPath"] == "/onboarding"
+    assert body["onboardingCompleted"] is None
+    assert body["profilePending"] is True
+    assert body["nextPath"] is None
     assert response.cookies.get("pai_refresh_token")
     assert response.cookies.get("pai_csrf_token")
 

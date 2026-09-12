@@ -1,12 +1,13 @@
 import socket
 import ssl
 from collections.abc import AsyncIterator
+from pathlib import Path
 from urllib.parse import urlparse
 
 import certifi
 from sqlalchemy import text
-from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from pai.config import Settings, get_settings
 
@@ -15,7 +16,8 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _is_remote_postgres(database_url: str) -> bool:
-    return "supabase.co" in database_url or "pooler.supabase.com" in database_url
+    host = urlparse(database_url).hostname or ""
+    return host.endswith(".supabase.co") or host.endswith(".pooler.supabase.com")
 
 
 def _ipv4_for_host(host: str) -> str | None:
@@ -29,17 +31,20 @@ def _ipv4_for_host(host: str) -> str | None:
     return infos[0][4][0]
 
 
-def _engine_connect_args(database_url: str, *, ssl_verify: bool = True) -> dict:
-    if not _is_remote_postgres(database_url):
+def _engine_connect_args(database_url: str, *, ssl_verify: bool = True, ca_file: str = "") -> dict:
+    host = urlparse(database_url).hostname or ""
+    if host in {"localhost", "127.0.0.1", "::1", "postgres"}:
         return {}
     ctx = ssl.create_default_context(cafile=certifi.where())
+    if _is_remote_postgres(database_url):
+        ctx.load_verify_locations(
+            cafile=str(Path(__file__).parent / "certs" / "supabase-root-2021.crt")
+        )
+    if ca_file:
+        ctx.load_verify_locations(cafile=ca_file)
     args: dict = {"ssl": ctx, "timeout": 8}
-    host = urlparse(database_url).hostname
-    ipv4 = _ipv4_for_host(host) if host else None
-    if ipv4:
-        args["host"] = ipv4
-        # ponytail: TCP to A-record IP (skip AAAA stall); hostname check can't use an IP.
-        ctx.check_hostname = False
+    # Preserve the original hostname for TLS SNI and certificate verification.
+    # Replacing it with an IP silently removed endpoint identity verification.
     if not ssl_verify:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -68,7 +73,9 @@ def get_engine(settings: Settings | None = None):
             pool_recycle=180 if remote else -1,
             **pool_kwargs,
             connect_args=_engine_connect_args(
-                settings.database_url, ssl_verify=settings.database_ssl_verify
+                settings.database_url,
+                ssl_verify=settings.database_ssl_verify,
+                ca_file=settings.database_ssl_ca_file,
             ),
         )
         _session_factory = async_sessionmaker(_engine, expire_on_commit=False)

@@ -58,7 +58,14 @@ class AuthProvider(Protocol):
 
     async def request_password_reset(self, email: str) -> GenericActionResult: ...
 
-    async def reset_password(self, ticket: str, new_password: str) -> GenericActionResult: ...
+    async def reset_password(
+        self,
+        ticket: str,
+        new_password: str,
+        *,
+        email: str | None = None,
+        verifier: str | None = None,
+    ) -> GenericActionResult: ...
 
     async def change_password(
         self, access_token: str, new_password: str

@@ -12,7 +12,13 @@ from pai.config import Settings, get_settings
 from pai.domains.student.person.models import Person
 from pai.domains.student.person.service import get_person_by_auth
 from pai.interfaces.api.openapi import BEARER_DESCRIPTION
-from pai.kernel.errors import CsrfError, InvalidTokenError, OnboardingIncompleteError
+from pai.kernel.errors import (
+    AuthError,
+    CsrfError,
+    InvalidTokenError,
+    OnboardingIncompleteError,
+    PersonNotFoundError,
+)
 from pai.platform.database.db import get_session_factory
 from pai.platform.latency import span
 from pai.platform.security.auth.jwt import validate_access_token
@@ -74,14 +80,24 @@ async def get_validated_access_token(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> str:
     with span("auth"):
-        payload = validate_access_token(token, settings)
+        payload = await request.app.state.jwt_verifier.verify(token)
+    request.state.auth_claims = payload
     from pai.platform.limits import consume, usage_subject
+
     subject = str(payload["sub"])
     usage_subject.set(subject)
     reservations = [("user_requests", subject, 1, settings.user_request_limit_per_minute, 60)]
-    if request.method == "POST" and "multipart/form-data" in request.headers.get("content-type", ""):
+    if request.method == "POST" and "multipart/form-data" in request.headers.get(
+        "content-type", ""
+    ):
         reservations.append(("uploads", subject, 1, settings.upload_limit_per_day, 86400))
-    await consume(settings, reservations)
+    await consume(
+        settings,
+        reservations,
+        fail_closed=settings.auth_rate_limit_fail_closed
+        if request.url.path.startswith("/api/v1/auth/")
+        else None,
+    )
     return token
 
 
@@ -98,16 +114,29 @@ async def get_db(
 
 
 async def resolve_person_from_token(
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     token: Annotated[str, Depends(get_validated_access_token)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Person:
-    with span("auth"):
-        payload = validate_access_token(token, settings)
+    payload = request.state.auth_claims
     external_id = str(payload["sub"])
     with span("person_lookup"):
-        person = await get_person_by_auth(session, external_id)
+        try:
+            person = await get_person_by_auth(session, external_id)
+        except PersonNotFoundError:
+            # Retry first-login provisioning durably on the next authenticated request.
+            # Never create a profile from unverified claims or reassign it by email.
+            from pai.domains.student.person.service import PersonBootstrapService
+
+            user = await request.app.state.auth_provider.get_user(token)
+            if user.id != external_id:
+                raise InvalidTokenError()
+            person = await PersonBootstrapService(settings).ensure_person(session, user)
+        if person.account_status != "active":
+            raise AuthError("ACCOUNT_UNAVAILABLE", "This account is not active.", 403)
     from pai.platform.limits import usage_subject
+
     usage_subject.set(str(person.id))
     return person
 
@@ -126,5 +155,45 @@ async def require_csrf(
     csrf_header: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
 ) -> None:
     cookie_token = request.cookies.get(settings.csrf_cookie_name)
+    origin = request.headers.get("origin")
+    from pai.platform.security.origin import request_origin_is_trusted
+
+    if not request_origin_is_trusted(
+        origin, request.url.scheme, request.headers.get("host", ""), settings.cors_origins
+    ):
+        raise CsrfError()
     if not cookie_token or not csrf_header or not _constant_time_equals(cookie_token, csrf_header):
         raise CsrfError()
+
+
+async def require_recent_login(
+    request: Request,
+    token: Annotated[str, Depends(get_validated_access_token)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> str:
+    from pai.platform.security.auth.jwt import require_recent_auth
+
+    require_recent_auth(request.state.auth_claims, settings)
+    user = await request.app.state.auth_provider.get_user(token)
+    if user.id != request.state.auth_claims["sub"] or not user.email_verified:
+        raise InvalidTokenError()
+    return token
+
+
+async def limit_auth_attempt(
+    request: Request, settings: Settings, action: str, subject: str
+) -> None:
+    from pai.platform.limits import consume
+
+    if action in {"signup", "forgot", "resend"}:
+        limit, window = settings.auth_email_limit_per_hour, 3600
+        action = "email"  # Share the send budget across all email-triggering endpoints.
+    elif action == "login":
+        limit, window = settings.auth_login_limit_per_account, 300
+    else:
+        limit, window = settings.auth_verify_limit_per_account, 300
+    await consume(
+        settings,
+        [(f"auth_{action}", subject.strip().lower(), 1, limit, window)],
+        fail_closed=settings.auth_rate_limit_fail_closed,
+    )

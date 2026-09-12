@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from pai.config import Settings, get_settings
 from pai.kernel.errors import (
+    AuthError,
     EmailNotVerifiedError,
     PersonNotFoundError,
     VersionConflictError,
@@ -66,7 +67,11 @@ class PersonBootstrapService:
                 if person is None:
                     person = await self._get_live_person_by_email_for_update(session, email)
                     if person is not None:
-                        person.external_auth_id = external_id
+                        raise AuthError(
+                            "IDENTITY_LINK_REQUIRED",
+                            "Contact support to link your existing profile securely.",
+                            409,
+                        )
                     else:
                         person = Person(
                             auth_provider=AUTH_PROVIDER_NAME,
@@ -87,7 +92,8 @@ class PersonBootstrapService:
                     person.full_name = provider_user.display_name
                 if provider_user.phone and not person.phone:
                     person.phone = provider_user.phone
-                person.account_status = "active"
+                if person.account_status != "active":
+                    raise AuthError("ACCOUNT_UNAVAILABLE", "This account is not active.", 403)
 
                 vault = await self._get_vault_for_update(session, person.id)
                 if vault is None:
@@ -120,9 +126,9 @@ class PersonBootstrapService:
                     session, AUTH_PROVIDER_NAME, external_id
                 )
                 if person is None:
-                    person = await self._get_live_person_by_email_for_update(session, email)
-                if person is None:
                     raise
+                if person.account_status != "active":
+                    raise AuthError("ACCOUNT_UNAVAILABLE", "This account is not active.", 403)
                 vault = await self._get_vault_for_update(session, person.id)
                 if vault is None:
                     raise
@@ -145,6 +151,8 @@ class PersonBootstrapService:
         external_id = str(provider_user.id)
         person = await self._find_person(session, AUTH_PROVIDER_NAME, external_id)
         if person is not None:
+            if person.account_status != "active":
+                raise AuthError("ACCOUNT_UNAVAILABLE", "This account is not active.", 403)
             from pai.domains.student.person.write_lock import lock_person
             person = await lock_person(session, person.id)
             dirty = self._sync_identity(person, provider_user)
@@ -175,9 +183,6 @@ class PersonBootstrapService:
             dirty = True
         if provider_user.phone and not person.phone:
             person.phone = provider_user.phone
-            dirty = True
-        if person.account_status != "active":
-            person.account_status = "active"
             dirty = True
         return dirty
 
@@ -357,6 +362,8 @@ async def get_person_by_auth(
     person = result.scalar_one_or_none()
     if person is None:
         raise PersonNotFoundError()
+    if person.account_status != "active":
+        raise AuthError("ACCOUNT_UNAVAILABLE", "This account is not active.", 403)
     return person
 
 

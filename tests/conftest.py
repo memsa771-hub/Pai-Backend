@@ -156,6 +156,9 @@ class FakeAuthProvider:
                 "sub": user["id"],
                 "role": "authenticated",
                 "aud": "authenticated",
+                "iss": "https://example.supabase.co/auth/v1",
+                "iat": int(datetime.now(UTC).timestamp()),
+                "amr": [{"method": "password", "timestamp": int(datetime.now(UTC).timestamp())}],
                 "exp": datetime.now(UTC) + timedelta(hours=1),
             },
             self.jwt_secret,
@@ -233,6 +236,9 @@ def bearer_token(test_settings: Settings) -> str:
         "sub": "user-1",
         "role": "authenticated",
         "aud": "authenticated",
+        "iss": "https://example.supabase.co/auth/v1",
+        "iat": int(datetime.now(UTC).timestamp()),
+        "amr": [{"method": "password", "timestamp": int(datetime.now(UTC).timestamp())}],
         "exp": datetime.now(UTC) + timedelta(hours=1),
     }
     return jwt.encode(payload, test_settings.supabase_jwt_secret, algorithm="HS256")
